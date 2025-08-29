@@ -19,7 +19,7 @@
 [![Docs](https://img.shields.io/docsrs/ignite?style=for-the-badge&logo=rust&color=blue&labelColor=black)](https://docs.rs/ignite)
 
 [![GitHub Stars](https://img.shields.io/github/stars/AarambhDevHub/ignite?style=social&logo=github)](https://github.com/AarambhDevHub/ignite/stargazers)
-[![YouTube](https://img.shields.io/youtube/channel/subscribers/YOUR_CHANNEL_ID?style=social&logo=youtube&label=Aarambh%20Dev%20Hub)](https://youtube.com/@aarambhdevhub)
+[![YouTube](https://img.shields.io/youtube/channel/subscribers/UCm5U5uQiZA_mQY5wQ6WfUVA?style=social&logo=youtube&label=Aarambh%20Dev%20Hub)](https://youtube.com/@aarambhdevhub)
 
 <img src="https://raw.githubusercontent.com/AarambhDevHub/ignite/main/assets/ignite-banner.png" alt="Ignite Banner" width="100%">
 
