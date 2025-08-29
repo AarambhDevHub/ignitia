@@ -2,7 +2,7 @@
 
 A lightweight, fast, and extensible web framework for Rust built on top of Hyper and Tokio. This framework provides all the essential features needed to build modern web applications with minimal overhead and maximum performance.
 
-[![License: MIT](https://img.shields.io/badge/Licenseance**)]: Built on Hyper and Tokio for maximum async performance
+Built on Hyper and Tokio for maximum async performance
 - **🎯 Simple Routing**: Intuitive route definition with parameter and wildcard support
 - **🔧 Middleware System**: Composable middleware architecture for cross-cutting concerns
 - **📄 Static File Serving**: Built-in static file server with security features
