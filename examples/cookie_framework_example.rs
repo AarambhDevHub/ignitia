@@ -1,5 +1,5 @@
-use mini_web_framework::{
-    Cookie, CookieJar, Error, Request, Response, Result, Router, SameSite, Server, handler_fn,
+use ignite::{
+    handler_fn, Cookie, CookieJar, Error, Request, Response, Result, Router, SameSite, Server,
 };
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime};

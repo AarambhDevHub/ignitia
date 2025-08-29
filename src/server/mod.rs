@@ -45,6 +45,33 @@ impl Server {
             });
         }
     }
+
+    pub async fn ignite(self) -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind(self.addr).await?;
+        info!("🔥 Ignite server blazing on http://{}", self.addr);
+
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let io = TokioIo::new(stream);
+            let router = self.router.clone();
+
+            tokio::spawn(async move {
+                let service = service_fn(move |req| {
+                    let router = router.clone();
+                    async move {
+                        handle_request(router, req).await
+                    }
+                });
+
+                if let Err(err) = http1::Builder::new()
+                    .serve_connection(io, service)
+                    .await
+                {
+                    eprintln!("Error serving connection: {}", err);
+                }
+            });
+        }
+    }
 }
 
 async fn handle_request(

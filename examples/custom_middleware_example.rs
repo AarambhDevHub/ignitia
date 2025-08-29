@@ -1,7 +1,8 @@
 use http::{HeaderName, HeaderValue}; // Add this import
-use mini_web_framework::{
-    Error, Request, Response, Result, Router, Server, async_trait, handler_fn,
+use ignite::{
+    async_trait, handler_fn,
     middleware::{LoggerMiddleware, Middleware},
+    Error, Request, Response, Result, Router, Server,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -85,7 +86,7 @@ struct RequestValidationMiddleware;
 impl Middleware for RequestValidationMiddleware {
     async fn before(&self, req: &mut Request) -> Result<()> {
         // Validate Content-Type for POST requests
-        if req.method == mini_web_framework::Method::POST {
+        if req.method == ignite::Method::POST {
             if let Some(content_type) = req.header("Content-Type") {
                 if !content_type.contains("application/json") {
                     return Err(Error::BadRequest(

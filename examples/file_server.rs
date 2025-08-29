@@ -1,7 +1,5 @@
+use ignite::{handler_fn, Error, Request, Response, ResponseBuilder, Result, Router, Server};
 use mime_guess;
-use mini_web_framework::{
-    Error, Request, Response, ResponseBuilder, Result, Router, Server, handler_fn,
-};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::fs;

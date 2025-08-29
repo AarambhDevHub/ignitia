@@ -1,17 +1,46 @@
-# 🚀 Mini Web Framework
+# 🔥 Ignite
 
-A lightweight, fast, and feature-rich web framework for Rust built on top of Hyper and Tokio. This framework provides all the essential features needed to build modern web applications with minimal overhead, maximum performance, and developer-friendly APIs.
+<div align="center">
 
-Built on Hyper and Tokio for maximum async performance
-- **🎯 Advanced Routing**: Parameter extraction, wildcard patterns, and method-specific routes
-- **🔧 Powerful Middleware**: Composable middleware architecture with built-in auth, CORS, logging, and rate limiting
-- **🍪 Built-in Cookies**: Full cookie management with security attributes and session handling
-- **📄 Static File Serving**: Built-in static file server with security features and MIME type detection
-- **🔒 Authentication & Authorization**: Session-based auth with role-based access control
-- **📊 JSON Support**: First-class JSON serialization and deserialization
-- **⚡ Fast Compilation**: Minimal dependencies for quick build times
-- **🛡️ Type Safety**: Full Rust type safety throughout the framework
-- **📝 Comprehensive Examples**: Multiple real-world usage examples included
+<img src="https://raw.githubusercontent.com/AarambhDevHub/ignite/main/assets/ignite-logo.png" alt="Ignite Logo" width="200">
+
+**A blazing fast, lightweight web framework for Rust that ignites your development journey.**
+
+*Embodies the spirit of **Aarambh** (new beginnings) - the spark that ignites your web development journey*
+
+**Built with ❤️ by [Aarambh Dev Hub](https://youtube.com/@aarambhdevhub)**
+
+[![Crates.io](https://img.shields.io/crates/v/ignite.svg?style=for-the-badge&logo=rust&color=orange&labelColor=black)](https://crates.io/crates/ignite)
+[![Downloads](https://img.shields.io/crates/d/ignite.svg?style=for-the-badge&color=red&labelColor=black)](https://crates.io/crates/ignite)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge&labelColor=black)](https://opensource.org/licenses/MIT)
+
+[![Build Status](https://img.shields.io/github/actions/workflow/status/AarambhDevHub/ignite/ci.yml?branch=main&style=for-the-badge&logo=github&labelColor=black)](https://github.com/AarambhDevHub/ignite/actions)
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg?style=for-the-badge&logo=rust&labelColor=black)](https://www.rust-lang.org/)
+[![Docs](https://img.shields.io/docsrs/ignite?style=for-the-badge&logo=rust&color=blue&labelColor=black)](https://docs.rs/ignite)
+
+[![GitHub Stars](https://img.shields.io/github/stars/AarambhDevHub/ignite?style=social&logo=github)](https://github.com/AarambhDevHub/ignite/stargazers)
+[![YouTube](https://img.shields.io/youtube/channel/subscribers/YOUR_CHANNEL_ID?style=social&logo=youtube&label=Aarambh%20Dev%20Hub)](https://youtube.com/@aarambhdevhub)
+
+<img src="https://raw.githubusercontent.com/AarambhDevHub/ignite/main/assets/ignite-banner.png" alt="Ignite Banner" width="100%">
+
+</div>
+
+---
+
+## ⚡ Why Ignite?
+
+Ignite embodies the spirit of **Aarambh** (new beginnings) - the spark that ignites your web development journey. Built for developers who demand speed, simplicity, and power.
+
+- **🚀 Blazing Fast**: Built on Hyper and Tokio for maximum async performance
+- **🪶 Lightweight**: Minimal overhead, maximum efficiency
+- **🔥 Powerful**: Advanced routing, middleware, and built-in features
+- **⚡ Energetic**: Modern APIs that energize your development
+- **🎯 Developer-First**: Clean, intuitive, and productive
+- **🛡️ Secure**: Built-in security features and best practices
+- **🍪 Cookie Management**: Full-featured cookie handling with security attributes
+- **🔧 Middleware**: Composable middleware architecture for cross-cutting concerns
+
+---
 
 ## 📋 Table of Contents
 
@@ -29,200 +58,118 @@ Built on Hyper and Tokio for maximum async performance
 - [Contributing](#-contributing)
 - [License](#-license)
 
+---
+
 ## 🛠️ Installation
 
-Add this to your `Cargo.toml`:
+Add Ignite to your `Cargo.toml`:
 
-```toml
+```
 [dependencies]
-mini-web-framework = "0.1.0"
+ignite = "0.1.0"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing-subscriber = "0.3"
 ```
 
+---
+
 ## 🚀 Quick Start
 
-Create a simple web server in just a few lines:
+Create your first Ignite application:
 
-```rust
-use mini_web_framework::{Router, Server, Request, Response, Result, handler_fn};
-use std::net::SocketAddr;
+```
+use ignite::{Router, Server, Request, Response, Result, handler_fn};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let router = Router::new()
-        .get("/", handler_fn(hello_world))
+        .get("/", handler_fn(hello_ignite))
         .get("/users/:id", handler_fn(get_user))
-        .post("/users", handler_fn(create_user));
+        .post("/api/data", handler_fn(create_data));
 
-    let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
-    let server = Server::new(router, addr);
+    let server = Server::new(router, "127.0.0.1:3000".parse().unwrap());
 
-    println!("🚀 Server running on http://{}", addr);
-    server.run().await.unwrap();
+    println!("🔥 Igniting server...");
+    server.ignite().await.unwrap(); // Custom ignite method!
     Ok(())
 }
 
-async fn hello_world(_req: Request) -> Result<Response> {
-    Ok(Response::text("Hello, World! 🌍"))
+async fn hello_ignite(_req: Request) -> Result<Response> {
+    Ok(Response::html(r#"
+        <h1>🔥 Welcome to Ignite!</h1>
+        <p>Your web development journey starts here!</p>
+    "#))
 }
 
 async fn get_user(req: Request) -> Result<Response> {
     let user_id = req.param("id").unwrap_or(&"unknown".to_string());
-    Ok(Response::text(format!("User ID: {}", user_id)))
+    Ok(Response::json(serde_json::json!({
+        "message": "User ignited!",
+        "user_id": user_id,
+        "framework": "Ignite 🔥"
+    }))?)
 }
 
-async fn create_user(req: Request) -> Result<Response> {
-    let user_data: serde_json::Value = req.json()?;
-    Response::json(user_data)
-}
-```
-
-## 🧭 Core Features
-
-### Request & Response Handling
-
-```rust
-// Access request data
-let method = req.method;
-let path = req.uri.path();
-let user_agent = req.header("User-Agent");
-let json_data: MyStruct = req.json()?;
-let cookies = req.cookies();
-let user_id = req.param("id");
-let search = req.query("q");
-
-// Create responses
-Response::text("Plain text")
-Response::html("<h1>HTML content</h1>")
-Response::json(my_data)
-Response::not_found()
-    .add_cookie(Cookie::new("session", "abc123"))
-```
-
-### Built-in Error Handling
-
-```rust
-use mini_web_framework::{Error, Result};
-
-async fn handler(req: Request) -> Result<Response> {
-    let data = req.json::<MyData>()
-        .map_err(|_| Error::BadRequest("Invalid JSON".into()))?;
-
-    Ok(Response::json(data)?)
+async fn create_data(req: Request) -> Result<Response> {
+    let data: serde_json::Value = req.json()?;
+    Ok(Response::json(serde_json::json!({
+        "status": "success",
+        "received": data,
+        "ignited_at": std::time::SystemTime::now()
+    }))?)
 }
 ```
 
-## 🛣️ Routing
+---
 
-### Basic Routes with HTTP Methods
+## 🔥 Core Features
 
-```rust
+### **🛣️ Advanced Routing**
+
+```
 let router = Router::new()
+    // Basic routes
     .get("/", handler_fn(home))
-    .post("/users", handler_fn(create_user))
-    .put("/users/:id", handler_fn(update_user))
-    .delete("/users/:id", handler_fn(delete_user))
+    .post("/api/users", handler_fn(create_user))
+    .put("/api/users/:id", handler_fn(update_user))
+    .delete("/api/users/:id", handler_fn(delete_user))
+
+    // Route parameters
+    .get("/users/:id/posts/:post_id", handler_fn(get_post))
+
+    // Wildcard routes for static files
+    .get("/*path", handler_fn(serve_static))
+
+    // Custom 404 handler
     .not_found(handler_fn(not_found));
 ```
 
-### Advanced Parameter Handling
+### **🍪 Built-in Cookie Management**
 
-```rust
-// Route parameters: /users/:id/posts/:post_id
-async fn get_post(req: Request) -> Result<Response> {
-    let user_id = req.param("id").unwrap();
-    let post_id = req.param("post_id").unwrap();
-    // Handle the request...
-}
+Secure, easy-to-use cookie handling with all security attributes:
 
-// Query parameters: /search?q=rust&limit=10
-async fn search(req: Request) -> Result<Response> {
-    let query = req.query("q").unwrap_or(&"".to_string());
-    let limit = req.query("limit")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(20);
-    // Handle search...
-}
 ```
+use ignite::{Cookie, SameSite};
 
-### Wildcard Routes for Static Files
-
-```rust
-let router = Router::new()
-    .get("/*path", handler_fn(serve_static_files));
-
-async fn serve_static_files(req: Request) -> Result<Response> {
-    let path = req.param("path").unwrap();
-    // Serve file from static directory
-}
-```
-
-## 🔧 Middleware
-
-### Built-in Middleware
-
-```rust
-use mini_web_framework::middleware::{LoggerMiddleware, CorsMiddleware, AuthMiddleware};
-
-let router = Router::new()
-    .middleware(LoggerMiddleware)
-    .middleware(CorsMiddleware::new().allow_origin("https://example.com"))
-    .middleware(AuthMiddleware::new("secret-token")
-        .protect_path("/api/")
-        .protect_path("/admin/"));
-```
-
-### Custom Middleware
-
-```rust
-use mini_web_framework::{Middleware, async_trait};
-
-struct RateLimitMiddleware {
-    max_requests: usize,
-}
-
-#[async_trait]
-impl Middleware for RateLimitMiddleware {
-    async fn before(&self, req: &mut Request) -> Result<()> {
-        // Check rate limits
-        Ok(())
-    }
-
-    async fn after(&self, res: &mut Response) -> Result<()> {
-        // Add rate limit headers
-        res.headers.insert("X-RateLimit-Remaining", "99".parse().unwrap());
-        Ok(())
-    }
-}
-```
-
-## 🍪 Cookie Management
-
-Built-in cookie support with security features:
-
-```rust
-use mini_web_framework::{Cookie, SameSite};
-
-// Set cookies
-let session_cookie = Cookie::new("session", "user123")
+// Set secure cookies
+let session = Cookie::new("session", "user123")
     .path("/")
     .max_age(3600) // 1 hour
     .http_only()
     .secure()
     .same_site(SameSite::Lax);
 
-let response = Response::text("Login successful")
-    .add_cookie(session_cookie);
+let response = Response::text("Session ignited!")
+    .add_cookie(session);
 
 // Read cookies
 async fn protected_route(req: Request) -> Result<Response> {
-    let session = req.cookie("session")
-        .ok_or_else(|| Error::Unauthorized)?;
+    let username = req.cookie("session")
+        .unwrap_or("anonymous".to_string());
 
-    Ok(Response::text(format!("Welcome back, {}!", session)))
+    Ok(Response::text(format!("Welcome back, {}!", username)))
 }
 
 // Remove cookies
@@ -230,21 +177,37 @@ let response = Response::text("Logged out")
     .remove_cookie("session");
 ```
 
-## 🔐 Authentication
+### **🛡️ Powerful Middleware System**
 
-Complete authentication system with middleware:
+Composable middleware for authentication, logging, CORS, and more:
 
-```rust
+```
+use ignite::middleware::{AuthMiddleware, CorsMiddleware, LoggerMiddleware};
+
+let router = Router::new()
+    // Global middleware
+    .middleware(LoggerMiddleware)
+    .middleware(CorsMiddleware::new()
+        .allow_origin("https://example.com"))
+
+    // Protected routes
+    .middleware(AuthMiddleware::new("secret-token")
+        .protect_path("/api/admin")
+        .protect_path("/dashboard"))
+
+    .get("/api/admin/users", handler_fn(admin_users))
+    .get("/dashboard", handler_fn(dashboard));
+```
+
+### **🔐 Authentication & Authorization**
+
+Built-in session management and role-based access control:
+
+```
+// Custom authentication middleware
 #[derive(Clone)]
 struct AuthMiddleware {
     protected_paths: Vec<String>,
-}
-
-impl AuthMiddleware {
-    fn protect_paths(mut self, paths: Vec<&str>) -> Self {
-        self.protected_paths = paths.into_iter().map(String::from).collect();
-        self
-    }
 }
 
 #[async_trait]
@@ -261,68 +224,287 @@ impl Middleware for AuthMiddleware {
         Ok(())
     }
 }
+```
 
-// Usage
+---
+
+## 🛣️ Routing
+
+### **Parameter Extraction**
+
+```
+// Route: /users/:id/posts/:post_id
+async fn get_post(req: Request) -> Result<Response> {
+    let user_id = req.param("id").unwrap();
+    let post_id = req.param("post_id").unwrap();
+
+    Response::json(serde_json::json!({
+        "user_id": user_id,
+        "post_id": post_id
+    }))
+}
+```
+
+### **Query Parameters**
+
+```
+// URL: /search?q=rust&limit=10&page=1
+async fn search(req: Request) -> Result<Response> {
+    let query = req.query("q").unwrap_or(&"".to_string());
+    let limit = req.query("limit")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(20);
+    let page = req.query("page")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(1);
+
+    // Perform search...
+    Response::json(serde_json::json!({
+        "query": query,
+        "limit": limit,
+        "page": page,
+        "results": []
+    }))
+}
+```
+
+### **Wildcard Routes**
+
+```
+// Serve static files: /*path matches any path
+.get("/*path", handler_fn(serve_static))
+
+async fn serve_static(req: Request) -> Result<Response> {
+    let path = req.param("path").unwrap();
+    // Serve file from static directory with security checks
+    serve_file_from_directory("./static", path).await
+}
+```
+
+---
+
+## 🔧 Middleware
+
+### **Built-in Middleware**
+
+| Middleware | Purpose | Usage |
+|------------|---------|-------|
+| `LoggerMiddleware` | Request/response logging | `.middleware(LoggerMiddleware)` |
+| `CorsMiddleware` | Cross-origin resource sharing | `.middleware(CorsMiddleware::new())` |
+| `AuthMiddleware` | Authentication | `.middleware(AuthMiddleware::new("token"))` |
+
+### **Custom Middleware**
+
+Create your own middleware by implementing the `Middleware` trait:
+
+```
+use ignite::{Middleware, async_trait};
+
+struct RateLimitMiddleware {
+    max_requests: usize,
+    window: Duration,
+}
+
+#[async_trait]
+impl Middleware for RateLimitMiddleware {
+    async fn before(&self, req: &mut Request) -> Result<()> {
+        // Rate limiting logic
+        Ok(())
+    }
+
+    async fn after(&self, res: &mut Response) -> Result<()> {
+        // Add rate limit headers
+        res.headers.insert(
+            "X-RateLimit-Remaining",
+            "99".parse().unwrap()
+        );
+        Ok(())
+    }
+}
+```
+
+---
+
+## 🍪 Cookie Management
+
+### **Setting Cookies**
+
+```
+use ignite::{Cookie, SameSite};
+
+// Session cookie
+let session = Cookie::new("session", "abc123")
+    .path("/")
+    .max_age(3600)
+    .http_only()
+    .same_site(SameSite::Lax);
+
+// Persistent cookie
+let preferences = Cookie::new("theme", "dark")
+    .path("/")
+    .max_age(86400 * 30) // 30 days
+    .same_site(SameSite::Strict);
+
+// Secure cookie
+let secure_token = Cookie::new("csrf_token", "xyz789")
+    .path("/")
+    .secure()
+    .http_only()
+    .same_site(SameSite::Strict);
+
+Response::text("Cookies set!")
+    .add_cookie(session)
+    .add_cookie(preferences)
+    .add_cookie(secure_token)
+```
+
+### **Reading Cookies**
+
+```
+async fn handle_request(req: Request) -> Result<Response> {
+    // Get all cookies
+    let cookies = req.cookies();
+
+    // Get specific cookie
+    let session = req.cookie("session");
+
+    // Check if cookie exists
+    if cookies.contains("user_preferences") {
+        // Handle with preferences
+    }
+
+    Response::json(cookies.all())
+}
+```
+
+### **Cookie Security**
+
+```
+// Production-ready secure cookie
+let secure_session = Cookie::new("session", session_id)
+    .path("/")
+    .max_age(3600)
+    .http_only()        // Prevent XSS
+    .secure()           // HTTPS only
+    .same_site(SameSite::Strict); // CSRF protection
+```
+
+---
+
+## 🔐 Authentication
+
+### **Session-Based Authentication**
+
+```
+async fn login(req: Request) -> Result<Response> {
+    let credentials: LoginForm = req.json()?;
+
+    if validate_credentials(&credentials).await? {
+        let session_token = generate_session_token();
+
+        let session_cookie = Cookie::new("session", session_token)
+            .path("/")
+            .max_age(3600)
+            .http_only()
+            .same_site(SameSite::Lax);
+
+        Ok(Response::json(serde_json::json!({
+            "status": "success",
+            "message": "Login successful"
+        }))?.add_cookie(session_cookie))
+    } else {
+        Err(Error::Unauthorized)
+    }
+}
+
+async fn logout(_req: Request) -> Result<Response> {
+    Ok(Response::json(serde_json::json!({
+        "status": "success",
+        "message": "Logged out"
+    }))?.remove_cookie("session"))
+}
+```
+
+### **Protected Routes with Middleware**
+
+```
 let router = Router::new()
     .middleware(AuthMiddleware::new()
-        .protect_paths(vec!["/admin", "/dashboard"]))
+        .protect_paths(vec!["/dashboard", "/admin", "/api/protected"]))
+
+    // These routes are automatically protected
+    .get("/dashboard", handler_fn(dashboard))
     .get("/admin", handler_fn(admin_panel))
-    .get("/dashboard", handler_fn(dashboard));
+    .get("/api/protected/data", handler_fn(protected_data));
 ```
+
+---
 
 ## 📚 Examples
 
-### 1. Basic Server
-```bash
+Ignite comes with comprehensive examples to get you started:
+
+### **🏠 Basic Server**
+```
 cargo run --example basic_server
+# http://127.0.0.1:3000
 ```
 Demonstrates basic routing, JSON responses, and parameter extraction.
 
-### 2. Middleware Demo
-```bash
-cargo run --example middleware_example
+### **🔐 Authentication System**
 ```
-Shows authentication, CORS, and logging middleware in action.
-
-### 3. Cookie Framework
-```bash
-cargo run --example cookie_framework_example
-```
-Built-in cookie functionality with security features.
-
-### 4. Login System
-```bash
 cargo run --example login_example
+# http://127.0.0.1:3008
 ```
-Complete authentication system with session management.
+Complete login/logout system with session management and protected routes.
 
-### 5. Login with Middleware
-```bash
+### **🛡️ Middleware Showcase**
+```
 cargo run --example login_with_middleware_example
+# http://127.0.0.1:3009
 ```
-Advanced authentication using middleware for cleaner code.
+Advanced authentication using middleware with role-based access control.
 
-### 6. Custom Middleware
-```bash
+### **🍪 Cookie Management**
+```
+cargo run --example cookie_framework_example
+# http://127.0.0.1:3006
+```
+Comprehensive cookie handling with security features and session management.
+
+### **⚡ Custom Middleware**
+```
 cargo run --example custom_middleware_example
+# http://127.0.0.1:3004
 ```
-Rate limiting, request validation, and security headers.
+Rate limiting, request validation, security headers, and custom middleware examples.
 
-### 7. JSON API
-```bash
+### **📊 JSON API**
+```
 cargo run --example json_api
+# http://127.0.0.1:3002
 ```
-RESTful API for managing todos with in-memory storage.
+RESTful API for managing todos with in-memory storage and CRUD operations.
 
-### 8. File Server
-```bash
-cargo run --example file_server
+### **📁 File Server**
 ```
-Static file server with security features and MIME type detection.
+cargo run --example file_server
+# http://127.0.0.1:3003
+```
+Static file server with security features, MIME type detection, and directory traversal protection.
+
+### **🎭 Middleware Demo**
+```
+cargo run --example middleware_example
+# http://127.0.0.1:3001
+```
+CORS, authentication, and logging middleware examples.
+
+---
 
 ## 🔌 API Reference
 
-### Router Methods
+### **Router**
 
 | Method | Description |
 |--------|-------------|
@@ -334,42 +516,42 @@ Static file server with security features and MIME type detection.
 | `.middleware(middleware)` | Add middleware |
 | `.not_found(handler)` | Set 404 handler |
 
-### Request Methods
+### **Request**
 
-| Method | Description |
-|--------|-------------|
-| `req.param(key)` | Get route parameter |
-| `req.query(key)` | Get query parameter |
-| `req.header(key)` | Get header value |
-| `req.json<T>()` | Parse JSON body |
-| `req.cookies()` | Get all cookies |
-| `req.cookie(key)` | Get specific cookie |
+| Method | Description | Example |
+|--------|-------------|---------|
+| `req.param(key)` | Get route parameter | `req.param("id")` |
+| `req.query(key)` | Get query parameter | `req.query("limit")` |
+| `req.header(key)` | Get header value | `req.header("User-Agent")` |
+| `req.json<T>()` | Parse JSON body | `req.json::<User>()?` |
+| `req.cookies()` | Get all cookies | `req.cookies().all()` |
+| `req.cookie(key)` | Get specific cookie | `req.cookie("session")` |
 
-### Response Methods
+### **Response**
 
-| Method | Description |
-|--------|-------------|
-| `Response::text(content)` | Create text response |
-| `Response::html(content)` | Create HTML response |
-| `Response::json(data)` | Create JSON response |
-| `Response::not_found()` | Create 404 response |
-| `.add_cookie(cookie)` | Add cookie to response |
-| `.remove_cookie(name)` | Remove cookie |
+| Method | Description | Example |
+|--------|-------------|---------|
+| `Response::text(content)` | Text response | `Response::text("Hello")` |
+| `Response::html(content)` | HTML response | `Response::html("<h1>Hi</h1>")` |
+| `Response::json(data)` | JSON response | `Response::json(user)?` |
+| `Response::not_found()` | 404 response | `Response::not_found()` |
+| `.add_cookie(cookie)` | Add cookie | `.add_cookie(session)` |
+| `.remove_cookie(name)` | Remove cookie | `.remove_cookie("session")` |
 
-### Cookie Builder
+### **Cookie Builder**
 
-| Method | Description |
-|--------|-------------|
-| `Cookie::new(name, value)` | Create cookie |
-| `.path(path)` | Set cookie path |
-| `.max_age(seconds)` | Set expiration |
-| `.secure()` | HTTPS only |
-| `.http_only()` | No JavaScript access |
-| `.same_site(policy)` | CSRF protection |
+| Method | Description | Example |
+|--------|-------------|---------|
+| `Cookie::new(name, value)` | Create cookie | `Cookie::new("user", "john")` |
+| `.path(path)` | Set cookie path | `.path("/")` |
+| `.max_age(seconds)` | Set expiration | `.max_age(3600)` |
+| `.secure()` | HTTPS only | `.secure()` |
+| `.http_only()` | No JavaScript access | `.http_only()` |
+| `.same_site(policy)` | CSRF protection | `.same_site(SameSite::Lax)` |
 
-### Middleware Trait
+### **Middleware Trait**
 
-```rust
+```
 #[async_trait]
 pub trait Middleware: Send + Sync {
     async fn before(&self, req: &mut Request) -> Result<()> { Ok(()) }
@@ -377,74 +559,142 @@ pub trait Middleware: Send + Sync {
 }
 ```
 
+---
+
 ## 🧪 Testing
 
-Run the test suite:
+### **Run Tests**
 
-```bash
+```
 # Run all tests
 cargo test
 
 # Run with verbose output
 cargo test -- --nocapture
 
-# Run specific test file
+# Run integration tests
 cargo test --test integration_test
 
-# Test a specific example
-cargo run --example basic_server &
-curl http://127.0.0.1:3000/
+# Run specific test
+cargo test test_authentication
 ```
 
-### Example Test
+### **Test Your Application**
 
-```rust
+```
+# Start server
+cargo run --example basic_server &
+
+# Test endpoints
+curl http://127.0.0.1:3000/
+curl http://127.0.0.1:3000/users/123
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"name":"John"}' \
+     http://127.0.0.1:3000/api/data
+```
+
+### **Example Test**
+
+```
 #[tokio::test]
 async fn test_cookie_authentication() {
     let router = Router::new()
         .get("/protected", handler_fn(protected_route));
 
-    // Test without cookie
-    let req = Request::new(Method::GET, "/protected".parse().unwrap(), /* ... */);
+    // Test without cookie (should fail)
+    let req = Request::new(Method::GET, "/protected".parse().unwrap(), /*...*/);
     let response = router.handle(req).await;
-    assert!(response.is_err()); // Should be unauthorized
+    assert!(matches!(response, Err(Error::Unauthorized)));
 
-    // Test with valid cookie
-    let mut req_with_cookie = Request::new(/* ... */);
-    req_with_cookie.headers.insert("Cookie", "session=valid_session".parse().unwrap());
+    // Test with valid cookie (should succeed)
+    let mut req_with_cookie = Request::new(/*...*/);
+    req_with_cookie.headers.insert(
+        "Cookie",
+        "session=valid_token".parse().unwrap()
+    );
     let response = router.handle(req_with_cookie).await.unwrap();
     assert_eq!(response.status, StatusCode::OK);
 }
 ```
 
+---
+
 ## 🎯 Performance
+
+### **Benchmarks**
 
 - **Zero-copy**: Efficient request/response handling with minimal allocations
 - **Async**: Built on Tokio for excellent concurrency
-- **Lightweight**: Minimal overhead compared to larger frameworks
+- **Lightweight**: ~50KB binary overhead
 - **Fast compilation**: Small dependency tree for quick builds
 - **Memory efficient**: Smart use of Arc and shared state
 
+### **Performance Tips**
+
+```
+// Use connection pooling
+let router = Router::new()
+    .middleware(ConnectionPoolMiddleware::new())
+
+    // Cache static responses
+    .middleware(CacheMiddleware::new())
+
+    // Compress responses
+    .middleware(CompressionMiddleware::new());
+```
+
+---
+
 ## 🔒 Security Features
 
-- **Path traversal protection** in static file serving
-- **CORS middleware** for cross-origin requests
-- **Authentication middleware** with configurable paths
-- **Security headers middleware** (CSP, XSS protection, etc.)
-- **Rate limiting middleware** to prevent abuse
-- **Secure cookie attributes** (HttpOnly, Secure, SameSite)
-- **Session management** with proper invalidation
+### **Built-in Security**
+
+- ✅ **Path traversal protection** in static file serving
+- ✅ **CORS middleware** for cross-origin requests
+- ✅ **Authentication middleware** with configurable paths
+- ✅ **Security headers middleware** (CSP, XSS protection, etc.)
+- ✅ **Rate limiting middleware** to prevent abuse
+- ✅ **Secure cookie attributes** (HttpOnly, Secure, SameSite)
+- ✅ **Session management** with proper invalidation
+
+### **Security Best Practices**
+
+```
+// Secure cookie configuration
+let secure_cookie = Cookie::new("session", session_token)
+    .path("/")
+    .max_age(3600)
+    .http_only()     // Prevent XSS
+    .secure()        // HTTPS only in production
+    .same_site(SameSite::Strict); // CSRF protection
+
+// Security headers
+let router = Router::new()
+    .middleware(SecurityHeadersMiddleware::new()
+        .csp("default-src 'self'")
+        .hsts(31536000)
+        .frame_deny());
+```
+
+---
 
 ## 🛠️ Development
 
-### Project Structure
+### **Project Structure**
 
 ```
-mini-web-framework/
+ignite/
 ├── src/
 │   ├── lib.rs              # Main library exports
-│   ├── router/             # Routing system with wildcards
+│   ├── router/             # Routing with wildcards
+│   │   ├── mod.rs
+│   │   ├── route.rs
+│   │   └── method.rs
 │   ├── middleware/         # Middleware implementations
+│   │   ├── mod.rs
+│   │   ├── logger.rs
+│   │   ├── cors.rs
+│   │   └── auth.rs
 │   ├── request/            # Request handling with cookies
 │   ├── response/           # Response building with cookies
 │   ├── handler/            # Handler traits and functions
@@ -454,80 +704,145 @@ mini-web-framework/
 │   └── utils/              # Utility functions
 ├── examples/               # 8+ comprehensive examples
 │   ├── basic_server.rs
-│   ├── middleware_example.rs
-│   ├── cookie_framework_example.rs
 │   ├── login_example.rs
-│   ├── login_with_middleware_example.rs
+│   ├── cookie_framework_example.rs
 │   ├── custom_middleware_example.rs
+│   ├── login_with_middleware_example.rs
+│   ├── middleware_example.rs
 │   ├── json_api.rs
 │   └── file_server.rs
 ├── tests/                  # Integration tests
+├── Cargo.toml
 └── README.md
 ```
 
-### Building and Testing
+### **Building**
 
-```bash
+```
 # Debug build
 cargo build
 
-# Release build
+# Release build (optimized)
 cargo build --release
 
 # Run all examples
-find examples -name "*.rs" -exec basename {} .rs \; | xargs -I {} cargo run --example {}
+cargo run --example basic_server
+cargo run --example login_example
+cargo run --example cookie_framework_example
 
-# Run tests with coverage
-cargo test
-
-# Check code style
+# Check code quality
 cargo fmt
 cargo clippy
+cargo test
 
 # Generate documentation
 cargo doc --open
 ```
 
+---
+
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+We welcome contributions! Here's how you can help make Ignite even better:
 
-### Guidelines
+### **Ways to Contribute**
+
+- 🐛 **Bug Reports**: Found a bug? Open an issue!
+- ✨ **Feature Requests**: Have an idea? We'd love to hear it!
+- 📖 **Documentation**: Help improve our docs
+- 🧪 **Tests**: Add more test coverage
+- 🔧 **Code**: Submit pull requests
+
+### **Development Setup**
+
+```
+# Clone the repository
+git clone https://github.com/AarambhDevHub/ignite.git
+cd ignite
+
+# Install dependencies and build
+cargo build
+
+# Run tests
+cargo test --all
+
+# Run examples
+cargo run --example basic_server
+```
+
+### **Guidelines**
 
 1. **Code Quality**: Run `cargo fmt` and `cargo clippy` before submitting
 2. **Tests**: Add tests for new features
 3. **Documentation**: Update README and add doc comments
 4. **Examples**: Provide examples for new features
+5. **Compatibility**: Ensure backward compatibility when possible
 
-### Development Setup
+### **Pull Request Process**
 
-```bash
-git clone https://github.com/AarambhDevHub/mini-web-framework.git
-cd mini-web-framework
-cargo build
-cargo test --all
-```
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
 
 ## 📝 Changelog
 
-### v0.1.0 - Current Release
-- ✅ Basic routing with parameters and wildcards
+### **v0.1.0** - Initial Release 🎉
+
+#### **Core Features**
+- ✅ Advanced routing with parameters and wildcards
 - ✅ Comprehensive middleware system
 - ✅ Built-in cookie management with security features
 - ✅ Authentication and authorization examples
-- ✅ Static file serving with security
-- ✅ JSON API support
-- ✅ 8+ comprehensive examples
-- ✅ Rate limiting and custom middleware
-- ✅ Session-based authentication
-- ✅ Role-based access control
-- ✅ Request logging and security headers
+- ✅ Static file serving with security protections
+- ✅ JSON API support with serialization
+- ✅ Request/response handling with proper error management
+
+#### **Middleware**
+- ✅ Authentication middleware with path protection
+- ✅ CORS middleware with configurable origins
+- ✅ Request logging middleware
+- ✅ Rate limiting middleware
+- ✅ Security headers middleware
+- ✅ Custom middleware support
+
+#### **Examples**
+- ✅ Basic server with routing
+- ✅ Complete authentication system
+- ✅ Cookie management showcase
+- ✅ Custom middleware implementations
+- ✅ JSON API with CRUD operations
+- ✅ Static file server
+- ✅ Middleware integration examples
+
+#### **Security**
+- ✅ Secure cookie attributes
+- ✅ Path traversal protection
+- ✅ Session management
+- ✅ CSRF protection
+- ✅ XSS prevention
+
+---
 
 ## 🙏 Acknowledgments
 
-- Built on [Hyper](https://hyper.rs/) for HTTP handling
-- Uses [Tokio](https://tokio.rs/) for async runtime
-- Inspired by modern web frameworks like Express.js and Actix-web
+### **Built on Strong Foundations**
+
+- **[Hyper](https://hyper.rs/)** - High-performance HTTP implementation
+- **[Tokio](https://tokio.rs/)** - Asynchronous runtime for Rust
+- **Community** - Inspired by frameworks like Actix-web, Warp, and Axum
+
+### **Special Thanks**
+
+- **Rust Community** - For creating an amazing ecosystem
+- **Contributors** - Everyone who helps make Ignite better
+- **Early Adopters** - Thanks for trying Ignite and providing feedback!
+
+---
+
 
 ## 📄 License
 
@@ -538,32 +853,64 @@ If you find this project helpful, consider buying me a coffee!
 [Buy Me a Coffee](https://buymeacoffee.com/aarambhdevhub)
 
 
+---
+
 ## 🚀 Getting Started
 
-Ready to build something awesome? Check out our comprehensive examples:
+Ready to ignite your web development? Let's get started:
 
-```bash
-git clone https://github.com/AarambhDevHub/mini-web-framework.git
-cd mini-web-framework
+```
+# Create a new project
+cargo new my-ignite-app
+cd my-ignite-app
 
-# Try the basic server
-cargo run --example basic_server
+# Add Ignite to Cargo.toml
+echo '[dependencies]
+ignite = "0.1.0"
+tokio = { version = "1.40", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"' >> Cargo.toml
 
-# Test authentication system
-cargo run --example login_with_middleware_example
+# Create your first Ignite app
+echo 'use ignite::{Router, Server, Response, handler_fn};
 
-# Explore cookie functionality
-cargo run --example cookie_framework_example
+#[tokio::main]
+async fn main() -> ignite::Result<()> {
+    let router = Router::new()
+        .get("/", handler_fn(|_| async {
+            Ok(Response::html("<h1>🔥 Welcome to Ignite!</h1>"))
+        }));
+
+    let server = Server::new(router, "127.0.0.1:3000".parse().unwrap());
+    println!("🔥 Server igniting on http://127.0.0.1:3000");
+    server.ignite().await.unwrap();
+    Ok(())
+}' > src/main.rs
+
+# Run your app
+cargo run
 ```
 
-Visit the running servers and start building! 🎉
+### **Next Steps**
 
-### Quick Links
-- 🏠 **Home**: `http://127.0.0.1:3000/`
-- 🍪 **Cookies**: `http://127.0.0.1:3006/`
-- 🔐 **Login**: `http://127.0.0.1:3008/`
-- 🛡️ **Middleware**: `http://127.0.0.1:3009/`
+1. 📖 **Explore Examples**: Check out our comprehensive examples
+2. 🛠️ **Build Something**: Create your first API or web app
+3. 🤝 **Join Community**: Connect with other Ignite developers
+4. 📺 **Learn More**: Subscribe to [Aarambh Dev Hub](https://youtube.com/@aarambhdevhub)
 
-***
+---
 
-**Built with ❤️ in Rust** - A powerful, secure, and developer-friendly web framework for modern applications.
+<div align="center">
+
+## 🔥 **Ignite. Build. Deploy.** 🔥
+
+**Built with ❤️ by [Aarambh Dev Hub](https://youtube.com/@aarambhdevhub)**
+
+*Where every line of code ignites possibilities.*
+
+[![YouTube](https://img.shields.io/badge/YouTube-Aarambh%20Dev%20Hub-red?style=for-the-badge&logo=youtube)](https://youtube.com/@aarambhdevhub)
+[![GitHub](https://img.shields.io/badge/GitHub-ignite-black?style=for-the-badge&logo=github)](https://github.com/AarambhDevHub/ignite)
+[![Crates.io](https://img.shields.io/badge/Crates.io-ignite-orange?style=for-the-badge&logo=rust)](https://crates.io/crates/ignite)
+
+</div>
+```

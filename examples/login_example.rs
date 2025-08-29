@@ -1,8 +1,4 @@
-
-use mini_web_framework::{
-    Router, Server, Request, Response, Result, handler_fn, Error,
-    Cookie, SameSite,
-};
+use ignite::{handler_fn, Cookie, Error, Request, Response, Result, Router, SameSite, Server};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tracing_subscriber;
@@ -26,25 +22,33 @@ impl UserDB {
         let mut users = HashMap::new();
 
         // Add some test users
-        users.insert("admin".to_string(), User {
-            username: "admin".to_string(),
-            password: "admin123".to_string(), // Never store plain passwords in production!
-            email: "admin@example.com".to_string(),
-            role: "admin".to_string(),
-        });
+        users.insert(
+            "admin".to_string(),
+            User {
+                username: "admin".to_string(),
+                password: "admin123".to_string(), // Never store plain passwords in production!
+                email: "admin@example.com".to_string(),
+                role: "admin".to_string(),
+            },
+        );
 
-        users.insert("user".to_string(), User {
-            username: "user".to_string(),
-            password: "user123".to_string(),
-            email: "user@example.com".to_string(),
-            role: "user".to_string(),
-        });
+        users.insert(
+            "user".to_string(),
+            User {
+                username: "user".to_string(),
+                password: "user123".to_string(),
+                email: "user@example.com".to_string(),
+                role: "user".to_string(),
+            },
+        );
 
         Self { users }
     }
 
     fn validate(&self, username: &str, password: &str) -> Option<&User> {
-        self.users.get(username).filter(|user| user.password == password)
+        self.users
+            .get(username)
+            .filter(|user| user.password == password)
     }
 
     fn get_user(&self, username: &str) -> Option<&User> {
@@ -59,27 +63,42 @@ async fn main() -> Result<()> {
     let user_db = UserDB::new();
 
     let router = Router::new()
-        .get("/", handler_fn({
-            let db = user_db.clone();
-            move |req| home(req, db.clone())
-        }))
+        .get(
+            "/",
+            handler_fn({
+                let db = user_db.clone();
+                move |req| home(req, db.clone())
+            }),
+        )
         .get("/login", handler_fn(login_form))
-        .post("/login", handler_fn({
-            let db = user_db.clone();
-            move |req| login_process(req, db.clone())
-        }))
-        .get("/dashboard", handler_fn({
-            let db = user_db.clone();
-            move |req| dashboard(req, db.clone())
-        }))
-        .get("/profile", handler_fn({
-            let db = user_db.clone();
-            move |req| profile(req, db.clone())
-        }))
-        .get("/admin", handler_fn({
-            let db = user_db.clone();
-            move |req| admin_panel(req, db.clone())
-        }))
+        .post(
+            "/login",
+            handler_fn({
+                let db = user_db.clone();
+                move |req| login_process(req, db.clone())
+            }),
+        )
+        .get(
+            "/dashboard",
+            handler_fn({
+                let db = user_db.clone();
+                move |req| dashboard(req, db.clone())
+            }),
+        )
+        .get(
+            "/profile",
+            handler_fn({
+                let db = user_db.clone();
+                move |req| profile(req, db.clone())
+            }),
+        )
+        .get(
+            "/admin",
+            handler_fn({
+                let db = user_db.clone();
+                move |req| admin_panel(req, db.clone())
+            }),
+        )
         .get("/logout", handler_fn(logout));
 
     let addr: SocketAddr = "127.0.0.1:3008".parse().unwrap();
@@ -96,8 +115,8 @@ async fn main() -> Result<()> {
 
 // Helper function to parse form data
 fn parse_form_data(body: &[u8]) -> Result<HashMap<String, String>> {
-    let body_str = String::from_utf8(body.to_vec())
-        .map_err(|_| Error::BadRequest("Invalid UTF-8".into()))?;
+    let body_str =
+        String::from_utf8(body.to_vec()).map_err(|_| Error::BadRequest("Invalid UTF-8".into()))?;
 
     let mut form_data = HashMap::new();
     for pair in body_str.split('&') {
@@ -117,7 +136,8 @@ async fn home(req: Request, db: UserDB) -> Result<Response> {
 
     let user_info = if let Some(username) = &current_user {
         if let Some(user) = db.get_user(username) {
-            format!(r#"
+            format!(
+                r#"
                 <div style="background: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0;">
                     <h3>👋 Welcome back, {}!</h3>
                     <p><strong>Email:</strong> {}</p>
@@ -130,8 +150,16 @@ async fn home(req: Request, db: UserDB) -> Result<Response> {
                         <a href="/logout" style="background: #dc3545; color: white; padding: 8px 16px; text-decoration: none; border-radius: 3px;">Logout</a>
                     </div>
                 </div>
-            "#, user.username, user.email, user.role,
-            if user.role == "admin" { r#"<a href="/admin" style="background: #ffc107; color: black; padding: 8px 16px; text-decoration: none; border-radius: 3px; margin-right: 10px;">Admin Panel</a>"# } else { "" })
+            "#,
+                user.username,
+                user.email,
+                user.role,
+                if user.role == "admin" {
+                    r#"<a href="/admin" style="background: #ffc107; color: black; padding: 8px 16px; text-decoration: none; border-radius: 3px; margin-right: 10px;">Admin Panel</a>"#
+                } else {
+                    ""
+                }
+            )
         } else {
             "<p>⚠️ Invalid session</p>".to_string()
         }
@@ -144,7 +172,8 @@ async fn home(req: Request, db: UserDB) -> Result<Response> {
         "#.to_string()
     };
 
-    let html = format!(r#"
+    let html = format!(
+        r#"
         <!DOCTYPE html>
         <html>
         <head>
@@ -179,7 +208,9 @@ async fn home(req: Request, db: UserDB) -> Result<Response> {
             </ul>
         </body>
         </html>
-    "#, user_info);
+    "#,
+        user_info
+    );
 
     Ok(Response::html(html))
 }
@@ -187,11 +218,13 @@ async fn home(req: Request, db: UserDB) -> Result<Response> {
 async fn login_form(req: Request) -> Result<Response> {
     // Redirect if already logged in
     if req.cookie("session_user").is_some() {
-        return Ok(Response::html(r#"
+        return Ok(Response::html(
+            r#"
             <h1>Already Logged In</h1>
             <p>You are already logged in!</p>
             <a href="/">← Go to Home</a>
-        "#));
+        "#,
+        ));
     }
 
     let html = r#"
@@ -242,11 +275,13 @@ async fn login_process(req: Request, db: UserDB) -> Result<Response> {
     let password = form_data.get("password").unwrap_or(&"".to_string()).clone();
 
     if username.is_empty() || password.is_empty() {
-        return Ok(Response::html(r#"
+        return Ok(Response::html(
+            r#"
             <h1>❌ Login Failed</h1>
             <p>Username and password are required.</p>
             <a href="/login">← Try Again</a>
-        "#));
+        "#,
+        ));
     }
 
     if let Some(user) = db.validate(&username, &password) {
@@ -264,7 +299,8 @@ async fn login_process(req: Request, db: UserDB) -> Result<Response> {
             .http_only()
             .same_site(SameSite::Lax);
 
-        let response = Response::html(format!(r#"
+        let response = Response::html(format!(
+            r#"
             <h1>✅ Login Successful!</h1>
             <p>Welcome, <strong>{}</strong>!</p>
             <p>Role: <strong>{}</strong></p>
@@ -275,27 +311,32 @@ async fn login_process(req: Request, db: UserDB) -> Result<Response> {
                 }}, 2000);
             </script>
             <a href="/dashboard">Go to Dashboard</a>
-        "#, user.username, user.role));
+        "#,
+            user.username, user.role
+        ));
 
         Ok(response.add_cookie(session_cookie).add_cookie(role_cookie))
     } else {
-        Ok(Response::html(r#"
+        Ok(Response::html(
+            r#"
             <h1>❌ Login Failed</h1>
             <p>Invalid username or password.</p>
             <a href="/login">← Try Again</a>
-        "#))
+        "#,
+        ))
     }
 }
 
 async fn dashboard(req: Request, db: UserDB) -> Result<Response> {
     // Check authentication
-    let username = req.cookie("session_user")
+    let username = req
+        .cookie("session_user")
         .ok_or_else(|| Error::Unauthorized)?;
 
-    let user = db.get_user(&username)
-        .ok_or_else(|| Error::Unauthorized)?;
+    let user = db.get_user(&username).ok_or_else(|| Error::Unauthorized)?;
 
-    let html = format!(r#"
+    let html = format!(
+        r#"
         <!DOCTYPE html>
         <html>
         <head>
@@ -337,20 +378,29 @@ async fn dashboard(req: Request, db: UserDB) -> Result<Response> {
             </div>
         </body>
         </html>
-    "#, user.username, user.email, user.role,
-    if user.role == "admin" { r#"<a href="/admin" class="btn-warning">⚙️ Admin Panel</a>"# } else { "" });
+    "#,
+        user.username,
+        user.email,
+        user.role,
+        if user.role == "admin" {
+            r#"<a href="/admin" class="btn-warning">⚙️ Admin Panel</a>"#
+        } else {
+            ""
+        }
+    );
 
     Ok(Response::html(html))
 }
 
 async fn profile(req: Request, db: UserDB) -> Result<Response> {
-    let username = req.cookie("session_user")
+    let username = req
+        .cookie("session_user")
         .ok_or_else(|| Error::Unauthorized)?;
 
-    let user = db.get_user(&username)
-        .ok_or_else(|| Error::Unauthorized)?;
+    let user = db.get_user(&username).ok_or_else(|| Error::Unauthorized)?;
 
-    let html = format!(r#"
+    let html = format!(
+        r#"
         <h1>👤 User Profile</h1>
         <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; max-width: 500px;">
             <h2>{}</h2>
@@ -361,28 +411,33 @@ async fn profile(req: Request, db: UserDB) -> Result<Response> {
         <div style="margin-top: 20px;">
             <a href="/dashboard">← Back to Dashboard</a>
         </div>
-    "#, user.username, user.email, user.role);
+    "#,
+        user.username, user.email, user.role
+    );
 
     Ok(Response::html(html))
 }
 
 async fn admin_panel(req: Request, db: UserDB) -> Result<Response> {
-    let username = req.cookie("session_user")
+    let username = req
+        .cookie("session_user")
         .ok_or_else(|| Error::Unauthorized)?;
 
-    let user = db.get_user(&username)
-        .ok_or_else(|| Error::Unauthorized)?;
+    let user = db.get_user(&username).ok_or_else(|| Error::Unauthorized)?;
 
     // Check admin role
     if user.role != "admin" {
-        return Ok(Response::html(r#"
+        return Ok(Response::html(
+            r#"
             <h1>🚫 Access Denied</h1>
             <p>You need administrator privileges to access this page.</p>
             <a href="/dashboard">← Back to Dashboard</a>
-        "#));
+        "#,
+        ));
     }
 
-    let html = format!(r#"
+    let html = format!(
+        r#"
         <h1>⚙️ Admin Panel</h1>
         <p>Welcome to the admin panel, <strong>{}</strong>!</p>
 
@@ -402,21 +457,25 @@ async fn admin_panel(req: Request, db: UserDB) -> Result<Response> {
         </div>
 
         <a href="/dashboard">← Back to Dashboard</a>
-    "#, user.username,
-    db.users.len(),
-    db.users.values().filter(|u| u.role == "admin").count(),
-    db.users.values().filter(|u| u.role == "user").count());
+    "#,
+        user.username,
+        db.users.len(),
+        db.users.values().filter(|u| u.role == "admin").count(),
+        db.users.values().filter(|u| u.role == "user").count()
+    );
 
     Ok(Response::html(html))
 }
 
 async fn logout(_req: Request) -> Result<Response> {
-    let response = Response::html(r#"
+    let response = Response::html(
+        r#"
         <h1>👋 Logged Out</h1>
         <p>You have been successfully logged out.</p>
         <p>Your session has been cleared.</p>
         <a href="/">← Back to Home</a>
-    "#);
+    "#,
+    );
 
     // Clear session cookies
     Ok(response

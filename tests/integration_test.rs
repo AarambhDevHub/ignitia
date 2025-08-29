@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use http::Method;
-use mini_web_framework::{Request, Response, Router, handler_fn};
+use ignite::{handler_fn, Request, Response, Router};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]

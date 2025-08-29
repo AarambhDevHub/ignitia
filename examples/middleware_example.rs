@@ -1,6 +1,7 @@
-use mini_web_framework::{
-    Request, Response, Result, Router, Server, handler_fn,
+use ignite::{
+    handler_fn,
     middleware::{AuthMiddleware, CorsMiddleware, LoggerMiddleware},
+    Request, Response, Result, Router, Server,
 };
 use std::net::SocketAddr;
 use tracing_subscriber;

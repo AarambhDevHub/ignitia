@@ -1,6 +1,6 @@
-use mini_web_framework::{
-    Cookie, Error, Middleware, Request, Response, Result, Router, SameSite, Server, async_trait,
-    handler_fn,
+use ignite::{
+    async_trait, handler_fn, Cookie, Error, Middleware, Request, Response, Result, Router,
+    SameSite, Server,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
