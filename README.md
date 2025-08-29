@@ -913,4 +913,3 @@ cargo run
 [![Crates.io](https://img.shields.io/badge/Crates.io-ignite-orange?style=for-the-badge&logo=rust)](https://crates.io/crates/ignite)
 
 </div>
-```
