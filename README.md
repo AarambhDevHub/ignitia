@@ -1,12 +1,13 @@
 # 🚀 Mini Web Framework
 
-A lightweight, fast, and extensible web framework for Rust built on top of Hyper and Tokio. This framework provides all the essential features needed to build modern web applications with minimal overhead and maximum performance.
+A lightweight, fast, and feature-rich web framework for Rust built on top of Hyper and Tokio. This framework provides all the essential features needed to build modern web applications with minimal overhead, maximum performance, and developer-friendly APIs.
 
 Built on Hyper and Tokio for maximum async performance
-- **🎯 Simple Routing**: Intuitive route definition with parameter and wildcard support
-- **🔧 Middleware System**: Composable middleware architecture for cross-cutting concerns
-- **📄 Static File Serving**: Built-in static file server with security features
-- **🔒 Security**: CORS, authentication, rate limiting, and security headers
+- **🎯 Advanced Routing**: Parameter extraction, wildcard patterns, and method-specific routes
+- **🔧 Powerful Middleware**: Composable middleware architecture with built-in auth, CORS, logging, and rate limiting
+- **🍪 Built-in Cookies**: Full cookie management with security attributes and session handling
+- **📄 Static File Serving**: Built-in static file server with security features and MIME type detection
+- **🔒 Authentication & Authorization**: Session-based auth with role-based access control
 - **📊 JSON Support**: First-class JSON serialization and deserialization
 - **⚡ Fast Compilation**: Minimal dependencies for quick build times
 - **🛡️ Type Safety**: Full Rust type safety throughout the framework
@@ -16,12 +17,15 @@ Built on Hyper and Tokio for maximum async performance
 
 - [Installation](#-installation)
 - [Quick Start](#-quick-start)
-- [Core Concepts](#-core-concepts)
+- [Core Features](#-core-features)
 - [Routing](#-routing)
 - [Middleware](#-middleware)
+- [Cookie Management](#-cookie-management)
+- [Authentication](#-authentication)
 - [Examples](#-examples)
 - [API Reference](#-api-reference)
 - [Testing](#-testing)
+- [Performance](#-performance)
 - [Contributing](#-contributing)
 - [License](#-license)
 
@@ -50,7 +54,8 @@ use std::net::SocketAddr;
 async fn main() -> Result<()> {
     let router = Router::new()
         .get("/", handler_fn(hello_world))
-        .get("/users/:id", handler_fn(get_user));
+        .get("/users/:id", handler_fn(get_user))
+        .post("/users", handler_fn(create_user));
 
     let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
     let server = Server::new(router, addr);
@@ -68,13 +73,16 @@ async fn get_user(req: Request) -> Result<Response> {
     let user_id = req.param("id").unwrap_or(&"unknown".to_string());
     Ok(Response::text(format!("User ID: {}", user_id)))
 }
+
+async fn create_user(req: Request) -> Result<Response> {
+    let user_data: serde_json::Value = req.json()?;
+    Response::json(user_data)
+}
 ```
 
-## 🧭 Core Concepts
+## 🧭 Core Features
 
-### Request & Response
-
-The framework provides simple `Request` and `Response` types:
+### Request & Response Handling
 
 ```rust
 // Access request data
@@ -82,17 +90,19 @@ let method = req.method;
 let path = req.uri.path();
 let user_agent = req.header("User-Agent");
 let json_data: MyStruct = req.json()?;
+let cookies = req.cookies();
+let user_id = req.param("id");
+let search = req.query("q");
 
 // Create responses
 Response::text("Plain text")
-Response::html("<h1>HTML</h1>")
+Response::html("<h1>HTML content</h1>")
 Response::json(my_data)
 Response::not_found()
+    .add_cookie(Cookie::new("session", "abc123"))
 ```
 
-### Error Handling
-
-Built-in error types for common HTTP scenarios:
+### Built-in Error Handling
 
 ```rust
 use mini_web_framework::{Error, Result};
@@ -107,41 +117,38 @@ async fn handler(req: Request) -> Result<Response> {
 
 ## 🛣️ Routing
 
-### Basic Routes
+### Basic Routes with HTTP Methods
 
 ```rust
 let router = Router::new()
     .get("/", handler_fn(home))
     .post("/users", handler_fn(create_user))
     .put("/users/:id", handler_fn(update_user))
-    .delete("/users/:id", handler_fn(delete_user));
+    .delete("/users/:id", handler_fn(delete_user))
+    .not_found(handler_fn(not_found));
 ```
 
-### Parameters
+### Advanced Parameter Handling
 
 ```rust
-// Route: /users/:id/posts/:post_id
+// Route parameters: /users/:id/posts/:post_id
 async fn get_post(req: Request) -> Result<Response> {
     let user_id = req.param("id").unwrap();
     let post_id = req.param("post_id").unwrap();
-    // ...
+    // Handle the request...
 }
-```
 
-### Query Parameters
-
-```rust
-// URL: /search?q=rust&limit=10
+// Query parameters: /search?q=rust&limit=10
 async fn search(req: Request) -> Result<Response> {
     let query = req.query("q").unwrap_or(&"".to_string());
     let limit = req.query("limit")
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(20);
-    // ...
+    // Handle search...
 }
 ```
 
-### Wildcard Routes
+### Wildcard Routes for Static Files
 
 ```rust
 let router = Router::new()
@@ -149,7 +156,7 @@ let router = Router::new()
 
 async fn serve_static_files(req: Request) -> Result<Response> {
     let path = req.param("path").unwrap();
-    // Serve file from path
+    // Serve file from static directory
 }
 ```
 
@@ -162,7 +169,7 @@ use mini_web_framework::middleware::{LoggerMiddleware, CorsMiddleware, AuthMiddl
 
 let router = Router::new()
     .middleware(LoggerMiddleware)
-    .middleware(CorsMiddleware::new())
+    .middleware(CorsMiddleware::new().allow_origin("https://example.com"))
     .middleware(AuthMiddleware::new("secret-token")
         .protect_path("/api/")
         .protect_path("/admin/"));
@@ -173,54 +180,145 @@ let router = Router::new()
 ```rust
 use mini_web_framework::{Middleware, async_trait};
 
-struct TimingMiddleware;
+struct RateLimitMiddleware {
+    max_requests: usize,
+}
 
 #[async_trait]
-impl Middleware for TimingMiddleware {
+impl Middleware for RateLimitMiddleware {
     async fn before(&self, req: &mut Request) -> Result<()> {
-        // Log request start time
+        // Check rate limits
         Ok(())
     }
 
     async fn after(&self, res: &mut Response) -> Result<()> {
-        // Add timing header
-        res.headers.insert("X-Response-Time", "42ms".parse().unwrap());
+        // Add rate limit headers
+        res.headers.insert("X-RateLimit-Remaining", "99".parse().unwrap());
         Ok(())
     }
 }
 ```
 
+## 🍪 Cookie Management
+
+Built-in cookie support with security features:
+
+```rust
+use mini_web_framework::{Cookie, SameSite};
+
+// Set cookies
+let session_cookie = Cookie::new("session", "user123")
+    .path("/")
+    .max_age(3600) // 1 hour
+    .http_only()
+    .secure()
+    .same_site(SameSite::Lax);
+
+let response = Response::text("Login successful")
+    .add_cookie(session_cookie);
+
+// Read cookies
+async fn protected_route(req: Request) -> Result<Response> {
+    let session = req.cookie("session")
+        .ok_or_else(|| Error::Unauthorized)?;
+
+    Ok(Response::text(format!("Welcome back, {}!", session)))
+}
+
+// Remove cookies
+let response = Response::text("Logged out")
+    .remove_cookie("session");
+```
+
+## 🔐 Authentication
+
+Complete authentication system with middleware:
+
+```rust
+#[derive(Clone)]
+struct AuthMiddleware {
+    protected_paths: Vec<String>,
+}
+
+impl AuthMiddleware {
+    fn protect_paths(mut self, paths: Vec<&str>) -> Self {
+        self.protected_paths = paths.into_iter().map(String::from).collect();
+        self
+    }
+}
+
+#[async_trait]
+impl Middleware for AuthMiddleware {
+    async fn before(&self, req: &mut Request) -> Result<()> {
+        let path = req.uri.path();
+
+        if self.protected_paths.iter().any(|p| path.starts_with(p)) {
+            let _session = req.cookie("session")
+                .ok_or_else(|| Error::Unauthorized)?;
+            // Validate session...
+        }
+
+        Ok(())
+    }
+}
+
+// Usage
+let router = Router::new()
+    .middleware(AuthMiddleware::new()
+        .protect_paths(vec!["/admin", "/dashboard"]))
+    .get("/admin", handler_fn(admin_panel))
+    .get("/dashboard", handler_fn(dashboard));
+```
+
 ## 📚 Examples
 
-### Basic Server
+### 1. Basic Server
 ```bash
 cargo run --example basic_server
 ```
-A simple HTTP server demonstrating basic routing and JSON responses.
+Demonstrates basic routing, JSON responses, and parameter extraction.
 
-### Middleware Demo
+### 2. Middleware Demo
 ```bash
 cargo run --example middleware_example
 ```
 Shows authentication, CORS, and logging middleware in action.
 
-### JSON API
+### 3. Cookie Framework
+```bash
+cargo run --example cookie_framework_example
+```
+Built-in cookie functionality with security features.
+
+### 4. Login System
+```bash
+cargo run --example login_example
+```
+Complete authentication system with session management.
+
+### 5. Login with Middleware
+```bash
+cargo run --example login_with_middleware_example
+```
+Advanced authentication using middleware for cleaner code.
+
+### 6. Custom Middleware
+```bash
+cargo run --example custom_middleware_example
+```
+Rate limiting, request validation, and security headers.
+
+### 7. JSON API
 ```bash
 cargo run --example json_api
 ```
-A RESTful API for managing todos with in-memory storage.
+RESTful API for managing todos with in-memory storage.
 
-### File Server
+### 8. File Server
 ```bash
 cargo run --example file_server
 ```
 Static file server with security features and MIME type detection.
-
-### Custom Middleware
-```bash
-cargo run --example custom_middleware_example
-```
-Advanced middleware examples including rate limiting, request validation, and security headers.
 
 ## 🔌 API Reference
 
@@ -228,31 +326,46 @@ Advanced middleware examples including rate limiting, request validation, and se
 
 | Method | Description |
 |--------|-------------|
-| `new()` | Create a new router |
-| `get(path, handler)` | Add GET route |
-| `post(path, handler)` | Add POST route |
-| `put(path, handler)` | Add PUT route |
-| `delete(path, handler)` | Add DELETE route |
-| `middleware(middleware)` | Add middleware |
-| `not_found(handler)` | Set 404 handler |
+| `Router::new()` | Create a new router |
+| `.get(path, handler)` | Add GET route |
+| `.post(path, handler)` | Add POST route |
+| `.put(path, handler)` | Add PUT route |
+| `.delete(path, handler)` | Add DELETE route |
+| `.middleware(middleware)` | Add middleware |
+| `.not_found(handler)` | Set 404 handler |
 
 ### Request Methods
 
 | Method | Description |
 |--------|-------------|
-| `param(key)` | Get route parameter |
-| `query(key)` | Get query parameter |
-| `header(key)` | Get header value |
-| `json<T>()` | Parse JSON body |
+| `req.param(key)` | Get route parameter |
+| `req.query(key)` | Get query parameter |
+| `req.header(key)` | Get header value |
+| `req.json<T>()` | Parse JSON body |
+| `req.cookies()` | Get all cookies |
+| `req.cookie(key)` | Get specific cookie |
 
 ### Response Methods
 
 | Method | Description |
 |--------|-------------|
-| `text(content)` | Create text response |
-| `html(content)` | Create HTML response |
-| `json(data)` | Create JSON response |
-| `not_found()` | Create 404 response |
+| `Response::text(content)` | Create text response |
+| `Response::html(content)` | Create HTML response |
+| `Response::json(data)` | Create JSON response |
+| `Response::not_found()` | Create 404 response |
+| `.add_cookie(cookie)` | Add cookie to response |
+| `.remove_cookie(name)` | Remove cookie |
+
+### Cookie Builder
+
+| Method | Description |
+|--------|-------------|
+| `Cookie::new(name, value)` | Create cookie |
+| `.path(path)` | Set cookie path |
+| `.max_age(seconds)` | Set expiration |
+| `.secure()` | HTTPS only |
+| `.http_only()` | No JavaScript access |
+| `.same_site(policy)` | CSRF protection |
 
 ### Middleware Trait
 
@@ -277,24 +390,30 @@ cargo test -- --nocapture
 
 # Run specific test file
 cargo test --test integration_test
+
+# Test a specific example
+cargo run --example basic_server &
+curl http://127.0.0.1:3000/
 ```
 
 ### Example Test
 
 ```rust
 #[tokio::test]
-async fn test_json_response() {
+async fn test_cookie_authentication() {
     let router = Router::new()
-        .get("/user", handler_fn(|_| async {
-            Response::json(User { id: 1, name: "Alice".to_string() })
-        }));
+        .get("/protected", handler_fn(protected_route));
 
-    let req = Request::new(/* ... */);
-    let response = router.handle(req).await.unwrap();
+    // Test without cookie
+    let req = Request::new(Method::GET, "/protected".parse().unwrap(), /* ... */);
+    let response = router.handle(req).await;
+    assert!(response.is_err()); // Should be unauthorized
 
+    // Test with valid cookie
+    let mut req_with_cookie = Request::new(/* ... */);
+    req_with_cookie.headers.insert("Cookie", "session=valid_session".parse().unwrap());
+    let response = router.handle(req_with_cookie).await.unwrap();
     assert_eq!(response.status, StatusCode::OK);
-    let user: User = serde_json::from_slice(&response.body).unwrap();
-    assert_eq!(user.name, "Alice");
 }
 ```
 
@@ -304,6 +423,7 @@ async fn test_json_response() {
 - **Async**: Built on Tokio for excellent concurrency
 - **Lightweight**: Minimal overhead compared to larger frameworks
 - **Fast compilation**: Small dependency tree for quick builds
+- **Memory efficient**: Smart use of Arc and shared state
 
 ## 🔒 Security Features
 
@@ -312,6 +432,8 @@ async fn test_json_response() {
 - **Authentication middleware** with configurable paths
 - **Security headers middleware** (CSP, XSS protection, etc.)
 - **Rate limiting middleware** to prevent abuse
+- **Secure cookie attributes** (HttpOnly, Secure, SameSite)
+- **Session management** with proper invalidation
 
 ## 🛠️ Development
 
@@ -321,20 +443,29 @@ async fn test_json_response() {
 mini-web-framework/
 ├── src/
 │   ├── lib.rs              # Main library exports
-│   ├── router/             # Routing system
+│   ├── router/             # Routing system with wildcards
 │   ├── middleware/         # Middleware implementations
-│   ├── request/            # Request handling
-│   ├── response/           # Response building
+│   ├── request/            # Request handling with cookies
+│   ├── response/           # Response building with cookies
 │   ├── handler/            # Handler traits and functions
 │   ├── server/             # HTTP server
+│   ├── cookie/             # Built-in cookie management
 │   ├── error/              # Error types
 │   └── utils/              # Utility functions
-├── examples/               # Usage examples
+├── examples/               # 8+ comprehensive examples
+│   ├── basic_server.rs
+│   ├── middleware_example.rs
+│   ├── cookie_framework_example.rs
+│   ├── login_example.rs
+│   ├── login_with_middleware_example.rs
+│   ├── custom_middleware_example.rs
+│   ├── json_api.rs
+│   └── file_server.rs
 ├── tests/                  # Integration tests
 └── README.md
 ```
 
-### Building
+### Building and Testing
 
 ```bash
 # Debug build
@@ -343,20 +474,23 @@ cargo build
 # Release build
 cargo build --release
 
-# Run examples
-cargo run --example basic_server
+# Run all examples
+find examples -name "*.rs" -exec basename {} .rs \; | xargs -I {} cargo run --example {}
 
-# Run tests
+# Run tests with coverage
 cargo test
 
 # Check code style
 cargo fmt
 cargo clippy
+
+# Generate documentation
+cargo doc --open
 ```
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### Guidelines
 
@@ -368,45 +502,68 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 ### Development Setup
 
 ```bash
-git clone https://github.com/yourusername/mini-web-framework.git
+git clone https://github.com/AarambhDevHub/mini-web-framework.git
 cd mini-web-framework
 cargo build
-cargo test
+cargo test --all
 ```
 
 ## 📝 Changelog
 
-### v0.1.0
-- Initial release
-- Basic routing with parameters and wildcards
-- Middleware system
-- JSON support
-- Static file serving
-- Comprehensive examples
-- Security features
+### v0.1.0 - Current Release
+- ✅ Basic routing with parameters and wildcards
+- ✅ Comprehensive middleware system
+- ✅ Built-in cookie management with security features
+- ✅ Authentication and authorization examples
+- ✅ Static file serving with security
+- ✅ JSON API support
+- ✅ 8+ comprehensive examples
+- ✅ Rate limiting and custom middleware
+- ✅ Session-based authentication
+- ✅ Role-based access control
+- ✅ Request logging and security headers
 
 ## 🙏 Acknowledgments
 
 - Built on [Hyper](https://hyper.rs/) for HTTP handling
 - Uses [Tokio](https://tokio.rs/) for async runtime
-- Inspired by modern web frameworks
+- Inspired by modern web frameworks like Express.js and Actix-web
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+## ☕ Support the Project
+If you find this project helpful, consider buying me a coffee!
+[Buy Me a Coffee](https://buymeacoffee.com/aarambhdevhub)
+
+
 ## 🚀 Getting Started
 
-Ready to build something awesome? Check out our [examples](examples/) directory and start with the [basic server example](examples/basic_server.rs)!
+Ready to build something awesome? Check out our comprehensive examples:
 
 ```bash
-git clone https://github.com/yourusername/mini-web-framework.git
+git clone https://github.com/AarambhDevHub/mini-web-framework.git
 cd mini-web-framework
+
+# Try the basic server
 cargo run --example basic_server
+
+# Test authentication system
+cargo run --example login_with_middleware_example
+
+# Explore cookie functionality
+cargo run --example cookie_framework_example
 ```
 
-Visit `http://127.0.0.1:3000` and start building! 🎉
+Visit the running servers and start building! 🎉
+
+### Quick Links
+- 🏠 **Home**: `http://127.0.0.1:3000/`
+- 🍪 **Cookies**: `http://127.0.0.1:3006/`
+- 🔐 **Login**: `http://127.0.0.1:3008/`
+- 🛡️ **Middleware**: `http://127.0.0.1:3009/`
 
 ***
 
-**Built with ❤️ in Rust**
+**Built with ❤️ in Rust** - A powerful, secure, and developer-friendly web framework for modern applications.

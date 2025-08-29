@@ -1,3 +1,4 @@
+pub mod cookie;
 pub mod error;
 pub mod handler;
 pub mod middleware;
@@ -5,15 +6,16 @@ pub mod request;
 pub mod response;
 pub mod router;
 pub mod server;
-pub mod utils;
+pub mod utils; // Add this line
 
+pub use cookie::{Cookie, CookieJar, SameSite};
 pub use error::{Error, Result};
 pub use handler::{Handler, HandlerFn, handler_fn};
 pub use middleware::Middleware;
 pub use request::Request;
 pub use response::{Response, ResponseBuilder};
 pub use router::{Route, Router};
-pub use server::Server;
+pub use server::Server; // Add this line
 
 // Re-export commonly used types
 pub use async_trait::async_trait;

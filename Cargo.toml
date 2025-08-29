@@ -26,6 +26,7 @@ http = "1.0"
 url = "2.5"
 mime_guess = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
+httpdate = "1.0" # Add this line
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }
