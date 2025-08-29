@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use http::Method;
-use ignite::{handler_fn, Request, Response, Router};
+use ignitia::{handler_fn, Request, Response, Router};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]

@@ -1,5 +1,5 @@
 use http::StatusCode;
-use ignite::{handler_fn, Request, Response, ResponseBuilder, Result, Router, Server};
+use ignitia::{handler_fn, Request, Response, ResponseBuilder, Result, Router, Server};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;

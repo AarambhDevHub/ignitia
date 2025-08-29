@@ -645,7 +645,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ignite"
+name = "ignitia"
 version = "0.1.0"
 dependencies = [
  "async-trait",

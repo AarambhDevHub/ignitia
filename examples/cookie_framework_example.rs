@@ -1,4 +1,4 @@
-use ignite::{handler_fn, Cookie, Error, Request, Response, Result, Router, SameSite, Server};
+use ignitia::{handler_fn, Cookie, Error, Request, Response, Result, Router, SameSite, Server};
 use std::net::SocketAddr;
 use tracing_subscriber;
 

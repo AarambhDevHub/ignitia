@@ -1,22 +1,22 @@
-//! # Ignite Web Framework
+//! # ignitia Web Framework
 //!
-//! A blazing fast, lightweight web framework for Rust that ignites your development.
+//! A blazing fast, lightweight web framework for Rust that ignitias your development.
 //! Built by Aarambh Dev Hub.
 //!
 //! ## Quick Start
 //!
 //! ```
-//! use ignite::{Router, Server, Request, Response, Result, handler_fn};
+//! use ignitia::{Router, Server, Request, Response, Result, handler_fn};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
 //!     let router = Router::new()
 //!         .get("/", handler_fn(|_req| async {
-//!             Ok(Response::text("Hello from Ignite! 🔥"))
+//!             Ok(Response::text("Hello from ignitia! 🔥"))
 //!         }));
 //!
 //!     let server = Server::new(router, "127.0.0.1:3000".parse().unwrap());
-//!     server.ignite().await.unwrap();
+//!     server.ignitia().await.unwrap();
 //!     Ok(())
 //! }
 //! ```

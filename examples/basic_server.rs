@@ -1,4 +1,4 @@
-use ignite::{handler_fn, Request, Response, Result, Router, Server};
+use ignitia::{handler_fn, Request, Response, Result, Router, Server};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use tracing_subscriber;

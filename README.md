@@ -1,35 +1,35 @@
-# 🔥 Ignite
+# 🔥 Ignitia
 
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/AarambhDevHub/ignite/main/assets/ignite-logo.png" alt="Ignite Logo" width="200">
+<img src="https://raw.githubusercontent.com/AarambhDevHub/ignitia/main/assets/ignitia-logo.png" alt="Ignitia Logo" width="200">
 
-**A blazing fast, lightweight web framework for Rust that ignites your development journey.**
+**A blazing fast, lightweight web framework for Rust that ignitias your development journey.**
 
-*Embodies the spirit of **Aarambh** (new beginnings) - the spark that ignites your web development journey*
+*Embodies the spirit of **Aarambh** (new beginnings) - the spark that ignitias your web development journey*
 
 **Built with ❤️ by [Aarambh Dev Hub](https://youtube.com/@aarambhdevhub)**
 
-[![Crates.io](https://img.shields.io/crates/v/ignite.svg?style=for-the-badge&logo=rust&color=orange&labelColor=black)](https://crates.io/crates/ignite)
-[![Downloads](https://img.shields.io/crates/d/ignite.svg?style=for-the-badge&color=red&labelColor=black)](https://crates.io/crates/ignite)
+[![Crates.io](https://img.shields.io/crates/v/ignitia.svg?style=for-the-badge&logo=rust&color=orange&labelColor=black)](https://crates.io/crates/ignitia)
+[![Downloads](https://img.shields.io/crates/d/ignitia.svg?style=for-the-badge&color=red&labelColor=black)](https://crates.io/crates/ignitia)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge&labelColor=black)](https://opensource.org/licenses/MIT)
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/AarambhDevHub/ignite/ci.yml?branch=main&style=for-the-badge&logo=github&labelColor=black)](https://github.com/AarambhDevHub/ignite/actions)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/AarambhDevHub/ignitia/ci.yml?branch=main&style=for-the-badge&logo=github&labelColor=black)](https://github.com/AarambhDevHub/ignitia/actions)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg?style=for-the-badge&logo=rust&labelColor=black)](https://www.rust-lang.org/)
-[![Docs](https://img.shields.io/docsrs/ignite?style=for-the-badge&logo=rust&color=blue&labelColor=black)](https://docs.rs/ignite)
+[![Docs](https://img.shields.io/docsrs/ignitia?style=for-the-badge&logo=rust&color=blue&labelColor=black)](https://docs.rs/ignitia)
 
-[![GitHub Stars](https://img.shields.io/github/stars/AarambhDevHub/ignite?style=social&logo=github)](https://github.com/AarambhDevHub/ignite/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/AarambhDevHub/ignitia?style=social&logo=github)](https://github.com/AarambhDevHub/ignitia/stargazers)
 [![YouTube](https://img.shields.io/youtube/channel/subscribers/UCm5U5uQiZA_mQY5wQ6WfUVA?style=social&logo=youtube&label=Aarambh%20Dev%20Hub)](https://youtube.com/@aarambhdevhub)
 
-<img src="https://raw.githubusercontent.com/AarambhDevHub/ignite/main/assets/ignite-banner.png" alt="Ignite Banner" width="100%">
+<img src="https://raw.githubusercontent.com/AarambhDevHub/ignitia/main/assets/ignitia-banner.png" alt="Ignitia Banner" width="100%">
 
 </div>
 
 ---
 
-## ⚡ Why Ignite?
+## ⚡ Why Ignitia?
 
-Ignite embodies the spirit of **Aarambh** (new beginnings) - the spark that ignites your web development journey. Built for developers who demand speed, simplicity, and power.
+Ignitia embodies the spirit of **Aarambh** (new beginnings) - the spark that ignitias your web development journey. Built for developers who demand speed, simplicity, and power.
 
 - **🚀 Blazing Fast**: Built on Hyper and Tokio for maximum async performance
 - **🪶 Lightweight**: Minimal overhead, maximum efficiency
@@ -62,11 +62,11 @@ Ignite embodies the spirit of **Aarambh** (new beginnings) - the spark that igni
 
 ## 🛠️ Installation
 
-Add Ignite to your `Cargo.toml`:
+Add Ignitia to your `Cargo.toml`:
 
 ```
 [dependencies]
-ignite = "0.1.0"
+ignitia = "0.1.0"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -77,28 +77,28 @@ tracing-subscriber = "0.3"
 
 ## 🚀 Quick Start
 
-Create your first Ignite application:
+Create your first Ignitia application:
 
 ```
-use ignite::{Router, Server, Request, Response, Result, handler_fn};
+use ignitia::{Router, Server, Request, Response, Result, handler_fn};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let router = Router::new()
-        .get("/", handler_fn(hello_ignite))
+        .get("/", handler_fn(hello_ignitia))
         .get("/users/:id", handler_fn(get_user))
         .post("/api/data", handler_fn(create_data));
 
     let server = Server::new(router, "127.0.0.1:3000".parse().unwrap());
 
     println!("🔥 Igniting server...");
-    server.ignite().await.unwrap(); // Custom ignite method!
+    server.ignitia().await.unwrap(); // Custom ignitia method!
     Ok(())
 }
 
-async fn hello_ignite(_req: Request) -> Result<Response> {
+async fn hello_ignitia(_req: Request) -> Result<Response> {
     Ok(Response::html(r#"
-        <h1>🔥 Welcome to Ignite!</h1>
+        <h1>🔥 Welcome to ignitia!</h1>
         <p>Your web development journey starts here!</p>
     "#))
 }
@@ -106,9 +106,9 @@ async fn hello_ignite(_req: Request) -> Result<Response> {
 async fn get_user(req: Request) -> Result<Response> {
     let user_id = req.param("id").unwrap_or(&"unknown".to_string());
     Ok(Response::json(serde_json::json!({
-        "message": "User ignited!",
+        "message": "User ignitiad!",
         "user_id": user_id,
-        "framework": "Ignite 🔥"
+        "framework": "ignitia 🔥"
     }))?)
 }
 
@@ -117,7 +117,7 @@ async fn create_data(req: Request) -> Result<Response> {
     Ok(Response::json(serde_json::json!({
         "status": "success",
         "received": data,
-        "ignited_at": std::time::SystemTime::now()
+        "ignitiad_at": std::time::SystemTime::now()
     }))?)
 }
 ```
@@ -151,7 +151,7 @@ let router = Router::new()
 Secure, easy-to-use cookie handling with all security attributes:
 
 ```
-use ignite::{Cookie, SameSite};
+use ignitia::{Cookie, SameSite};
 
 // Set secure cookies
 let session = Cookie::new("session", "user123")
@@ -161,7 +161,7 @@ let session = Cookie::new("session", "user123")
     .secure()
     .same_site(SameSite::Lax);
 
-let response = Response::text("Session ignited!")
+let response = Response::text("Session ignitiad!")
     .add_cookie(session);
 
 // Read cookies
@@ -182,7 +182,7 @@ let response = Response::text("Logged out")
 Composable middleware for authentication, logging, CORS, and more:
 
 ```
-use ignite::middleware::{AuthMiddleware, CorsMiddleware, LoggerMiddleware};
+use ignitia::middleware::{AuthMiddleware, CorsMiddleware, LoggerMiddleware};
 
 let router = Router::new()
     // Global middleware
@@ -298,7 +298,7 @@ async fn serve_static(req: Request) -> Result<Response> {
 Create your own middleware by implementing the `Middleware` trait:
 
 ```
-use ignite::{Middleware, async_trait};
+use ignitia::{Middleware, async_trait};
 
 struct RateLimitMiddleware {
     max_requests: usize,
@@ -330,7 +330,7 @@ impl Middleware for RateLimitMiddleware {
 ### **Setting Cookies**
 
 ```
-use ignite::{Cookie, SameSite};
+use ignitia::{Cookie, SameSite};
 
 // Session cookie
 let session = Cookie::new("session", "abc123")
@@ -442,7 +442,7 @@ let router = Router::new()
 
 ## 📚 Examples
 
-Ignite comes with comprehensive examples to get you started:
+Ignitia comes with comprehensive examples to get you started:
 
 ### **🏠 Basic Server**
 ```
@@ -683,7 +683,7 @@ let router = Router::new()
 ### **Project Structure**
 
 ```
-ignite/
+ignitia/
 ├── src/
 │   ├── lib.rs              # Main library exports
 │   ├── router/             # Routing with wildcards
@@ -743,7 +743,7 @@ cargo doc --open
 
 ## 🤝 Contributing
 
-We welcome contributions! Here's how you can help make Ignite even better:
+We welcome contributions! Here's how you can help make Ignitia even better:
 
 ### **Ways to Contribute**
 
@@ -757,8 +757,8 @@ We welcome contributions! Here's how you can help make Ignite even better:
 
 ```
 # Clone the repository
-git clone https://github.com/AarambhDevHub/ignite.git
-cd ignite
+git clone https://github.com/AarambhDevHub/ignitia.git
+cd ignitia
 
 # Install dependencies and build
 cargo build
@@ -838,8 +838,8 @@ cargo run --example basic_server
 ### **Special Thanks**
 
 - **Rust Community** - For creating an amazing ecosystem
-- **Contributors** - Everyone who helps make Ignite better
-- **Early Adopters** - Thanks for trying Ignite and providing feedback!
+- **Contributors** - Everyone who helps make ignitia better
+- **Early Adopters** - Thanks for trying ignitia and providing feedback!
 
 ---
 
@@ -857,33 +857,33 @@ If you find this project helpful, consider buying me a coffee!
 
 ## 🚀 Getting Started
 
-Ready to ignite your web development? Let's get started:
+Ready to ignitia your web development? Let's get started:
 
 ```
 # Create a new project
-cargo new my-ignite-app
-cd my-ignite-app
+cargo new my-ignitia-app
+cd my-ignitia-app
 
-# Add Ignite to Cargo.toml
+# Add ignitia to Cargo.toml
 echo '[dependencies]
-ignite = "0.1.0"
+ignitia = "0.1.0"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"' >> Cargo.toml
 
-# Create your first Ignite app
-echo 'use ignite::{Router, Server, Response, handler_fn};
+# Create your first ignitia app
+echo 'use ignitia::{Router, Server, Response, handler_fn};
 
 #[tokio::main]
-async fn main() -> ignite::Result<()> {
+async fn main() -> ignitia::Result<()> {
     let router = Router::new()
         .get("/", handler_fn(|_| async {
-            Ok(Response::html("<h1>🔥 Welcome to Ignite!</h1>"))
+            Ok(Response::html("<h1>🔥 Welcome to ignitia!</h1>"))
         }));
 
     let server = Server::new(router, "127.0.0.1:3000".parse().unwrap());
     println!("🔥 Server igniting on http://127.0.0.1:3000");
-    server.ignite().await.unwrap();
+    server.ignitia().await.unwrap();
     Ok(())
 }' > src/main.rs
 
@@ -895,21 +895,21 @@ cargo run
 
 1. 📖 **Explore Examples**: Check out our comprehensive examples
 2. 🛠️ **Build Something**: Create your first API or web app
-3. 🤝 **Join Community**: Connect with other Ignite developers
+3. 🤝 **Join Community**: Connect with other ignitia developers
 4. 📺 **Learn More**: Subscribe to [Aarambh Dev Hub](https://youtube.com/@aarambhdevhub)
 
 ---
 
 <div align="center">
 
-## 🔥 **Ignite. Build. Deploy.** 🔥
+## 🔥 **Ignitia. Build. Deploy.** 🔥
 
 **Built with ❤️ by [Aarambh Dev Hub](https://youtube.com/@aarambhdevhub)**
 
-*Where every line of code ignites possibilities.*
+*Where every line of code ignitias possibilities.*
 
 [![YouTube](https://img.shields.io/badge/YouTube-Aarambh%20Dev%20Hub-red?style=for-the-badge&logo=youtube)](https://youtube.com/@aarambhdevhub)
-[![GitHub](https://img.shields.io/badge/GitHub-ignite-black?style=for-the-badge&logo=github)](https://github.com/AarambhDevHub/ignite)
-[![Crates.io](https://img.shields.io/badge/Crates.io-ignite-orange?style=for-the-badge&logo=rust)](https://crates.io/crates/ignite)
+[![GitHub](https://img.shields.io/badge/GitHub-ignitia-black?style=for-the-badge&logo=github)](https://github.com/AarambhDevHub/ignitia)
+[![Crates.io](https://img.shields.io/badge/Crates.io-ignitia-orange?style=for-the-badge&logo=rust)](https://crates.io/crates/ignitia)
 
 </div>

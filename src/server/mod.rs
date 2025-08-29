@@ -46,9 +46,9 @@ impl Server {
         }
     }
 
-    pub async fn ignite(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn ignitia(self) -> Result<(), Box<dyn std::error::Error>> {
         let listener = TcpListener::bind(self.addr).await?;
-        info!("🔥 Ignite server blazing on http://{}", self.addr);
+        info!("🔥 ignitia server blazing on http://{}", self.addr);
 
         loop {
             let (stream, _) = listener.accept().await?;

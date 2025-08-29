@@ -1,4 +1,4 @@
-# Ignite Web Framework Documentation
+# Ignitia Web Framework Documentation
 
 **Version:** 0.1.0
 **Built by:** Aarambh Dev Hub
@@ -28,11 +28,11 @@
 
 ## Introduction
 
-Ignite is a blazing fast, lightweight web framework for Rust that embodies the spirit of **Aarambh** (new beginnings). Built on top of Hyper and Tokio, Ignite provides developers with a powerful yet simple toolkit for building modern web applications.
+Ignitia is a blazing fast, lightweight web framework for Rust that embodies the spirit of **Aarambh** (new beginnings). Built on top of Hyper and Tokio, Ignitia provides developers with a powerful yet simple toolkit for building modern web applications.
 
 ### Philosophy
 
-Ignite follows these core principles:
+Ignitia follows these core principles:
 
 - **Performance First**: Zero-copy operations and minimal allocations
 - **Developer Experience**: Intuitive APIs and comprehensive error messages
@@ -65,11 +65,11 @@ Ignite follows these core principles:
 - Rust 1.70 or higher
 - Cargo package manager
 
-### Adding Ignite to Your Project
+### Adding Ignitia to Your Project
 
 ```
 [dependencies]
-ignite = "0.1.0"
+ignitia = "0.1.0"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -114,13 +114,13 @@ your-project/
 
 ### Server
 
-The `Server` struct is the entry point of your Ignite application:
+The `Server` struct is the entry point of your Ignitia application:
 
 ```
-use ignite::{Server, Router};
+use ignitia::{Server, Router};
 
 let server = Server::new(router, addr);
-server.ignite().await?; // Start the server
+server.ignitia().await?; // Start the server
 ```
 
 ### Router
@@ -140,7 +140,7 @@ Handlers are async functions that process requests and return responses:
 
 ```
 async fn home(req: Request) -> Result<Response> {
-    Ok(Response::html("<h1>Welcome to Ignite!</h1>"))
+    Ok(Response::html("<h1>Welcome to Ignitia!</h1>"))
 }
 ```
 
@@ -183,7 +183,7 @@ let addr = "127.0.0.1:3000".parse().unwrap();
 let server = Server::new(router, addr);
 ```
 
-#### `async fn ignite(self) -> Result<(), Box<dyn std::error::Error>>`
+#### `async fn ignitia(self) -> Result<(), Box<dyn std::error::Error>>`
 
 Starts the server and begins listening for connections.
 
@@ -388,7 +388,7 @@ Provides path-based authentication.
 #### Basic Middleware
 
 ```
-use ignite::{Middleware, async_trait, Request, Response, Result};
+use ignitia::{Middleware, async_trait, Request, Response, Result};
 
 struct TimingMiddleware;
 
@@ -1017,7 +1017,7 @@ async fn custom_404(_req: Request) -> Result<Response> {
         <body>
             <div class="container">
                 <h1>404</h1>
-                <p>🔥 The page you're looking for couldn't be ignited!</p>
+                <p>🔥 The page you're looking for couldn't be ignitiad!</p>
                 <p><a href="/">← Return to Home</a></p>
             </div>
         </body>
@@ -1038,7 +1038,7 @@ async fn custom_404(_req: Request) -> Result<Response> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ignite::test::TestRequest;
+    use ignitia::test::TestRequest;
 
     #[tokio::test]
     async fn test_home_handler() {
@@ -1065,7 +1065,7 @@ mod tests {
 ### Integration Testing
 
 ```
-use ignite::test::TestServer;
+use ignitia::test::TestServer;
 
 #[tokio::test]
 async fn test_full_app() {
@@ -1671,7 +1671,7 @@ async fn start_server_with_fallback(router: Router) -> Result<()> {
     let addr = format!("127.0.0.1:{}", port).parse().unwrap();
     let server = Server::new(router, addr);
 
-    server.ignite().await
+    server.ignitia().await
 }
 ```
 
@@ -1832,8 +1832,8 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
-// Ignite equivalent
-use ignite::{Router, Server, Request, Response, Result, handler_fn};
+// Ignitia equivalent
+use ignitia::{Router, Server, Request, Response, Result, handler_fn};
 
 async fn hello(_req: Request) -> Result<Response> {
     Ok(Response::text("Hello world!"))
@@ -1845,7 +1845,7 @@ async fn main() -> Result<()> {
         .get("/hello", handler_fn(hello));
 
     let server = Server::new(router, "127.0.0.1:8080".parse().unwrap());
-    server.ignite().await.unwrap();
+    server.ignitia().await.unwrap();
     Ok(())
 }
 ```
@@ -1866,8 +1866,8 @@ fn rocket() -> _ {
     rocket::build().mount("/", routes![hello])
 }
 
-// Ignite equivalent
-use ignite::{Router, Server, Request, Response, Result, handler_fn};
+// Ignitia equivalent
+use ignitia::{Router, Server, Request, Response, Result, handler_fn};
 
 async fn hello(req: Request) -> Result<Response> {
     let name = req.param("name").unwrap_or(&"World".to_string());
@@ -1880,7 +1880,7 @@ async fn main() -> Result<()> {
         .get("/hello/:name", handler_fn(hello));
 
     let server = Server::new(router, "127.0.0.1:8000".parse().unwrap());
-    server.ignite().await.unwrap();
+    server.ignitia().await.unwrap();
     Ok(())
 }
 ```
@@ -1907,11 +1907,11 @@ let router = Router::new()
 
 ---
 
-This documentation provides a comprehensive guide to using the Ignite web framework. For additional help, examples, and community support:
+This documentation provides a comprehensive guide to using the ignitia web framework. For additional help, examples, and community support:
 
-- **GitHub Repository**: https://github.com/AarambhDevHub/ignite
-- **API Documentation**: https://docs.rs/ignite
+- **GitHub Repository**: https://github.com/AarambhDevHub/ignitia
+- **API Documentation**: https://docs.rs/ignitia
 - **YouTube Channel**: [Aarambh Dev Hub](https://youtube.com/@AarambhDevHub)
-- **Issues & Support**: https://github.com/AarambhDevHub/ignite/issues
+- **Issues & Support**: https://github.com/AarambhDevHub/ignitia/issues
 
-**Built with ❤️ by Aarambh Dev Hub - Where every line of code ignites possibilities.**
+**Built with ❤️ by Aarambh Dev Hub - Where every line of code ignitias possibilities.**

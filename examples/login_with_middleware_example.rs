@@ -1,4 +1,4 @@
-use ignite::{
+use ignitia::{
     async_trait, handler_fn, Cookie, Error, Middleware, Request, Response, Result, Router,
     SameSite, Server,
 };

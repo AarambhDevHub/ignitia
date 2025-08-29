@@ -1,15 +1,15 @@
 [package]
-name = "ignite"
+name = "ignitia"
 version = "0.1.0"
 edition = "2021"
-description = "A blazing fast, lightweight web framework for Rust that ignites your development"
+description = "A blazing fast, lightweight web framework for Rust that ignitias your development"
 authors = ["Aarambh Dev Hub <your@email.com>"]
 license = "MIT"
-keywords = ["web", "framework", "fast", "ignite", "performance", "rust", "http", "async"]
+keywords = ["web", "framework", "fast", "ignitia", "performance", "rust", "http", "async"]
 categories = ["web-programming::http-server"]
-repository = "https://github.com/AarambhDevHub/ignite"
-homepage = "https://github.com/AarambhDevHub/ignite"
-documentation = "https://docs.rs/ignite"
+repository = "https://github.com/AarambhDevHub/ignitia"
+homepage = "https://github.com/AarambhDevHub/ignitia"
+documentation = "https://docs.rs/ignitia"
 
 
 [dependencies]

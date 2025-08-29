@@ -1,5 +1,5 @@
 use http::{HeaderName, HeaderValue}; // Add this import
-use ignite::{
+use ignitia::{
     async_trait, handler_fn,
     middleware::{LoggerMiddleware, Middleware},
     Error, Request, Response, Result, Router, Server,
@@ -86,7 +86,7 @@ struct RequestValidationMiddleware;
 impl Middleware for RequestValidationMiddleware {
     async fn before(&self, req: &mut Request) -> Result<()> {
         // Validate Content-Type for POST requests
-        if req.method == ignite::Method::POST {
+        if req.method == ignitia::Method::POST {
             if let Some(content_type) = req.header("Content-Type") {
                 if !content_type.contains("application/json") {
                     return Err(Error::BadRequest(

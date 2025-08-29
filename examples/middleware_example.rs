@@ -1,4 +1,4 @@
-use ignite::{
+use ignitia::{
     handler_fn,
     middleware::{AuthMiddleware, CorsMiddleware, LoggerMiddleware},
     Request, Response, Result, Router, Server,
