@@ -1,8 +1,5 @@
-use ignite::{
-    handler_fn, Cookie, CookieJar, Error, Request, Response, Result, Router, SameSite, Server,
-};
+use ignite::{handler_fn, Cookie, Error, Request, Response, Result, Router, SameSite, Server};
 use std::net::SocketAddr;
-use std::time::{Duration, SystemTime};
 use tracing_subscriber;
 
 #[tokio::main]

@@ -6,11 +6,11 @@ use crate::{Request, Response, Result};
 
 #[async_trait::async_trait]
 pub trait Middleware: Send + Sync {
-    async fn before(&self, req: &mut Request) -> Result<()> {
+    async fn before(&self, _req: &mut Request) -> Result<()> {
         Ok(())
     }
 
-    async fn after(&self, res: &mut Response) -> Result<()> {
+    async fn after(&self, _res: &mut Response) -> Result<()> {
         Ok(())
     }
 }

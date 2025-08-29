@@ -111,7 +111,7 @@ impl Route {
                 "([^/]+)"
             });
 
-        (format!("^{}$", regex_pattern), param_names, wildcard_names)
+        (format!("^{regex_pattern}$"), param_names, wildcard_names)
     }
 
     pub fn matches(&self, req: &Request) -> Option<HashMap<String, String>> {

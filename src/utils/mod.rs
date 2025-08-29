@@ -9,7 +9,7 @@ pub fn parse_query_string(query: &str) -> HashMap<String, String> {
 
 pub fn url_decode(input: &str) -> String {
     form_urlencoded::parse(input.as_bytes())
-        .map(|(key, val)| format!("{}={}", key, val))
+        .map(|(key, val)| format!("{key}={val}"))
         .collect::<Vec<_>>()
         .join("&")
 }

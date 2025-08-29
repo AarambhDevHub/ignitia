@@ -52,7 +52,7 @@ impl RateLimitMiddleware {
 
 #[async_trait]
 impl Middleware for RateLimitMiddleware {
-    async fn before(&self, req: &mut Request) -> Result<()> {
+    async fn before(&self, _req: &mut Request) -> Result<()> {
         // Extract client IP (in real app, you'd get this from headers or connection)
         let client_ip = "127.0.0.1"; // Simplified for example
 

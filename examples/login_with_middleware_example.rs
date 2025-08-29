@@ -74,7 +74,7 @@ impl AuthMiddleware {
         }
     }
 
-    fn protect_path(mut self, path: impl Into<String>) -> Self {
+    fn _protect_path(mut self, path: impl Into<String>) -> Self {
         self.protected_paths.push(path.into());
         self
     }

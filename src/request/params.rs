@@ -24,9 +24,9 @@ impl Params {
     pub fn get_parsed<T: FromStr>(&self, key: &str) -> Result<T> {
         self.inner
             .get(key)
-            .ok_or_else(|| Error::BadRequest(format!("Missing parameter: {}", key)))?
+            .ok_or_else(|| Error::BadRequest(format!("Missing parameter: {key}")))?
             .parse()
-            .map_err(|_| Error::BadRequest(format!("Invalid parameter format: {}", key)))
+            .map_err(|_| Error::BadRequest(format!("Invalid parameter format: {key}")))
     }
 
     pub fn contains_key(&self, key: &str) -> bool {

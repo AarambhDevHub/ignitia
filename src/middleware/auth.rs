@@ -30,7 +30,7 @@ impl AuthMiddleware {
         let path = req.uri.path();
         self.protected_paths
             .iter()
-            .any(|protected| path == protected || path.starts_with(&format!("{}/", protected)))
+            .any(|protected| path == protected || path.starts_with(&format!("{protected}/")))
     }
 }
 

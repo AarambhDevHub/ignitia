@@ -40,7 +40,7 @@ impl Server {
                 });
 
                 if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
-                    eprintln!("Error serving connection: {}", err);
+                    eprintln!("Error serving connection: {err}");
                 }
             });
         }
@@ -58,16 +58,11 @@ impl Server {
             tokio::spawn(async move {
                 let service = service_fn(move |req| {
                     let router = router.clone();
-                    async move {
-                        handle_request(router, req).await
-                    }
+                    async move { handle_request(router, req).await }
                 });
 
-                if let Err(err) = http1::Builder::new()
-                    .serve_connection(io, service)
-                    .await
-                {
-                    eprintln!("Error serving connection: {}", err);
+                if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                    eprintln!("Error serving connection: {err}");
                 }
             });
         }

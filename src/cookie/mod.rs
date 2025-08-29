@@ -102,15 +102,15 @@ impl Cookie {
         let mut cookie_str = format!("{}={}", self.name, self.value);
 
         if let Some(path) = &self.path {
-            cookie_str.push_str(&format!("; Path={}", path));
+            cookie_str.push_str(&format!("; Path={path}"));
         }
 
         if let Some(domain) = &self.domain {
-            cookie_str.push_str(&format!("; Domain={}", domain));
+            cookie_str.push_str(&format!("; Domain={domain}"));
         }
 
         if let Some(max_age) = self.max_age {
-            cookie_str.push_str(&format!("; Max-Age={}", max_age));
+            cookie_str.push_str(&format!("; Max-Age={max_age}"));
         }
 
         if let Some(expires) = self.expires {
@@ -119,7 +119,7 @@ impl Cookie {
                 let timestamp = duration.as_secs();
                 let datetime =
                     httpdate::HttpDate::from(UNIX_EPOCH + Duration::from_secs(timestamp));
-                cookie_str.push_str(&format!("; Expires={}", datetime));
+                cookie_str.push_str(&format!("; Expires={datetime}"));
             }
         }
 
@@ -132,7 +132,7 @@ impl Cookie {
         }
 
         if let Some(same_site) = &self.same_site {
-            cookie_str.push_str(&format!("; SameSite={}", same_site));
+            cookie_str.push_str(&format!("; SameSite={same_site}"));
         }
 
         cookie_str
