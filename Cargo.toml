@@ -5,11 +5,12 @@ edition = "2021"
 description = "A blazing fast, lightweight web framework for Rust that ignites your development"
 authors = ["Aarambh Dev Hub <your@email.com>"]
 license = "MIT"
-keywords = ["web", "framework", "fast", "ignite", "performance", "rust"]
+keywords = ["web", "framework", "fast", "ignite", "performance", "rust", "http", "async"]
 categories = ["web-programming::http-server"]
 repository = "https://github.com/AarambhDevHub/ignite"
 homepage = "https://github.com/AarambhDevHub/ignite"
 documentation = "https://docs.rs/ignite"
+
 
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }
