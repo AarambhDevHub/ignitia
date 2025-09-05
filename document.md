@@ -1,6 +1,6 @@
 # Ignitia Web Framework Documentation
 
-**Version:** 0.1.1
+**Version:** 0.1.2
 **Built by:** Aarambh Dev Hub
 **Last Updated:** Sep 5, 2025
 
@@ -69,7 +69,7 @@ Ignitia follows these core principles:
 
 ```toml
 [dependencies]
-ignitia = "0.1.1"
+ignitia = "0.1.2"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
