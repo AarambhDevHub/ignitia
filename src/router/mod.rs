@@ -1,6 +1,7 @@
 pub mod method;
 pub mod route;
 
+use crate::handler::{into_handler, IntoHandler};
 use crate::middleware::Middleware;
 use crate::{Error, Handler, HandlerFn, Request, Response, Result};
 use http::Method;
@@ -28,20 +29,49 @@ impl Router {
         self
     }
 
-    pub fn get(self, path: &str, handler: HandlerFn) -> Self {
-        self.route(path, Method::GET, handler)
+    // New method that accepts IntoHandler
+    pub fn route_with<H, T>(mut self, path: &str, method: Method, handler: H) -> Self
+    where
+        H: IntoHandler<T>,
+    {
+        self.routes
+            .push(Route::new(path, method, into_handler(handler)));
+        self
     }
 
-    pub fn post(self, path: &str, handler: HandlerFn) -> Self {
-        self.route(path, Method::POST, handler)
+    pub fn get<H, T>(self, path: &str, handler: H) -> Self
+    where
+        H: IntoHandler<T>,
+    {
+        self.route_with(path, Method::GET, handler)
     }
 
-    pub fn put(self, path: &str, handler: HandlerFn) -> Self {
-        self.route(path, Method::PUT, handler)
+    pub fn post<H, T>(self, path: &str, handler: H) -> Self
+    where
+        H: IntoHandler<T>,
+    {
+        self.route_with(path, Method::POST, handler)
     }
 
-    pub fn delete(self, path: &str, handler: HandlerFn) -> Self {
-        self.route(path, Method::DELETE, handler)
+    pub fn put<H, T>(self, path: &str, handler: H) -> Self
+    where
+        H: IntoHandler<T>,
+    {
+        self.route_with(path, Method::PUT, handler)
+    }
+
+    pub fn delete<H, T>(self, path: &str, handler: H) -> Self
+    where
+        H: IntoHandler<T>,
+    {
+        self.route_with(path, Method::DELETE, handler)
+    }
+
+    pub fn patch<H, T>(self, path: &str, handler: H) -> Self
+    where
+        H: IntoHandler<T>,
+    {
+        self.route_with(path, Method::PATCH, handler)
     }
 
     pub fn middleware<M: Middleware + 'static>(mut self, middleware: M) -> Self {
@@ -49,8 +79,11 @@ impl Router {
         self
     }
 
-    pub fn not_found(mut self, handler: HandlerFn) -> Self {
-        self.not_found_handler = Some(handler);
+    pub fn not_found<H, T>(mut self, handler: H) -> Self
+    where
+        H: IntoHandler<T>,
+    {
+        self.not_found_handler = Some(into_handler(handler));
         self
     }
 

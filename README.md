@@ -66,7 +66,7 @@ Add Ignitia to your `Cargo.toml`:
 
 ```
 [dependencies]
-ignitia = "0.1.0"
+ignitia = "0.1.1"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -79,46 +79,106 @@ tracing-subscriber = "0.3"
 
 Create your first Ignitia application:
 
-```
-use ignitia::{Router, Server, Request, Response, Result, handler_fn};
+```rust
+use ignitia::{
+    Router, Server, Response, Result,
+    handler_fn,
+    handler::extractor::{Path, Query, Json, Body, Extension},
+};
+use serde::Deserialize;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let shared_state = Arc::new(AppState { app_name: "IgnitiaApp".to_string() });
+
     let router = Router::new()
-        .get("/", handler_fn(hello_ignitia))
-        .get("/users/:id", handler_fn(get_user))
-        .post("/api/data", handler_fn(create_data));
+        // Simple route with no params
+        .get("/", handler_fn(root_handler))
+        // Route with path params
+        .get("/users/:id", get_user)
+        // Route with query params extractor
+        .get("/search", search_handler)
+        // Route to create user with JSON body
+        .post("/users", create_user)
+        // Route using raw Body extractor
+        .post("/upload", upload_handler)
+        // Route using extension for shared state
+        .get("/info", with_state)
+    ;
+
+    let router = router.middleware(StateExtensionMiddleware::new(shared_state.clone()));
 
     let server = Server::new(router, "127.0.0.1:3000".parse().unwrap());
 
-    println!("🔥 Igniting server...");
-    server.ignitia().await.unwrap(); // Custom ignitia method!
+    println!("🔥 Igniting server at http://127.0.0.1:3000");
+    server.ignitia().await?;
+
     Ok(())
 }
 
-async fn hello_ignitia(_req: Request) -> Result<Response> {
-    Ok(Response::html(r#"
-        <h1>🔥 Welcome to ignitia!</h1>
-        <p>Your web development journey starts here!</p>
-    "#))
+async fn root_handler() -> Result<Response> {
+    Ok(Response::html("<h1>🔥 Welcome to Ignitia!</h1>"))
 }
 
-async fn get_user(req: Request) -> Result<Response> {
-    let user_id = req.param("id").unwrap_or(&"unknown".to_string());
+async fn get_user(Path(params): Path<(String,)>) -> Result<Response> {
+    let user_id = &params.0;
+    Ok(Response::json(serde_json::json!({ "user_id": user_id }))?)
+}
+
+#[derive(Deserialize)]
+struct SearchParams {
+    q: String,
+    limit: Option<u32>,
+}
+
+async fn search_handler(Query(params): Query<SearchParams>) -> Result<Response> {
     Ok(Response::json(serde_json::json!({
-        "message": "User ignitiad!",
-        "user_id": user_id,
-        "framework": "ignitia 🔥"
+        "query": params.q,
+        "limit": params.limit.unwrap_or(10)
     }))?)
 }
 
-async fn create_data(req: Request) -> Result<Response> {
-    let data: serde_json::Value = req.json()?;
+#[derive(Deserialize)]
+struct NewUser {
+    name: String,
+    email: String,
+}
+
+async fn create_user(Json(user): Json<NewUser>) -> Result<Response> {
+    // Simulate saving user
     Ok(Response::json(serde_json::json!({
-        "status": "success",
-        "received": data,
-        "ignitiad_at": std::time::SystemTime::now()
+        "status": "created",
+        "user": user
     }))?)
+}
+
+async fn upload_handler(Body(body): Body) -> Result<Response> {
+    Ok(Response::text(format!("Uploaded {} bytes", body.len())))
+}
+
+struct AppState {
+    app_name: String,
+}
+
+async fn with_state(Extension(state): Extension<Arc<AppState>>) -> Result<Response> {
+    Ok(Response::text(format!("App name: {}", state.app_name)))
+}
+
+// Middleware to inject state into request extensions (see below)
+struct StateExtensionMiddleware(Arc<AppState>);
+impl StateExtensionMiddleware {
+    fn new(state: Arc<AppState>) -> Self {
+        Self(state)
+    }
+}
+
+#[async_trait::async_trait]
+impl ignitia::middleware::Middleware for StateExtensionMiddleware {
+    async fn before(&self, req: &mut ignitia::Request) -> ignitia::Result<()> {
+        req.insert_extension(self.0.clone());
+        Ok(())
+    }
 }
 ```
 
@@ -126,31 +186,89 @@ async fn create_data(req: Request) -> Result<Response> {
 
 ## 🔥 Core Features
 
-### **🛣️ Advanced Routing**
+### 🛣️ Routing Examples
 
-```
+#### Path Parameter Extraction
+
+```rust
+async fn get_post(Path((user_id, post_id)): Path<(String, String)>) -> Result<Response> {
+    Ok(Response::text(format!("User: {}, Post: {}", user_id, post_id)))
+}
+
 let router = Router::new()
-    // Basic routes
-    .get("/", handler_fn(home))
-    .post("/api/users", handler_fn(create_user))
-    .put("/api/users/:id", handler_fn(update_user))
-    .delete("/api/users/:id", handler_fn(delete_user))
-
-    // Route parameters
-    .get("/users/:id/posts/:post_id", handler_fn(get_post))
-
-    // Wildcard routes for static files
-    .get("/*path", handler_fn(serve_static))
-
-    // Custom 404 handler
-    .not_found(handler_fn(not_found));
+    .get("/users/:user_id/posts/:post_id", handler_fn(get_post));
 ```
+
+#### Query Parameter Extraction
+
+```rust
+#[derive(Deserialize)]
+struct Pagination {
+    page: Option<u32>,
+    per_page: Option<u32>,
+}
+
+async fn list_items(Query(pagination): Query<Pagination>) -> Result<Response> {
+    Ok(Response::json(&pagination)?)
+}
+```
+
+#### JSON Body Parsing
+
+```rust
+#[derive(Deserialize)]
+struct LoginForm {
+    username: String,
+    password: String,
+}
+
+async fn login(Json(form): Json<LoginForm>) -> Result<Response> {
+    // Authenticate
+    Ok(Response::text(format!("Welcome, {}!", form.username)))
+}
+```
+
+#### Raw Body Usage
+
+```rust
+async fn raw_upload(Body(body): Body) -> Result<Response> {
+    Ok(Response::text(format!("Received {} bytes", body.len())))
+}
+```
+
+#### Using Shared State via Extensions
+
+```rust
+use std::sync::Arc;
+
+struct AppConfig {
+    version: String,
+}
+
+async fn version_info(Extension(config): Extension<Arc<AppConfig>>) -> Result<Response> {
+    Ok(Response::text(format!("App version: {}", config.version)))
+}
+```
+
+### **Wildcard Routes**
+
+```rust
+// Serve static files: /*path matches any path
+.get("/*path", serve_static)
+
+async fn serve_static() -> Result<Response> {
+    let path = req.param("path").unwrap();
+    // Serve file from static directory with security checks
+    serve_file_from_directory("./static", path).await
+}
+```
+
 
 ### **🍪 Built-in Cookie Management**
 
 Secure, easy-to-use cookie handling with all security attributes:
 
-```
+```rust
 use ignitia::{Cookie, SameSite};
 
 // Set secure cookies
@@ -165,8 +283,8 @@ let response = Response::text("Session ignitiad!")
     .add_cookie(session);
 
 // Read cookies
-async fn protected_route(req: Request) -> Result<Response> {
-    let username = req.cookie("session")
+async fn protected_route(cookies: Cookies) -> Result<Response> {
+    let username = cookies.get("session_user")
         .unwrap_or("anonymous".to_string());
 
     Ok(Response::text(format!("Welcome back, {}!", username)))
@@ -181,7 +299,7 @@ let response = Response::text("Logged out")
 
 Composable middleware for authentication, logging, CORS, and more:
 
-```
+```rust
 use ignitia::middleware::{AuthMiddleware, CorsMiddleware, LoggerMiddleware};
 
 let router = Router::new()
@@ -195,15 +313,15 @@ let router = Router::new()
         .protect_path("/api/admin")
         .protect_path("/dashboard"))
 
-    .get("/api/admin/users", handler_fn(admin_users))
-    .get("/dashboard", handler_fn(dashboard));
+    .get("/api/admin/users", admin_users)
+    .get("/dashboard", dashboard);
 ```
 
 ### **🔐 Authentication & Authorization**
 
 Built-in session management and role-based access control:
 
-```
+```rust
 // Custom authentication middleware
 #[derive(Clone)]
 struct AuthMiddleware {
@@ -228,61 +346,6 @@ impl Middleware for AuthMiddleware {
 
 ---
 
-## 🛣️ Routing
-
-### **Parameter Extraction**
-
-```
-// Route: /users/:id/posts/:post_id
-async fn get_post(req: Request) -> Result<Response> {
-    let user_id = req.param("id").unwrap();
-    let post_id = req.param("post_id").unwrap();
-
-    Response::json(serde_json::json!({
-        "user_id": user_id,
-        "post_id": post_id
-    }))
-}
-```
-
-### **Query Parameters**
-
-```
-// URL: /search?q=rust&limit=10&page=1
-async fn search(req: Request) -> Result<Response> {
-    let query = req.query("q").unwrap_or(&"".to_string());
-    let limit = req.query("limit")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(20);
-    let page = req.query("page")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(1);
-
-    // Perform search...
-    Response::json(serde_json::json!({
-        "query": query,
-        "limit": limit,
-        "page": page,
-        "results": []
-    }))
-}
-```
-
-### **Wildcard Routes**
-
-```
-// Serve static files: /*path matches any path
-.get("/*path", handler_fn(serve_static))
-
-async fn serve_static(req: Request) -> Result<Response> {
-    let path = req.param("path").unwrap();
-    // Serve file from static directory with security checks
-    serve_file_from_directory("./static", path).await
-}
-```
-
----
-
 ## 🔧 Middleware
 
 ### **Built-in Middleware**
@@ -297,7 +360,7 @@ async fn serve_static(req: Request) -> Result<Response> {
 
 Create your own middleware by implementing the `Middleware` trait:
 
-```
+```rust
 use ignitia::{Middleware, async_trait};
 
 struct RateLimitMiddleware {
@@ -329,7 +392,7 @@ impl Middleware for RateLimitMiddleware {
 
 ### **Setting Cookies**
 
-```
+```rust
 use ignitia::{Cookie, SameSite};
 
 // Session cookie
@@ -360,13 +423,13 @@ Response::text("Cookies set!")
 
 ### **Reading Cookies**
 
-```
-async fn handle_request(req: Request) -> Result<Response> {
+```rust
+async fn handle_request(cookies: Cookies) -> Result<Response> {
     // Get all cookies
-    let cookies = req.cookies();
+    let cookies = cookies;
 
     // Get specific cookie
-    let session = req.cookie("session");
+    let session = cookies.get("session");
 
     // Check if cookie exists
     if cookies.contains("user_preferences") {
@@ -379,7 +442,7 @@ async fn handle_request(req: Request) -> Result<Response> {
 
 ### **Cookie Security**
 
-```
+```rust
 // Production-ready secure cookie
 let secure_session = Cookie::new("session", session_id)
     .path("/")
@@ -395,7 +458,7 @@ let secure_session = Cookie::new("session", session_id)
 
 ### **Session-Based Authentication**
 
-```
+```rust
 async fn login(req: Request) -> Result<Response> {
     let credentials: LoginForm = req.json()?;
 
@@ -427,15 +490,15 @@ async fn logout(_req: Request) -> Result<Response> {
 
 ### **Protected Routes with Middleware**
 
-```
+```rust
 let router = Router::new()
     .middleware(AuthMiddleware::new()
         .protect_paths(vec!["/dashboard", "/admin", "/api/protected"]))
 
     // These routes are automatically protected
-    .get("/dashboard", handler_fn(dashboard))
-    .get("/admin", handler_fn(admin_panel))
-    .get("/api/protected/data", handler_fn(protected_data));
+    .get("/dashboard", dashboard)
+    .get("/admin", admin_panel)
+    .get("/api/protected/data", protected_data);
 ```
 
 ---
@@ -506,52 +569,73 @@ CORS, authentication, and logging middleware examples.
 
 ### **Router**
 
-| Method | Description |
-|--------|-------------|
-| `Router::new()` | Create a new router |
-| `.get(path, handler)` | Add GET route |
-| `.post(path, handler)` | Add POST route |
-| `.put(path, handler)` | Add PUT route |
-| `.delete(path, handler)` | Add DELETE route |
-| `.middleware(middleware)` | Add middleware |
-| `.not_found(handler)` | Set 404 handler |
+| Method              | Description              |
+|---------------------|--------------------------|
+| `Router::new()`     | Create a new router      |
+| `.get(path, handler)` | Add GET route            |
+| `.post(path, handler)` | Add POST route           |
+| `.put(path, handler)`  | Add PUT route            |
+| `.delete(path, handler)` | Add DELETE route         |
+| `.patch(path, handler)` | Add PATCH route          |
+| `.middleware(middleware)` | Add middleware          |
+| `.not_found(handler)`     | Set 404 handler          |
+
+***
 
 ### **Request**
 
-| Method | Description | Example |
-|--------|-------------|---------|
-| `req.param(key)` | Get route parameter | `req.param("id")` |
-| `req.query(key)` | Get query parameter | `req.query("limit")` |
-| `req.header(key)` | Get header value | `req.header("User-Agent")` |
-| `req.json<T>()` | Parse JSON body | `req.json::<User>()?` |
-| `req.cookies()` | Get all cookies | `req.cookies().all()` |
-| `req.cookie(key)` | Get specific cookie | `req.cookie("session")` |
+| Method                 | Description                   | Example                          |
+|------------------------|-------------------------------|---------------------------------|
+| `req.param(key)`       | Get route parameter            | `req.param("id")`               |
+| `req.query(key)`       | Get query parameter            | `req.query("limit")`            |
+| `req.header(key)`      | Get header value               | `req.header("User-Agent")`      |
+| `req.json::<T>()`      | Parse JSON body into type `T` | `req.json::<User>()?`            |
+| `req.cookies()`        | Get all cookies                | `req.cookies().all()`           |
+| `req.cookie(key)`      | Get specific cookie            | `req.cookie("session")`         |
+
+***
+
+### **Extractors for Handler Functions**
+
+| Extractor             | Description                                    | Example Usage                                   |
+|-----------------------|------------------------------------------------|------------------------------------------------|
+| `Path<T>`             | Extract typed route parameters                  | `async fn handler(Path(params): Path<(String, u32)>) { ... }` |
+| `Query<T>`            | Extract typed query parameters                  | `async fn handler(Query(filter): Query<Filter>) { ... }`    |
+| `Json<T>`             | Parse JSON request body into type `T`          | `async fn handler(Json(user): Json<User>) { ... }`           |
+| `Body`                | Access raw request body as bytes                 | `async fn handler(Body(body): Body) { ... }`                 |
+| `Extension<T>`        | Inject shared application state or dependencies | `async fn handler(Extension(state): Extension<AppState>) { ... }` |
+
+***
 
 ### **Response**
 
-| Method | Description | Example |
-|--------|-------------|---------|
-| `Response::text(content)` | Text response | `Response::text("Hello")` |
-| `Response::html(content)` | HTML response | `Response::html("<h1>Hi</h1>")` |
-| `Response::json(data)` | JSON response | `Response::json(user)?` |
-| `Response::not_found()` | 404 response | `Response::not_found()` |
-| `.add_cookie(cookie)` | Add cookie | `.add_cookie(session)` |
-| `.remove_cookie(name)` | Remove cookie | `.remove_cookie("session")` |
+| Method                   | Description                | Example                              |
+|--------------------------|----------------------------|------------------------------------|
+| `Response::text(content)` | Return plain text response | `Response::text("Hello")`           |
+| `Response::html(content)` | Return HTML response       | `Response::html("<h1>Hi</h1>")`    |
+| `Response::json(data)`    | Return JSON response       | `Response::json(user)?`              |
+| `Response::not_found()`   | Return 404 Not Found       | `Response::not_found()`              |
+| `.add_cookie(cookie)`     | Add cookie to response     | `.add_cookie(session)`               |
+| `.remove_cookie(name)`    | Remove cookie from client  | `.remove_cookie("session")`         |
+
+***
 
 ### **Cookie Builder**
 
-| Method | Description | Example |
-|--------|-------------|---------|
-| `Cookie::new(name, value)` | Create cookie | `Cookie::new("user", "john")` |
-| `.path(path)` | Set cookie path | `.path("/")` |
-| `.max_age(seconds)` | Set expiration | `.max_age(3600)` |
-| `.secure()` | HTTPS only | `.secure()` |
-| `.http_only()` | No JavaScript access | `.http_only()` |
-| `.same_site(policy)` | CSRF protection | `.same_site(SameSite::Lax)` |
+| Method              | Description                     | Example                         |
+|---------------------|---------------------------------|--------------------------------|
+| `Cookie::new(name, value)` | Create a new cookie             | `Cookie::new("user", "john")`  |
+| `.path(path)`       | Set cookie path                 | `.path("/")`                   |
+| `.domain(domain)`   | Set cookie domain               | `.domain("example.com")`       |
+| `.max_age(seconds)` | Set max age in seconds          | `.max_age(3600)`               |
+| `.expires(time)`    | Set expiration time             | `.expires(SystemTime::now())`  |
+| `.secure()`         | Mark cookie secure (HTTPS only) | `.secure()`                    |
+| `.http_only()`      | Disallow JavaScript access      | `.http_only()`                 |
+| `.same_site(policy)`| Set SameSite attribute          | `.same_site(SameSite::Lax)`   |
 
 ### **Middleware Trait**
 
-```
+```rust
 #[async_trait]
 pub trait Middleware: Send + Sync {
     async fn before(&self, req: &mut Request) -> Result<()> { Ok(()) }
@@ -561,23 +645,6 @@ pub trait Middleware: Send + Sync {
 
 ---
 
-## 🧪 Testing
-
-### **Run Tests**
-
-```
-# Run all tests
-cargo test
-
-# Run with verbose output
-cargo test -- --nocapture
-
-# Run integration tests
-cargo test --test integration_test
-
-# Run specific test
-cargo test test_authentication
-```
 
 ### **Test Your Application**
 
@@ -591,30 +658,6 @@ curl http://127.0.0.1:3000/users/123
 curl -X POST -H "Content-Type: application/json" \
      -d '{"name":"John"}' \
      http://127.0.0.1:3000/api/data
-```
-
-### **Example Test**
-
-```
-#[tokio::test]
-async fn test_cookie_authentication() {
-    let router = Router::new()
-        .get("/protected", handler_fn(protected_route));
-
-    // Test without cookie (should fail)
-    let req = Request::new(Method::GET, "/protected".parse().unwrap(), /*...*/);
-    let response = router.handle(req).await;
-    assert!(matches!(response, Err(Error::Unauthorized)));
-
-    // Test with valid cookie (should succeed)
-    let mut req_with_cookie = Request::new(/*...*/);
-    req_with_cookie.headers.insert(
-        "Cookie",
-        "session=valid_token".parse().unwrap()
-    );
-    let response = router.handle(req_with_cookie).await.unwrap();
-    assert_eq!(response.status, StatusCode::OK);
-}
 ```
 
 ---
@@ -659,7 +702,7 @@ let router = Router::new()
 
 ### **Security Best Practices**
 
-```
+```rust
 // Secure cookie configuration
 let secure_cookie = Cookie::new("session", session_token)
     .path("/")
@@ -684,36 +727,50 @@ let router = Router::new()
 
 ```
 ignitia/
-├── src/
-│   ├── lib.rs              # Main library exports
-│   ├── router/             # Routing with wildcards
-│   │   ├── mod.rs
-│   │   ├── route.rs
-│   │   └── method.rs
-│   ├── middleware/         # Middleware implementations
-│   │   ├── mod.rs
-│   │   ├── logger.rs
-│   │   ├── cors.rs
-│   │   └── auth.rs
-│   ├── request/            # Request handling with cookies
-│   ├── response/           # Response building with cookies
-│   ├── handler/            # Handler traits and functions
-│   ├── server/             # HTTP server
-│   ├── cookie/             # Built-in cookie management
-│   ├── error/              # Error types
-│   └── utils/              # Utility functions
-├── examples/               # 8+ comprehensive examples
+├── Cargo.toml
+├── README.md
+├── examples/
 │   ├── basic_server.rs
 │   ├── login_example.rs
-│   ├── cookie_framework_example.rs
-│   ├── custom_middleware_example.rs
-│   ├── login_with_middleware_example.rs
+│   ├── cookie_framework.rs
+│   ├── custom_middleware.rs
+│   ├── login_with_middleware.rs
 │   ├── middleware_example.rs
 │   ├── json_api.rs
 │   └── file_server.rs
-├── tests/                  # Integration tests
-├── Cargo.toml
-└── README.md
+└── src/
+    ├── lib.rs                  # Main library exports and re-exports
+    ├── router/                 # Routing modules
+    │   ├── mod.rs
+    │   ├── route.rs
+    │   └── method.rs
+    ├── middleware/             # Middleware implementations
+    │   ├── mod.rs
+    │   ├── logger.rs
+    │   ├── cors.rs
+    │   └── auth.rs
+    ├── request/                # Request handling components
+    │   ├── mod.rs
+    │   ├── body.rs
+    │   └── params.rs
+    ├── response/               # Response creation and builders
+    │   ├── mod.rs
+    │   ├── builder.rs
+    │   └── status.rs
+    ├── handler/                # Handler traits and extractors
+    │   ├── mod.rs
+    │   └── extractor.rs
+    ├── server/                 # HTTP server implementation
+    │   ├── mod.rs
+    │   └── connection.rs
+    ├── cookie/                 # Cookie management utilities
+    │   └── mod.rs
+    ├── extension/              # Extension types and utilities
+    │   └── mod.rs
+    ├── error/                  # Error types and handling
+    │   └── mod.rs
+    └── utils/                  # Helper utilities
+        └── mod.rs
 ```
 
 ### **Building**
@@ -790,40 +847,40 @@ cargo run --example basic_server
 
 ## 📝 Changelog
 
-### **v0.1.0** - Initial Release 🎉
+### **v0.1.1** - Initial Release 🎉
 
 #### **Core Features**
-- ✅ Advanced routing with parameters and wildcards
-- ✅ Comprehensive middleware system
-- ✅ Built-in cookie management with security features
-- ✅ Authentication and authorization examples
-- ✅ Static file serving with security protections
-- ✅ JSON API support with serialization
-- ✅ Request/response handling with proper error management
+- ✅ Advanced routing with support for typed path parameters and wildcard routes
+- ✅ Comprehensive middleware system with support for common and custom middleware
+- ✅ Built-in secure cookie management with full attribute controls (HttpOnly, Secure, SameSite)
+- ✅ Authentication and authorization middleware with path-based protection
+- ✅ Static file serving with path traversal security protections
+- ✅ JSON API support with automatic request body deserialization and response serialization
+- ✅ Robust request/response handling with detailed error management and status codes
 
 #### **Middleware**
-- ✅ Authentication middleware with path protection
-- ✅ CORS middleware with configurable origins
-- ✅ Request logging middleware
-- ✅ Rate limiting middleware
-- ✅ Security headers middleware
-- ✅ Custom middleware support
+- ✅ Authentication middleware supporting token and session validation with configurable protected paths
+- ✅ CORS middleware with customizable allowed origins, methods, and headers
+- ✅ Request logging middleware with HTTP version and status codes logging
+- ✅ Rate limiting middleware for abuse prevention (custom middleware support)
+- ✅ Security headers middleware for CSP, HSTS, frame options, and more (custom middleware support)
+- ✅ Full support for user-defined custom middleware implementations via the Middleware trait
 
 #### **Examples**
-- ✅ Basic server with routing
-- ✅ Complete authentication system
-- ✅ Cookie management showcase
-- ✅ Custom middleware implementations
-- ✅ JSON API with CRUD operations
-- ✅ Static file server
-- ✅ Middleware integration examples
+- ✅ Basic server demonstrating core routing and responses
+- ✅ Complete authentication system with session management and role-based access control
+- ✅ Cookie management showcase with secure cookie creation, reading, and removal
+- ✅ Custom middleware examples including rate limiting and security headers
+- ✅ JSON API example with CRUD operations and typed data handling
+- ✅ Static file server example with MIME detection and security checks
+- ✅ Middleware integration examples covering logging, CORS, and authentication
 
 #### **Security**
-- ✅ Secure cookie attributes
-- ✅ Path traversal protection
-- ✅ Session management
-- ✅ CSRF protection
-- ✅ XSS prevention
+- ✅ Secure cookie configurations (HttpOnly, Secure, SameSite)
+- ✅ Path traversal protection in static file serving
+- ✅ Session management with cookie-based authentication
+- ✅ CSRF protection via SameSite cookie policies and middleware
+- ✅ XSS prevention through secure cookie flags and content headers
 
 ---
 
@@ -866,7 +923,7 @@ cd my-ignitia-app
 
 # Add ignitia to Cargo.toml
 echo '[dependencies]
-ignitia = "0.1.0"
+ignitia = "0.1.1"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"' >> Cargo.toml

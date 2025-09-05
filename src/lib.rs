@@ -23,22 +23,29 @@
 
 pub mod cookie;
 pub mod error;
+pub mod extension;
 pub mod handler;
 pub mod middleware;
 pub mod request;
 pub mod response;
 pub mod router;
 pub mod server;
-pub mod utils; // Add this line
+pub mod utils;
 
 pub use cookie::{Cookie, CookieJar, SameSite};
 pub use error::{Error, Result};
-pub use handler::{handler_fn, Handler, HandlerFn};
+pub use extension::{Extension, Extensions};
+pub use handler::extractor::{
+    Body, Cookies, Headers, Json, Method as IgnitiaMethod, Path, Query, Uri,
+};
+pub use handler::{
+    handler_fn, into_handler, raw_handler, Handler, HandlerFn, IntoHandler, RawRequest,
+};
 pub use middleware::Middleware;
 pub use request::Request;
 pub use response::{Response, ResponseBuilder};
 pub use router::{Route, Router};
-pub use server::Server; // Add this line
+pub use server::Server;
 
 // Re-export commonly used types
 pub use async_trait::async_trait;

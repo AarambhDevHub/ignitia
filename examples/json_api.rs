@@ -1,5 +1,7 @@
 use http::StatusCode;
-use ignitia::{handler_fn, Request, Response, ResponseBuilder, Result, Router, Server};
+use ignitia::{
+    Extension, Json, Middleware, Request, Response, ResponseBuilder, Result, Router, Server,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -13,6 +15,25 @@ struct Todo {
 }
 
 type TodoStore = Arc<Mutex<HashMap<u32, Todo>>>;
+
+// Middleware to inject TodoStore as an extension into each request
+struct TodoStoreMiddleware {
+    store: TodoStore,
+}
+
+impl TodoStoreMiddleware {
+    fn new(store: TodoStore) -> Self {
+        Self { store }
+    }
+}
+
+#[ignitia::async_trait]
+impl Middleware for TodoStoreMiddleware {
+    async fn before(&self, req: &mut Request) -> Result<()> {
+        req.insert_extension(self.store.clone());
+        Ok(())
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -39,40 +60,32 @@ async fn main() -> Result<()> {
         );
     }
 
-    let store_clone = store.clone();
     let router = Router::new()
-        .get(
-            "/api/todos",
-            handler_fn(move |req| {
-                let store = store.clone();
-                async move { list_todos(req, store).await }
-            }),
-        )
-        .post(
-            "/api/todos",
-            handler_fn(move |req| {
-                let store = store_clone.clone();
-                async move { create_todo(req, store).await }
-            }),
-        );
+        .middleware(TodoStoreMiddleware::new(store.clone()))
+        .get("/api/todos", list_todos)
+        .post("/api/todos", create_todo);
 
     let addr: SocketAddr = "127.0.0.1:3002".parse().unwrap();
     let server = Server::new(router, addr);
 
     println!("JSON API server running on http://{}", addr);
-    server.run().await.unwrap();
+    server.ignitia().await.unwrap();
 
     Ok(())
 }
 
-async fn list_todos(_req: Request, store: TodoStore) -> Result<Response> {
+// Handler using Extension extractor
+async fn list_todos(Extension(store): Extension<TodoStore>) -> Result<Response> {
     let todos = store.lock().unwrap();
     let todos_vec: Vec<Todo> = todos.values().cloned().collect();
     Response::json(todos_vec)
 }
 
-async fn create_todo(req: Request, store: TodoStore) -> Result<Response> {
-    let mut todo: Todo = req.json()?;
+// Handler using both Json<T> and Extension extractors
+async fn create_todo(
+    Json(mut todo): Json<Todo>,
+    Extension(store): Extension<TodoStore>,
+) -> Result<Response> {
     let mut todos = store.lock().unwrap();
 
     let new_id = todos.keys().max().unwrap_or(&0) + 1;

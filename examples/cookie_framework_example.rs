@@ -1,4 +1,4 @@
-use ignitia::{handler_fn, Cookie, Error, Request, Response, Result, Router, SameSite, Server};
+use ignitia::{Cookie, Error, Request, Response, Result, Router, SameSite, Server};
 use std::net::SocketAddr;
 use tracing_subscriber;
 
@@ -7,14 +7,14 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let router = Router::new()
-        .get("/", handler_fn(home))
-        .get("/set", handler_fn(set_cookies))
-        .get("/get", handler_fn(get_cookies))
-        .get("/secure", handler_fn(set_secure_cookie))
-        .get("/remove", handler_fn(remove_cookie))
-        .post("/login", handler_fn(login))
-        .get("/dashboard", handler_fn(dashboard))
-        .get("/logout", handler_fn(logout));
+        .get("/", home)
+        .get("/set", set_cookies)
+        .get("/get", get_cookies)
+        .get("/secure", set_secure_cookie)
+        .get("/remove", remove_cookie)
+        .post("/login", login)
+        .get("/dashboard", dashboard)
+        .get("/logout", logout);
 
     let addr: SocketAddr = "127.0.0.1:3006".parse().unwrap();
     let server = Server::new(router, addr);

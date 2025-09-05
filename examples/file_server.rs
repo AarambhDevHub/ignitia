@@ -1,4 +1,4 @@
-use ignitia::{handler_fn, Error, Request, Response, ResponseBuilder, Result, Router, Server};
+use ignitia::{Error, Request, Response, ResponseBuilder, Result, Router, Server};
 use mime_guess;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -10,8 +10,8 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let router = Router::new()
-        .get("/", handler_fn(serve_index))
-        .get("/*path", handler_fn(serve_file)); // This now works!
+        .get("/", serve_index)
+        .get("/*path", serve_file); // This now works!
 
     let addr: SocketAddr = "127.0.0.1:3003".parse().unwrap();
     let server = Server::new(router, addr);

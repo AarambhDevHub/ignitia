@@ -1,6 +1,6 @@
 use http::{HeaderName, HeaderValue}; // Add this import
 use ignitia::{
-    async_trait, handler_fn,
+    async_trait,
     middleware::{LoggerMiddleware, Middleware},
     Error, Request, Response, Result, Router, Server,
 };
@@ -293,14 +293,14 @@ async fn main() -> Result<()> {
                 .protect_path("/admin/"),
         )
         // Public routes
-        .get("/", handler_fn(home))
-        .get("/health", handler_fn(health_check))
-        .post("/echo", handler_fn(echo_post))
+        .get("/", home)
+        .get("/health", health_check)
+        .post("/echo", echo_post)
         // Protected routes (require API key)
-        .get("/api/data", handler_fn(api_data))
-        .get("/admin/stats", handler_fn(admin_stats))
+        .get("/api/data", api_data)
+        .get("/admin/stats", admin_stats)
         // Custom 404 handler
-        .not_found(handler_fn(not_found));
+        .not_found(not_found);
 
     let addr: SocketAddr = "127.0.0.1:3004".parse().unwrap();
     let server = Server::new(router, addr);

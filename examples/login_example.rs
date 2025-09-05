@@ -1,4 +1,7 @@
-use ignitia::{handler_fn, Cookie, Error, Request, Response, Result, Router, SameSite, Server};
+use ignitia::{
+    Body, Cookie, Cookies, Error, Extension, Middleware, Request, Response, Result, Router,
+    SameSite, Server,
+};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tracing_subscriber;
@@ -20,7 +23,6 @@ struct User {
 impl UserDB {
     fn new() -> Self {
         let mut users = HashMap::new();
-
         // Add some test users
         users.insert(
             "admin".to_string(),
@@ -31,7 +33,6 @@ impl UserDB {
                 role: "admin".to_string(),
             },
         );
-
         users.insert(
             "user".to_string(),
             User {
@@ -41,7 +42,6 @@ impl UserDB {
                 role: "user".to_string(),
             },
         );
-
         Self { users }
     }
 
@@ -56,6 +56,25 @@ impl UserDB {
     }
 }
 
+// Middleware to inject UserDB as an extension into each request
+struct UserDBMiddleware {
+    db: UserDB,
+}
+
+impl UserDBMiddleware {
+    fn new(db: UserDB) -> Self {
+        Self { db }
+    }
+}
+
+#[ignitia::async_trait]
+impl Middleware for UserDBMiddleware {
+    async fn before(&self, req: &mut Request) -> Result<()> {
+        req.insert_extension(self.db.clone());
+        Ok(())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -63,43 +82,14 @@ async fn main() -> Result<()> {
     let user_db = UserDB::new();
 
     let router = Router::new()
-        .get(
-            "/",
-            handler_fn({
-                let db = user_db.clone();
-                move |req| home(req, db.clone())
-            }),
-        )
-        .get("/login", handler_fn(login_form))
-        .post(
-            "/login",
-            handler_fn({
-                let db = user_db.clone();
-                move |req| login_process(req, db.clone())
-            }),
-        )
-        .get(
-            "/dashboard",
-            handler_fn({
-                let db = user_db.clone();
-                move |req| dashboard(req, db.clone())
-            }),
-        )
-        .get(
-            "/profile",
-            handler_fn({
-                let db = user_db.clone();
-                move |req| profile(req, db.clone())
-            }),
-        )
-        .get(
-            "/admin",
-            handler_fn({
-                let db = user_db.clone();
-                move |req| admin_panel(req, db.clone())
-            }),
-        )
-        .get("/logout", handler_fn(logout));
+        .middleware(UserDBMiddleware::new(user_db))
+        .get("/", home)
+        .get("/login", login_form)
+        .post("/login", login_process)
+        .get("/dashboard", dashboard)
+        .get("/profile", profile)
+        .get("/admin", admin_panel)
+        .get("/logout", logout);
 
     let addr: SocketAddr = "127.0.0.1:3008".parse().unwrap();
     let server = Server::new(router, addr);
@@ -117,7 +107,6 @@ async fn main() -> Result<()> {
 fn parse_form_data(body: &[u8]) -> Result<HashMap<String, String>> {
     let body_str =
         String::from_utf8(body.to_vec()).map_err(|_| Error::BadRequest("Invalid UTF-8".into()))?;
-
     let mut form_data = HashMap::new();
     for pair in body_str.split('&') {
         if let Some((key, value)) = pair.split_once('=') {
@@ -130,10 +119,9 @@ fn parse_form_data(body: &[u8]) -> Result<HashMap<String, String>> {
     Ok(form_data)
 }
 
-async fn home(req: Request, db: UserDB) -> Result<Response> {
+async fn home(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<Response> {
     // Check if user is logged in
-    let current_user = req.cookie("session_user");
-
+    let current_user = cookies.get("session_user").map(|s| s.clone());
     let user_info = if let Some(username) = &current_user {
         if let Some(user) = db.get_user(username) {
             format!(
@@ -186,9 +174,7 @@ async fn home(req: Request, db: UserDB) -> Result<Response> {
         </head>
         <body>
             <h1>🔐 Mini Web Framework - Login Demo</h1>
-
             {}
-
             <div class="test-accounts">
                 <h3>🧪 Test Accounts:</h3>
                 <ul>
@@ -196,7 +182,6 @@ async fn home(req: Request, db: UserDB) -> Result<Response> {
                     <li><strong>user</strong> / user123 (Regular User)</li>
                 </ul>
             </div>
-
             <h3>🛠️ Features Demonstrated:</h3>
             <ul>
                 <li>✅ Session-based authentication</li>
@@ -205,6 +190,7 @@ async fn home(req: Request, db: UserDB) -> Result<Response> {
                 <li>✅ Cookie management</li>
                 <li>✅ Form processing</li>
                 <li>✅ User sessions</li>
+                <li>✅ Extension-based dependency injection</li>
             </ul>
         </body>
         </html>
@@ -215,9 +201,9 @@ async fn home(req: Request, db: UserDB) -> Result<Response> {
     Ok(Response::html(html))
 }
 
-async fn login_form(req: Request) -> Result<Response> {
+async fn login_form(cookies: Cookies) -> Result<Response> {
     // Redirect if already logged in
-    if req.cookie("session_user").is_some() {
+    if cookies.get("session_user").is_some() {
         return Ok(Response::html(
             r#"
             <h1>Already Logged In</h1>
@@ -244,19 +230,16 @@ async fn login_form(req: Request) -> Result<Response> {
         <body>
             <div class="login-form">
                 <h1>🔐 Login</h1>
-
                 <form action="/login" method="POST">
                     <input type="text" name="username" placeholder="Username" required autofocus>
                     <input type="password" name="password" placeholder="Password" required>
                     <button type="submit">Login</button>
                 </form>
-
                 <div class="test-info">
                     <strong>🧪 Test Accounts:</strong><br>
                     admin / admin123<br>
                     user / user123
                 </div>
-
                 <p style="text-align: center; margin-top: 20px;">
                     <a href="/">← Back to Home</a>
                 </p>
@@ -268,9 +251,8 @@ async fn login_form(req: Request) -> Result<Response> {
     Ok(Response::html(html))
 }
 
-async fn login_process(req: Request, db: UserDB) -> Result<Response> {
-    let form_data = parse_form_data(&req.body)?;
-
+async fn login_process(body: Body, Extension(db): Extension<UserDB>) -> Result<Response> {
+    let form_data = parse_form_data(&body)?;
     let username = form_data.get("username").unwrap_or(&"".to_string()).clone();
     let password = form_data.get("password").unwrap_or(&"".to_string()).clone();
 
@@ -327,12 +309,11 @@ async fn login_process(req: Request, db: UserDB) -> Result<Response> {
     }
 }
 
-async fn dashboard(req: Request, db: UserDB) -> Result<Response> {
+async fn dashboard(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<Response> {
     // Check authentication
-    let username = req
-        .cookie("session_user")
+    let username = cookies
+        .get("session_user")
         .ok_or_else(|| Error::Unauthorized)?;
-
     let user = db.get_user(&username).ok_or_else(|| Error::Unauthorized)?;
 
     let html = format!(
@@ -356,7 +337,6 @@ async fn dashboard(req: Request, db: UserDB) -> Result<Response> {
         <body>
             <div class="dashboard">
                 <h1>📊 Dashboard</h1>
-
                 <div class="user-info">
                     <h2>👤 User Information</h2>
                     <p><strong>Username:</strong> {}</p>
@@ -364,17 +344,16 @@ async fn dashboard(req: Request, db: UserDB) -> Result<Response> {
                     <p><strong>Role:</strong> {}</p>
                     <p><strong>Session:</strong> ✅ Active</p>
                 </div>
-
                 <div class="actions">
                     <a href="/profile" class="btn-primary">👤 Profile</a>
                     {}
                     <a href="/" class="btn-success">🏠 Home</a>
                     <a href="/logout" class="btn-danger">🚪 Logout</a>
                 </div>
-
                 <h3>🔒 Protected Content</h3>
                 <p>This is a protected page that requires authentication.</p>
                 <p>Only logged-in users can see this content.</p>
+                <p><strong>Extension System:</strong> ✅ UserDB injected via middleware</p>
             </div>
         </body>
         </html>
@@ -392,25 +371,38 @@ async fn dashboard(req: Request, db: UserDB) -> Result<Response> {
     Ok(Response::html(html))
 }
 
-async fn profile(req: Request, db: UserDB) -> Result<Response> {
-    let username = req
-        .cookie("session_user")
+async fn profile(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<Response> {
+    let username = cookies
+        .get("session_user")
         .ok_or_else(|| Error::Unauthorized)?;
-
     let user = db.get_user(&username).ok_or_else(|| Error::Unauthorized)?;
 
     let html = format!(
         r#"
-        <h1>👤 User Profile</h1>
-        <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; max-width: 500px;">
-            <h2>{}</h2>
-            <p><strong>Email:</strong> {}</p>
-            <p><strong>Role:</strong> {}</p>
-            <p><strong>Account Status:</strong> ✅ Active</p>
-        </div>
-        <div style="margin-top: 20px;">
-            <a href="/dashboard">← Back to Dashboard</a>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>👤 Profile</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; max-width: 600px; margin: 40px auto; }}
+                .profile {{ background: #f8f9fa; padding: 30px; border-radius: 10px; }}
+                .back-link {{ margin-top: 20px; }}
+            </style>
+        </head>
+        <body>
+            <h1>👤 User Profile</h1>
+            <div class="profile">
+                <h2>{}</h2>
+                <p><strong>Email:</strong> {}</p>
+                <p><strong>Role:</strong> {}</p>
+                <p><strong>Account Status:</strong> ✅ Active</p>
+                <p><strong>Data Source:</strong> Extension-injected UserDB</p>
+            </div>
+            <div class="back-link">
+                <a href="/dashboard" style="background: #007acc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">← Back to Dashboard</a>
+            </div>
+        </body>
+        </html>
     "#,
         user.username, user.email, user.role
     );
@@ -418,45 +410,78 @@ async fn profile(req: Request, db: UserDB) -> Result<Response> {
     Ok(Response::html(html))
 }
 
-async fn admin_panel(req: Request, db: UserDB) -> Result<Response> {
-    let username = req
-        .cookie("session_user")
+async fn admin_panel(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<Response> {
+    let username = cookies
+        .get("session_user")
         .ok_or_else(|| Error::Unauthorized)?;
-
     let user = db.get_user(&username).ok_or_else(|| Error::Unauthorized)?;
 
     // Check admin role
     if user.role != "admin" {
         return Ok(Response::html(
             r#"
-            <h1>🚫 Access Denied</h1>
-            <p>You need administrator privileges to access this page.</p>
-            <a href="/dashboard">← Back to Dashboard</a>
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>🚫 Access Denied</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 40px; max-width: 600px; margin: 40px auto; }
+                    .error { background: #f8d7da; padding: 20px; border-radius: 10px; color: #721c24; }
+                </style>
+            </head>
+            <body>
+                <div class="error">
+                    <h1>🚫 Access Denied</h1>
+                    <p>You need administrator privileges to access this page.</p>
+                    <p>Current role: <strong>user</strong></p>
+                    <p>Required role: <strong>admin</strong></p>
+                </div>
+                <a href="/dashboard" style="background: #007acc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">← Back to Dashboard</a>
+            </body>
+            </html>
         "#,
         ));
     }
 
     let html = format!(
         r#"
-        <h1>⚙️ Admin Panel</h1>
-        <p>Welcome to the admin panel, <strong>{}</strong>!</p>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>⚙️ Admin Panel</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; max-width: 800px; margin: 40px auto; }}
+                .admin-panel {{ background: #fff3cd; padding: 20px; border-radius: 10px; margin: 20px 0; }}
+                .user-stats {{ background: #d1ecf1; padding: 20px; border-radius: 10px; margin: 20px 0; }}
+                .back-link {{ margin-top: 20px; }}
+            </style>
+        </head>
+        <body>
+            <h1>⚙️ Admin Panel</h1>
+            <p>Welcome to the admin panel, <strong>{}</strong>!</p>
 
-        <div style="background: #fff3cd; padding: 20px; border-radius: 10px; margin: 20px 0;">
-            <h3>👥 User Management</h3>
-            <ul>
-                <li>Total Users: {}</li>
-                <li>Admin Users: {}</li>
-                <li>Regular Users: {}</li>
-            </ul>
-        </div>
+            <div class="user-stats">
+                <h3>👥 User Statistics</h3>
+                <ul>
+                    <li>Total Users: {}</li>
+                    <li>Admin Users: {}</li>
+                    <li>Regular Users: {}</li>
+                </ul>
+            </div>
 
-        <div style="background: #d1ecf1; padding: 20px; border-radius: 10px; margin: 20px 0;">
-            <h3>🔧 Admin Actions</h3>
-            <p>This is where admin-only functionality would go.</p>
-            <p>Only users with 'admin' role can access this area.</p>
-        </div>
+            <div class="admin-panel">
+                <h3>🔧 Admin Features</h3>
+                <p>This is where admin-only functionality would go.</p>
+                <p>Only users with 'admin' role can access this area.</p>
+                <p><strong>Access Control:</strong> ✅ Role-based authorization</p>
+                <p><strong>Data Access:</strong> ✅ Extension-based UserDB injection</p>
+            </div>
 
-        <a href="/dashboard">← Back to Dashboard</a>
+            <div class="back-link">
+                <a href="/dashboard" style="background: #007acc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">← Back to Dashboard</a>
+            </div>
+        </body>
+        </html>
     "#,
         user.username,
         db.users.len(),
@@ -467,13 +492,30 @@ async fn admin_panel(req: Request, db: UserDB) -> Result<Response> {
     Ok(Response::html(html))
 }
 
-async fn logout(_req: Request) -> Result<Response> {
+async fn logout() -> Result<Response> {
     let response = Response::html(
         r#"
-        <h1>👋 Logged Out</h1>
-        <p>You have been successfully logged out.</p>
-        <p>Your session has been cleared.</p>
-        <a href="/">← Back to Home</a>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>👋 Logged Out</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 40px; max-width: 600px; margin: 40px auto; }
+                .logout-message { background: #d4edda; padding: 20px; border-radius: 10px; text-align: center; }
+            </style>
+        </head>
+        <body>
+            <div class="logout-message">
+                <h1>👋 Logged Out</h1>
+                <p>You have been successfully logged out.</p>
+                <p>Your session cookies have been cleared.</p>
+                <p>Thank you for using our application!</p>
+            </div>
+            <div style="text-align: center; margin-top: 20px;">
+                <a href="/" style="background: #007acc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">← Back to Home</a>
+            </div>
+        </body>
+        </html>
     "#,
     );
 

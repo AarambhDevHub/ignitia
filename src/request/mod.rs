@@ -1,11 +1,11 @@
 pub mod body;
 pub mod params;
 
-use crate::error::Result;
+use crate::{error::Result, Extensions};
 use bytes::Bytes;
 use http::{HeaderMap, Method, Uri, Version};
 use serde::de::DeserializeOwned;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Debug)]
 pub struct Request {
@@ -16,6 +16,7 @@ pub struct Request {
     pub body: Bytes,
     pub params: HashMap<String, String>,
     pub query_params: HashMap<String, String>,
+    pub extensions: Extensions,
 }
 
 impl Request {
@@ -36,6 +37,7 @@ impl Request {
             body,
             params: HashMap::new(),
             query_params,
+            extensions: Extensions::new(),
         }
     }
 
@@ -43,11 +45,20 @@ impl Request {
         uri.query()
             .map(|query| {
                 query
-                    .split('&')
+                    .split('&') // ✅ Fixed: was &amp;
                     .filter_map(|pair| {
                         let mut parts = pair.split('=');
                         match (parts.next(), parts.next()) {
-                            (Some(key), Some(value)) => Some((key.to_string(), value.to_string())),
+                            (Some(key), Some(value)) => {
+                                // ✅ Added URL decoding
+                                let decoded_key = urlencoding::decode(key)
+                                    .unwrap_or_else(|_| key.into())
+                                    .into_owned();
+                                let decoded_value = urlencoding::decode(value)
+                                    .unwrap_or_else(|_| value.into())
+                                    .into_owned();
+                                Some((decoded_key, decoded_value))
+                            }
                             _ => None,
                         }
                     })
@@ -70,5 +81,26 @@ impl Request {
 
     pub fn header(&self, key: &str) -> Option<&str> {
         self.headers.get(key).and_then(|v| v.to_str().ok())
+    }
+
+    // Extension methods
+    /// Insert an extension value
+    pub fn insert_extension<T: Send + Sync + 'static>(&mut self, value: T) {
+        self.extensions.insert(value);
+    }
+
+    /// Get an extension value (returns Arc<T> for shared ownership)
+    pub fn get_extension<T: Send + Sync + Clone + 'static>(&self) -> Option<Arc<T>> {
+        self.extensions.get()
+    }
+
+    /// Remove an extension value
+    pub fn remove_extension<T: Send + Sync + 'static>(&mut self) -> Option<T> {
+        self.extensions.remove()
+    }
+
+    /// Check if an extension exists
+    pub fn has_extension<T: Send + Sync + 'static>(&self) -> bool {
+        self.extensions.contains::<T>()
     }
 }
