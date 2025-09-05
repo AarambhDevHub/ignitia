@@ -6,17 +6,19 @@
 //! ## Quick Start
 //!
 //! ```
-//! use ignitia::{Router, Server, Request, Response, Result, handler_fn};
+//! use ignitia::{Router, Server, Request, Response, Result};
+//!
+//! async fn hello() -> Result<Response> {
+//!     Ok(Response::text("Hello from ignitia! 🔥"))
+//! }
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
 //!     let router = Router::new()
-//!         .get("/", handler_fn(|_req| async {
-//!             Ok(Response::text("Hello from ignitia! 🔥"))
-//!         }));
+//!         .get("/", hello);
 //!
 //!     let server = Server::new(router, "127.0.0.1:3000".parse().unwrap());
-//!     server.ignitia().await.unwrap();
+//!     server.ignitia().await?;
 //!     Ok(())
 //! }
 //! ```
