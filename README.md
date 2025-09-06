@@ -66,7 +66,7 @@ Add Ignitia to your `Cargo.toml`:
 
 ```
 [dependencies]
-ignitia = "0.1.2"
+ignitia = "0.1.3"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -105,6 +105,8 @@ async fn main() -> Result<()> {
         .post("/upload", upload_handler)
         // Route using extension for shared state
         .get("/info", with_state)
+        // Route using extension for shared state
+        .nest("/api/v1", Router)
     ;
 
     let router = router.middleware(StateExtensionMiddleware::new(shared_state.clone()));
@@ -847,7 +849,7 @@ cargo run --example basic_server
 
 ## 📝 Changelog
 
-### **v0.1.2** - Initial Release 🎉
+### **v0.1.3** - Initial Release 🎉
 
 #### **Core Features**
 - ✅ Advanced routing with support for typed path parameters and wildcard routes
@@ -923,7 +925,7 @@ cd my-ignitia-app
 
 # Add ignitia to Cargo.toml
 echo '[dependencies]
-ignitia = "0.1.2"
+ignitia = "0.1.3"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"' >> Cargo.toml
