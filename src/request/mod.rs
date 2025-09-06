@@ -42,43 +42,73 @@ impl Request {
     }
 
     fn parse_query_params(uri: &Uri) -> HashMap<String, String> {
-        uri.query()
-            .map(|query| {
-                query
-                    .split('&') // ✅ Fixed: was &amp;
-                    .filter_map(|pair| {
-                        let mut parts = pair.split('=');
-                        match (parts.next(), parts.next()) {
-                            (Some(key), Some(value)) => {
-                                // ✅ Added URL decoding
-                                let decoded_key = urlencoding::decode(key)
-                                    .unwrap_or_else(|_| key.into())
-                                    .into_owned();
-                                let decoded_value = urlencoding::decode(value)
-                                    .unwrap_or_else(|_| value.into())
-                                    .into_owned();
-                                Some((decoded_key, decoded_value))
-                            }
-                            _ => None,
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+        let query = match uri.query() {
+            Some(q) => q,
+            None => return HashMap::new(),
+        };
+
+        let mut params = HashMap::new();
+        let mut key = String::with_capacity(32);
+        let mut value = String::with_capacity(64);
+        let mut parsing_key = true;
+
+        for c in query.chars() {
+            match c {
+                '&' => {
+                    if !key.is_empty() {
+                        params.insert(std::mem::take(&mut key), std::mem::take(&mut value));
+                    }
+                    parsing_key = true;
+                }
+                '=' if parsing_key => {
+                    parsing_key = false;
+                }
+                _ if parsing_key => {
+                    key.push(c);
+                }
+                _ => {
+                    value.push(c);
+                }
+            }
+        }
+
+        if !key.is_empty() {
+            params.insert(key, value);
+        }
+
+        params
     }
 
+    // Optimized JSON parsing with pre-check
     pub fn json<T: DeserializeOwned>(&self) -> Result<T> {
+        if self.body.is_empty() {
+            return Err(crate::Error::BadRequest("Empty body".into()));
+        }
+
+        // Quick check for JSON content type
+        if let Some(content_type) = self.header("content-type") {
+            if !content_type.starts_with("application/json") {
+                return Err(crate::Error::BadRequest(
+                    "Expected JSON content type".into(),
+                ));
+            }
+        }
+
         serde_json::from_slice(&self.body).map_err(Into::into)
     }
 
+    // Inline these methods for better performance
+    #[inline]
     pub fn param(&self, key: &str) -> Option<&String> {
         self.params.get(key)
     }
 
+    #[inline]
     pub fn query(&self, key: &str) -> Option<&String> {
         self.query_params.get(key)
     }
 
+    #[inline]
     pub fn header(&self, key: &str) -> Option<&str> {
         self.headers.get(key).and_then(|v| v.to_str().ok())
     }

@@ -51,14 +51,16 @@ async fn serve_file(req: Request) -> Result<Response> {
 async fn serve_static_file(file_path: &str) -> Result<Response> {
     // Handle empty path
     if file_path.is_empty() {
-        return Err(Error::NotFound);
+        return Err(Error::NotFound(file_path.to_string()));
     }
 
     let mut path = PathBuf::from("static");
     path.push(file_path);
 
     // Security: prevent directory traversal
-    let canonical = path.canonicalize().map_err(|_| Error::NotFound)?;
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| Error::NotFound(file_path.to_string()))?;
     let static_dir = std::env::current_dir().unwrap().join("static");
     if !canonical.starts_with(&static_dir) {
         return Err(Error::BadRequest("Invalid path".into()));
@@ -69,18 +71,22 @@ async fn serve_static_file(file_path: &str) -> Result<Response> {
         // Try to serve index.html from the directory
         let index_path = canonical.join("index.html");
         if index_path.exists() {
-            let content = fs::read(&index_path).await.map_err(|_| Error::NotFound)?;
+            let content = fs::read(&index_path)
+                .await
+                .map_err(|_| Error::NotFound("index.html".to_string()))?;
             let mime_type = "text/html";
             return Ok(ResponseBuilder::new()
                 .header("Content-Type", mime_type)
                 .body(content)
                 .build());
         } else {
-            return Err(Error::NotFound);
+            return Err(Error::NotFound("index.html".to_string()));
         }
     }
 
-    let content = fs::read(&canonical).await.map_err(|_| Error::NotFound)?;
+    let content = fs::read(&canonical)
+        .await
+        .map_err(|_| Error::NotFound("index.html".to_string()))?;
     let mime_type = mime_guess::from_path(&canonical)
         .first_or_octet_stream()
         .to_string();

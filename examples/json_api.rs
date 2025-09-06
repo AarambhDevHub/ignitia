@@ -62,11 +62,14 @@ async fn main() -> Result<()> {
 
     let router = Router::new()
         .middleware(TodoStoreMiddleware::new(store.clone()))
-        .get("/api/todos", list_todos)
-        .post("/api/todos", create_todo);
+        .get("/todos", list_todos)
+        .post("/todos", create_todo);
+
+    let app = Router::new()
+        .nest("/api", router);
 
     let addr: SocketAddr = "127.0.0.1:3002".parse().unwrap();
-    let server = Server::new(router, addr);
+    let server = Server::new(app, addr);
 
     println!("JSON API server running on http://{}", addr);
     server.ignitia().await.unwrap();

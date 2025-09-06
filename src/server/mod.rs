@@ -28,19 +28,25 @@ impl Server {
         let listener = TcpListener::bind(self.addr).await?;
         info!("Server running on http://{}", self.addr);
 
+        let service = move |router: Arc<Router>| {
+            service_fn(move |req| {
+                let router = router.clone();
+                async move { handle_request(router, req).await }
+            })
+        };
+
         loop {
             let (stream, _) = listener.accept().await?;
             let io = TokioIo::new(stream);
-            let router = self.router.clone();
+            let router_clone = self.router.clone();
+            let service_clone = service(router_clone);
 
             tokio::spawn(async move {
-                let service = service_fn(move |req| {
-                    let router = router.clone();
-                    async move { handle_request(router, req).await }
-                });
-
-                if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
-                    eprintln!("Error serving connection: {err}");
+                if let Err(err) = http1::Builder::new()
+                    .serve_connection(io, service_clone)
+                    .await
+                {
+                    eprintln!("Connection error: {err}");
                 }
             });
         }
@@ -50,36 +56,51 @@ impl Server {
         let listener = TcpListener::bind(self.addr).await?;
         info!("🔥 ignitia server blazing on http://{}", self.addr);
 
+        let service = move |router: Arc<Router>| {
+            service_fn(move |req| {
+                let router = router.clone();
+                async move { handle_request(router, req).await }
+            })
+        };
+
         loop {
             let (stream, _) = listener.accept().await?;
             let io = TokioIo::new(stream);
-            let router = self.router.clone();
+            let router_clone = self.router.clone();
+            let service_clone = service(router_clone);
 
             tokio::spawn(async move {
-                let service = service_fn(move |req| {
-                    let router = router.clone();
-                    async move { handle_request(router, req).await }
-                });
-
-                if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
-                    eprintln!("Error serving connection: {err}");
+                if let Err(err) = http1::Builder::new()
+                    .serve_connection(io, service_clone)
+                    .await
+                {
+                    eprintln!("Connection error: {err}");
                 }
             });
         }
     }
 }
 
+// Optimized request handling
 async fn handle_request(
     router: Arc<Router>,
     req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<hyper::Response<Full<Bytes>>, hyper::Error> {
     let (parts, body) = req.into_parts();
 
-    let body_bytes = body
-        .collect()
-        .await
-        .map(|collected| collected.to_bytes())
-        .unwrap_or_else(|_| Bytes::new());
+    // Stream body collection with size limit
+    let body_bytes = match body.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(_) => Bytes::new(),
+    };
+
+    // Limit body size to prevent DoS
+    if body_bytes.len() > 10 * 1024 * 1024 {
+        // 10MB limit
+        let mut response = hyper::Response::new(Full::new(Bytes::from("Request too large")));
+        *response.status_mut() = http::StatusCode::PAYLOAD_TOO_LARGE;
+        return Ok(response);
+    }
 
     let request = Request::new(
         parts.method,
