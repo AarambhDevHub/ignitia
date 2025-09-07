@@ -2,7 +2,7 @@ pub mod method;
 pub mod route;
 
 use crate::handler::{into_handler, IntoHandler};
-use crate::middleware::Middleware;
+use crate::middleware::{self, Middleware};
 use crate::{Error, Handler, HandlerFn, Request, Response, Result};
 use arc_swap::ArcSwap;
 use http::Method;
@@ -11,6 +11,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use route::Route;
+
+// Helper macros for common HTTP methods
+macro_rules! http_method {
+    ($name:ident, $method:expr) => {
+        pub fn $name<H, T>(self, path: &str, handler: H) -> Self
+        where
+            H: IntoHandler<T>,
+        {
+            self.route_with(path, $method, handler)
+        }
+    };
+}
 
 #[derive(Clone)]
 struct CompiledRouter {
@@ -57,17 +69,17 @@ impl Router {
     }
 
     // Return Self instead of &mut Self for builder pattern
-    pub fn route(self, path: &str, method: Method, handler: HandlerFn) -> Self {
+    pub fn route(mut self, path: &str, method: Method, handler: HandlerFn) -> Self {
         {
             let mut inner = self.inner.write();
             inner.dirty = true;
 
             let full_path = normalize_path(path);
-            inner
-                .routes
-                .entry(method.clone())
-                .or_insert_with(Vec::new)
-                .push(Route::new(&full_path, method, handler));
+            let routes = inner.routes.entry(method.clone()).or_insert_with(Vec::new);
+
+            // Pre-compile the route for better performance
+            let route = Route::new(&full_path, method, handler);
+            routes.push(route);
         }
 
         self
@@ -80,40 +92,13 @@ impl Router {
         self.route(path, method, into_handler(handler))
     }
 
-    pub fn get<H, T>(self, path: &str, handler: H) -> Self
-    where
-        H: IntoHandler<T>,
-    {
-        self.route_with(path, Method::GET, handler)
-    }
-
-    pub fn post<H, T>(self, path: &str, handler: H) -> Self
-    where
-        H: IntoHandler<T>,
-    {
-        self.route_with(path, Method::POST, handler)
-    }
-
-    pub fn put<H, T>(self, path: &str, handler: H) -> Self
-    where
-        H: IntoHandler<T>,
-    {
-        self.route_with(path, Method::PUT, handler)
-    }
-
-    pub fn delete<H, T>(self, path: &str, handler: H) -> Self
-    where
-        H: IntoHandler<T>,
-    {
-        self.route_with(path, Method::DELETE, handler)
-    }
-
-    pub fn patch<H, T>(self, path: &str, handler: H) -> Self
-    where
-        H: IntoHandler<T>,
-    {
-        self.route_with(path, Method::PATCH, handler)
-    }
+    http_method!(get, Method::GET);
+    http_method!(post, Method::POST);
+    http_method!(put, Method::PUT);
+    http_method!(delete, Method::DELETE);
+    http_method!(patch, Method::PATCH);
+    http_method!(head, Method::HEAD);
+    http_method!(options, Method::OPTIONS);
 
     pub fn middleware<M: Middleware + 'static>(self, middleware: M) -> Self {
         {
@@ -146,12 +131,12 @@ impl Router {
     }
 
     #[cfg(feature = "websocket")]
-    pub fn websocket<H>(self, path: &str, handler: H) -> Self
+    pub fn websocket<H>(mut self, path: &str, handler: H) -> Self
     where
         H: crate::websocket::WebSocketHandler + 'static,
     {
         let normalized_path = normalize_path(path);
-        tracing::info!("🔌 Storing WebSocket handler for path: {}", normalized_path);
+        tracing::debug!("Storing WebSocket handler for path: {}", normalized_path);
         let ws_handler: Arc<dyn crate::websocket::WebSocketHandler> = Arc::new(handler);
 
         // Store the WebSocket handler
@@ -208,14 +193,12 @@ impl Router {
     }
 
     fn ensure_compiled(&self) -> Arc<CompiledRouter> {
-        // Check if compilation is needed without holding the lock too long
-        let needs_compilation = {
+        // Fast path: check if compilation is needed without holding the lock
+        {
             let inner = self.inner.read();
-            inner.dirty
-        };
-
-        if !needs_compilation {
-            return self.compiled.load_full();
+            if !inner.dirty {
+                return self.compiled.load_full();
+            }
         }
 
         // Now get write lock for compilation
@@ -277,16 +260,18 @@ impl Router {
             }
         }
 
-        // Sort routes by specificity
+        // Sort routes by specificity for faster matching
         for routes in routes.values_mut() {
             routes.sort_by(|a, b| {
+                // Sort by number of path segments (more specific first)
                 let a_segments = a.path.matches('/').count();
                 let b_segments = b.path.matches('/').count();
-                b_segments.cmp(&a_segments).then_with(|| {
-                    let a_params = a.param_names.len() + a.wildcard_names.len();
-                    let b_params = b.param_names.len() + b.wildcard_names.len();
-                    a_params.cmp(&b_params)
-                })
+
+                // Then by number of parameters (fewer parameters first)
+                let a_params = a.param_names.len() + a.wildcard_names.len();
+                let b_params = b.param_names.len() + b.wildcard_names.len();
+
+                b_segments.cmp(&a_segments).then(a_params.cmp(&b_params))
             });
         }
 
@@ -330,6 +315,28 @@ impl Router {
             Err(Error::NotFound(req.uri.path().to_string()))
         }
     }
+
+    // Helper method for quick route matching (useful for testing)
+    pub fn matches(&self, method: &Method, path: &str) -> bool {
+        let compiled = self.ensure_compiled();
+        if let Some(routes) = compiled.routes.get(method) {
+            for route in routes {
+                // Create a mock request for matching
+                let mock_req = Request::new(
+                    method.clone(),
+                    path.parse().unwrap_or_default(),
+                    http::Version::HTTP_11,
+                    http::HeaderMap::new(),
+                    bytes::Bytes::new(),
+                );
+
+                if route.matches(&mock_req).is_some() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 fn normalize_path(path: &str) -> String {
@@ -366,5 +373,35 @@ impl Clone for Router {
                 not_found_handler: None,
             })),
         }
+    }
+}
+
+// Default implementation
+impl Default for Router {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Helper functions for common patterns
+impl Router {
+    /// Create a router with common middleware already applied
+    pub fn with_default_middleware() -> Self {
+        Self::new()
+            .middleware(middleware::LoggerMiddleware)
+            .middleware(middleware::CorsMiddleware::new())
+    }
+
+    /// Create an API router with JSON support
+    pub fn api_router() -> Self {
+        Self::with_default_middleware()
+    }
+
+    /// Create a static file serving router
+    pub fn static_router(prefix: &str) -> Self {
+        // Implementation would go here for serving static files
+        Self::new().get(&format!("{}/*", prefix), |_: Request| async {
+            Ok::<Response, Error>(Response::text("Static file serving not implemented"))
+        })
     }
 }

@@ -13,7 +13,7 @@ documentation = "https://docs.rs/ignitia"
 
 [features]
 default = ["websocket"]
-websocket = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:sha1", "dep:base64"]
+websocket = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:sha1", "dep:base64", "dep:lazy_static"]
 
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }
@@ -48,6 +48,7 @@ tokio-tungstenite = { version = "0.21", optional = true }
 tungstenite = { version = "0.21", optional = true }
 sha1 = { version = "0.10", optional = true }
 base64 = { version = "0.21", optional = true }
+lazy_static = { version = "1.4", optional = true }
 
 uuid = { version = "1.17.0", features = ["serde", "v4"] }
 

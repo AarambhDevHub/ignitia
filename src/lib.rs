@@ -54,8 +54,9 @@ pub use server::Server;
 
 #[cfg(feature = "websocket")]
 pub use websocket::{
-    is_websocket_request, upgrade_connection, websocket_handler, CloseFrame, Message, MessageType,
-    WebSocketConnection, WebSocketHandler,
+    is_websocket_request, upgrade_connection, websocket_batch_handler, websocket_handler,
+    websocket_message_handler, BatchMessageHandler, CloseFrame, Message, MessageType,
+    OptimizedMessageHandler, WebSocketConnection, WebSocketHandler,
 };
 
 // Re-export commonly used types

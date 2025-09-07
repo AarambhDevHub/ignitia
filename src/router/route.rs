@@ -16,8 +16,9 @@ pub struct Route {
     pub regex: Regex,
     pub param_names: Vec<String>,
     pub wildcard_names: Vec<String>,
-    // Cache the total parameter count
+    // Cache the total parameter count and segment count for faster matching
     total_params: usize,
+    segment_count: usize,
 }
 
 impl Route {
@@ -25,6 +26,7 @@ impl Route {
         let (regex_pattern, param_names, wildcard_names) = Self::build_regex(path);
         let regex = Self::compile_regex(&regex_pattern);
         let total_params = param_names.len() + wildcard_names.len();
+        let segment_count = path.matches('/').count();
 
         Self {
             path: path.to_string(),
@@ -34,6 +36,7 @@ impl Route {
             param_names,
             wildcard_names,
             total_params,
+            segment_count,
         }
     }
 
@@ -71,15 +74,22 @@ impl Route {
     }
 
     pub fn matches(&self, req: &Request) -> Option<HashMap<String, String>> {
+        // Fast path: check method first
         if self.method != req.method {
             return None;
         }
 
         let path = req.uri.path();
 
-        // Quick length check - if path is shorter than pattern minus params, skip
+        // Quick length and segment checks for early rejection
         let min_length = self.path.len().saturating_sub(self.total_params * 3);
         if path.len() < min_length {
+            return None;
+        }
+
+        // Check segment count for early rejection
+        let request_segments = path.matches('/').count();
+        if request_segments < self.segment_count.saturating_sub(self.total_params) {
             return None;
         }
 
@@ -108,6 +118,13 @@ impl Route {
 
         Some(params)
     }
+
+    // Helper method for testing and debugging
+    pub fn get_param_names(&self) -> Vec<String> {
+        let mut names = self.param_names.clone();
+        names.extend(self.wildcard_names.clone());
+        names
+    }
 }
 
 fn escape_regex(s: &str) -> String {
@@ -124,4 +141,24 @@ fn escape_regex(s: &str) -> String {
     }
 
     result
+}
+
+// Helper trait for route matching optimization
+pub trait RouteMatcher {
+    fn fast_match(&self, path: &str) -> bool;
+}
+
+impl RouteMatcher for Route {
+    fn fast_match(&self, path: &str) -> bool {
+        // Very fast pre-check before regex matching
+        if path.len() < self.path.len().saturating_sub(self.total_params * 3) {
+            return false;
+        }
+
+        if path.matches('/').count() < self.segment_count.saturating_sub(self.total_params) {
+            return false;
+        }
+
+        self.regex.is_match(path)
+    }
 }

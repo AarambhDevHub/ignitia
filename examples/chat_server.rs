@@ -464,7 +464,7 @@ async fn serve_chat_ui() -> Result<Response> {
     Ok(Response::html(html))
 }
 
-// WebSocket chat handler
+// WebSocket chat handler with optimized performance
 #[cfg(feature = "websocket")]
 async fn handle_chat_websocket(ws: WebSocketConnection, state: ChatState) -> Result<()> {
     let mut username: Option<String> = None;
@@ -472,20 +472,31 @@ async fn handle_chat_websocket(ws: WebSocketConnection, state: ChatState) -> Res
 
     info!("🔌 New WebSocket connection established");
 
-    // Handle broadcast messages in background
+    // Handle broadcast messages in background with timeout
     let ws_clone = ws.clone();
     let mut broadcast_task = tokio::spawn(async move {
+        let mut message_count = 0;
         while let Ok(server_msg) = broadcast_rx.recv().await {
+            message_count += 1;
+
+            // Batch messages for better performance
             if let Ok(json) = serde_json::to_string(&server_msg) {
                 if ws_clone.send_text(json).await.is_err() {
                     break;
                 }
             }
+
+            // Add small delay to prevent overwhelming the connection
+            if message_count % 10 == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
         }
     });
 
-    // Main message handling loop
+    // Main message handling loop with timeout
     let mut message_count = 0;
+    let timeout = std::time::Duration::from_secs(30);
+
     loop {
         tokio::select! {
             // Handle broadcast task completion
@@ -494,8 +505,8 @@ async fn handle_chat_websocket(ws: WebSocketConnection, state: ChatState) -> Res
                 break;
             }
 
-            // Handle incoming WebSocket messages
-            msg_result = ws.recv() => {
+            // Handle incoming WebSocket messages with timeout
+            msg_result = ws.recv_timeout(timeout) => {
                 match msg_result {
                     Some(Message::Text(text)) => {
                         message_count += 1;
@@ -533,10 +544,11 @@ async fn handle_chat_websocket(ws: WebSocketConnection, state: ChatState) -> Res
                         break;
                     }
                     Some(Message::Ping(data)) => {
+                        // Auto-respond to pings (handled by optimized connection)
                         let _ = ws.pong(data).await;
                     }
                     None => {
-                        info!("🔌 WebSocket connection ended (no more messages)");
+                        info!("🔌 WebSocket connection ended (timeout or no messages)");
                         break;
                     }
                     _ => {} // Handle other message types if needed

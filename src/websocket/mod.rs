@@ -10,7 +10,10 @@ pub mod upgrade;
 #[cfg(feature = "websocket")]
 pub use connection::WebSocketConnection;
 #[cfg(feature = "websocket")]
-pub use handler::{websocket_handler, WebSocketHandler};
+pub use handler::{
+    websocket_batch_handler, websocket_handler, websocket_message_handler, BatchMessageHandler,
+    OptimizedMessageHandler, WebSocketHandler,
+};
 #[cfg(feature = "websocket")]
 pub use message::{CloseFrame, Message, MessageType};
 #[cfg(feature = "websocket")]

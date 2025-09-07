@@ -731,6 +731,7 @@ dependencies = [
  "httpdate",
  "hyper",
  "hyper-util",
+ "lazy_static",
  "mime_guess",
  "once_cell",
  "parking_lot",
