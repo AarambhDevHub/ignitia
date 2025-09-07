@@ -37,8 +37,6 @@ mime_guess = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
 httpdate = "1.0" # Add this line
 
-dashmap = "5.5"
-serde_path_to_error = "0.1"
 parking_lot = "0.12" # Faster synchronization
 arc-swap = "1.6" # For atomic router updates
 
