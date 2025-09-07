@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
     println!("  POST /users (with JSON body)");
     println!("  GET  /old-style");
 
-    server.run().await.unwrap();
+    server.ignitia().await.unwrap();
     Ok(())
 }
 

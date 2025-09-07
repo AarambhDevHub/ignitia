@@ -30,6 +30,8 @@ struct RouterInner {
     not_found_handler: Option<HandlerFn>,
     nested_routers: Vec<(String, Router)>,
     dirty: bool,
+    #[cfg(feature = "websocket")]
+    websocket_routes: HashMap<String, Arc<dyn crate::websocket::WebSocketHandler>>,
 }
 
 impl Router {
@@ -40,6 +42,8 @@ impl Router {
             not_found_handler: None,
             nested_routers: Vec::new(),
             dirty: true,
+            #[cfg(feature = "websocket")]
+            websocket_routes: HashMap::new(),
         };
 
         Self {
@@ -139,6 +143,68 @@ impl Router {
             inner.nested_routers.push((normalize_path(path), router));
         }
         self
+    }
+
+    #[cfg(feature = "websocket")]
+    pub fn websocket<H>(self, path: &str, handler: H) -> Self
+    where
+        H: crate::websocket::WebSocketHandler + 'static,
+    {
+        let normalized_path = normalize_path(path);
+        tracing::info!("🔌 Storing WebSocket handler for path: {}", normalized_path);
+        let ws_handler: Arc<dyn crate::websocket::WebSocketHandler> = Arc::new(handler);
+
+        // Store the WebSocket handler
+        {
+            let mut inner = self.inner.write();
+            inner.dirty = true;
+            inner
+                .websocket_routes
+                .insert(normalized_path.clone(), Arc::clone(&ws_handler));
+        }
+
+        // Create a regular HTTP handler that handles WebSocket upgrades
+        let http_handler = Arc::new(move |req: Request| {
+            Box::pin(async move {
+                if crate::websocket::is_websocket_request(&req) {
+                    crate::websocket::upgrade_connection(req)
+                } else {
+                    Err(crate::Error::BadRequest(
+                        "This endpoint only accepts WebSocket connections".into(),
+                    ))
+                }
+            }) as crate::handler::BoxFuture<'static, crate::Result<Response>>
+        });
+
+        self.route(&normalized_path, Method::GET, http_handler)
+    }
+
+    #[cfg(feature = "websocket")]
+    pub fn websocket_fn<F, Fut>(self, path: &str, f: F) -> Self
+    where
+        F: Fn(crate::websocket::WebSocketConnection) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = crate::Result<()>> + Send + 'static,
+    {
+        use crate::websocket::websocket_handler;
+        self.websocket(path, websocket_handler(f))
+    }
+
+    #[cfg(feature = "websocket")]
+    pub fn get_websocket_handlers(
+        &self,
+    ) -> HashMap<String, Arc<dyn crate::websocket::WebSocketHandler>> {
+        let inner = self.inner.read();
+        inner.websocket_routes.clone()
+    }
+
+    #[cfg(not(feature = "websocket"))]
+    pub fn websocket<H>(self, _path: &str, _handler: H) -> Self {
+        panic!("WebSocket support is not enabled. Add 'websocket' feature to your Cargo.toml");
+    }
+
+    #[cfg(not(feature = "websocket"))]
+    pub fn websocket_fn<F>(self, _path: &str, _f: F) -> Self {
+        panic!("WebSocket support is not enabled. Add 'websocket' feature to your Cargo.toml");
     }
 
     fn ensure_compiled(&self) -> Arc<CompiledRouter> {
@@ -291,6 +357,8 @@ impl Clone for Router {
                 not_found_handler: inner.not_found_handler.clone(),
                 nested_routers: inner.nested_routers.clone(),
                 dirty: inner.dirty,
+                #[cfg(feature = "websocket")]
+                websocket_routes: inner.websocket_routes.clone(),
             })),
             compiled: ArcSwap::new(Arc::new(CompiledRouter {
                 routes: HashMap::new(),

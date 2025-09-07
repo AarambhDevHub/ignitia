@@ -34,6 +34,9 @@ pub mod router;
 pub mod server;
 pub mod utils;
 
+#[cfg(feature = "websocket")]
+pub mod websocket;
+
 pub use cookie::{Cookie, CookieJar, SameSite};
 pub use error::{Error, Result};
 pub use extension::{Extension, Extensions};
@@ -48,6 +51,12 @@ pub use request::Request;
 pub use response::{Response, ResponseBuilder};
 pub use router::{Route, Router};
 pub use server::Server;
+
+#[cfg(feature = "websocket")]
+pub use websocket::{
+    is_websocket_request, upgrade_connection, websocket_handler, CloseFrame, Message, MessageType,
+    WebSocketConnection, WebSocketHandler,
+};
 
 // Re-export commonly used types
 pub use async_trait::async_trait;
