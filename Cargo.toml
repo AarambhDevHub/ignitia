@@ -12,7 +12,7 @@ homepage = "https://github.com/AarambhDevHub/ignitia"
 documentation = "https://docs.rs/ignitia"
 
 [features]
-default = ["websocket"]
+default = []
 websocket = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:sha1", "dep:base64", "dep:lazy_static"]
 
 [dependencies]

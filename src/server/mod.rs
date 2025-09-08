@@ -11,6 +11,9 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::info;
 
+#[cfg(feature = "websocket")]
+use crate::websocket::upgrade::generate_accept_key;
+
 pub struct Server {
     router: Arc<Router>,
     addr: SocketAddr,
@@ -149,7 +152,7 @@ async fn handle_websocket_upgrade(
         }
     };
 
-    let accept_key = generate_websocket_accept_key(websocket_key);
+    let accept_key = generate_accept_key(websocket_key);
 
     let mut response = hyper::Response::builder()
         .status(101)
@@ -183,18 +186,6 @@ async fn handle_websocket_upgrade(
     });
 
     Ok(response)
-}
-
-#[cfg(feature = "websocket")]
-fn generate_websocket_accept_key(key: &str) -> String {
-    use sha1::{Digest, Sha1};
-
-    const WEBSOCKET_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    let mut hasher = Sha1::new();
-    hasher.update(key.as_bytes());
-    hasher.update(WEBSOCKET_MAGIC.as_bytes());
-    let hash = hasher.finalize();
-    base64::encode(hash)
 }
 
 async fn handle_regular_http_request(

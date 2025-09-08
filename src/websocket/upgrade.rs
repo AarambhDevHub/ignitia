@@ -83,25 +83,12 @@ pub async fn handle_websocket_upgrade(
 
     let connection = WebSocketConnection::new(ws_stream);
 
-    // Execute handler with timeout to prevent hanging
-    // match tokio::time::timeout(
-    //     std::time::Duration::from_secs(30),
-    //     handler.handle_connection(connection),
-    // )
-    // .await
-    // {
-    //     Ok(result) => result,
-    //     Err(_) => {
-    //         tracing::warn!("WebSocket handler timed out");
-    //         Ok(())
-    //     }
-    // }
-    //
+    // No timeout for long-lived connections like chat
     handler.handle_connection(connection).await
 }
 
 // Optimized accept key generation
-fn generate_accept_key(websocket_key: &str) -> String {
+pub fn generate_accept_key(websocket_key: &str) -> String {
     let mut hasher = Sha1::new();
     hasher.update(websocket_key.as_bytes());
     hasher.update(WEBSOCKET_MAGIC_STRING.as_bytes());

@@ -19,8 +19,22 @@ impl ResponseBuilder {
         }
     }
 
+    // Make status method consume self for builder pattern
     pub fn status(mut self, status: StatusCode) -> Self {
         self.status = status;
+        self
+    }
+
+    // Add convenience method for status codes by number
+    pub fn status_code(mut self, status_code: u16) -> Self {
+        if let Ok(status) = StatusCode::from_u16(status_code) {
+            self.status = status;
+        }
+        self
+    }
+
+    pub fn with_body(mut self, body: impl Into<Bytes>) -> Self {
+        self.body = Some(body.into());
         self
     }
 

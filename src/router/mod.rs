@@ -2,7 +2,7 @@ pub mod method;
 pub mod route;
 
 use crate::handler::{into_handler, IntoHandler};
-use crate::middleware::{self, Middleware};
+use crate::middleware::Middleware;
 use crate::{Error, Handler, HandlerFn, Request, Response, Result};
 use arc_swap::ArcSwap;
 use http::Method;
@@ -69,7 +69,7 @@ impl Router {
     }
 
     // Return Self instead of &mut Self for builder pattern
-    pub fn route(mut self, path: &str, method: Method, handler: HandlerFn) -> Self {
+    pub fn route(self, path: &str, method: Method, handler: HandlerFn) -> Self {
         {
             let mut inner = self.inner.write();
             inner.dirty = true;
@@ -131,7 +131,7 @@ impl Router {
     }
 
     #[cfg(feature = "websocket")]
-    pub fn websocket<H>(mut self, path: &str, handler: H) -> Self
+    pub fn websocket<H>(self, path: &str, handler: H) -> Self
     where
         H: crate::websocket::WebSocketHandler + 'static,
     {
@@ -380,28 +380,5 @@ impl Clone for Router {
 impl Default for Router {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// Helper functions for common patterns
-impl Router {
-    /// Create a router with common middleware already applied
-    pub fn with_default_middleware() -> Self {
-        Self::new()
-            .middleware(middleware::LoggerMiddleware)
-            .middleware(middleware::CorsMiddleware::new())
-    }
-
-    /// Create an API router with JSON support
-    pub fn api_router() -> Self {
-        Self::with_default_middleware()
-    }
-
-    /// Create a static file serving router
-    pub fn static_router(prefix: &str) -> Self {
-        // Implementation would go here for serving static files
-        Self::new().get(&format!("{}/*", prefix), |_: Request| async {
-            Ok::<Response, Error>(Response::text("Static file serving not implemented"))
-        })
     }
 }

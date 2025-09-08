@@ -59,13 +59,15 @@ impl Route {
         });
 
         // Then handle regular parameters
-        let regex_pattern =
+        let path_with_params =
             PARAM_REGEX.replace_all(&path_with_wildcards, |caps: &regex::Captures| {
                 param_names.push(caps[1].to_string());
                 "([^/]+)"
             });
 
-        let escaped_pattern = escape_regex(&regex_pattern);
+        // Escape only the parts that aren't our regex groups
+        let escaped_pattern = escape_regex_selective(&path_with_params);
+
         (
             format!("^{}$", escaped_pattern),
             param_names,
@@ -127,12 +129,33 @@ impl Route {
     }
 }
 
-fn escape_regex(s: &str) -> String {
+fn escape_regex_selective(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 2);
+    let mut chars = s.chars().peekable();
 
-    for c in s.chars() {
+    while let Some(c) = chars.next() {
         match c {
-            '\\' | '.' | '+' | '*' | '?' | '^' | '$' | '(' | ')' | '[' | ']' | '{' | '}' | '|' => {
+            // Don't escape if we're in a regex group pattern
+            '(' => {
+                result.push(c);
+                // Copy everything until the matching ')'
+                let mut paren_count = 1;
+                while let Some(inner_c) = chars.next() {
+                    result.push(inner_c);
+                    match inner_c {
+                        '(' => paren_count += 1,
+                        ')' => {
+                            paren_count -= 1;
+                            if paren_count == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // Escape other regex special characters
+            '\\' | '.' | '+' | '*' | '?' | '^' | '$' | '[' | ']' | '{' | '}' | '|' => {
                 result.push('\\');
                 result.push(c);
             }
@@ -141,24 +164,4 @@ fn escape_regex(s: &str) -> String {
     }
 
     result
-}
-
-// Helper trait for route matching optimization
-pub trait RouteMatcher {
-    fn fast_match(&self, path: &str) -> bool;
-}
-
-impl RouteMatcher for Route {
-    fn fast_match(&self, path: &str) -> bool {
-        // Very fast pre-check before regex matching
-        if path.len() < self.path.len().saturating_sub(self.total_params * 3) {
-            return false;
-        }
-
-        if path.matches('/').count() < self.segment_count.saturating_sub(self.total_params) {
-            return false;
-        }
-
-        self.regex.is_match(path)
-    }
 }
