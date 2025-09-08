@@ -1,22 +1,30 @@
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub mod connection;
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub mod handler;
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub mod message;
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub mod upgrade;
 
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub use connection::WebSocketConnection;
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub use handler::{
     websocket_batch_handler, websocket_handler, websocket_message_handler, BatchMessageHandler,
     OptimizedMessageHandler, WebSocketHandler,
 };
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub use message::{CloseFrame, Message, MessageType};
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub use upgrade::{handle_websocket_upgrade, is_websocket_request, upgrade_connection};
 
 #[cfg(not(feature = "websocket"))]

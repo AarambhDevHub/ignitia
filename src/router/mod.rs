@@ -43,6 +43,7 @@ struct RouterInner {
     nested_routers: Vec<(String, Router)>,
     dirty: bool,
     #[cfg(feature = "websocket")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
     websocket_routes: HashMap<String, Arc<dyn crate::websocket::WebSocketHandler>>,
 }
 
@@ -55,6 +56,7 @@ impl Router {
             nested_routers: Vec::new(),
             dirty: true,
             #[cfg(feature = "websocket")]
+            #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
             websocket_routes: HashMap::new(),
         };
 
@@ -131,6 +133,7 @@ impl Router {
     }
 
     #[cfg(feature = "websocket")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
     pub fn websocket<H>(self, path: &str, handler: H) -> Self
     where
         H: crate::websocket::WebSocketHandler + 'static,
@@ -165,6 +168,7 @@ impl Router {
     }
 
     #[cfg(feature = "websocket")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
     pub fn websocket_fn<F, Fut>(self, path: &str, f: F) -> Self
     where
         F: Fn(crate::websocket::WebSocketConnection) -> Fut + Send + Sync + 'static,
@@ -175,6 +179,7 @@ impl Router {
     }
 
     #[cfg(feature = "websocket")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
     pub fn get_websocket_handlers(
         &self,
     ) -> HashMap<String, Arc<dyn crate::websocket::WebSocketHandler>> {
@@ -365,6 +370,7 @@ impl Clone for Router {
                 nested_routers: inner.nested_routers.clone(),
                 dirty: inner.dirty,
                 #[cfg(feature = "websocket")]
+                #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
                 websocket_routes: inner.websocket_routes.clone(),
             })),
             compiled: ArcSwap::new(Arc::new(CompiledRouter {
