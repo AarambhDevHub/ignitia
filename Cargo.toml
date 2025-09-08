@@ -1,6 +1,6 @@
 [package]
 name = "ignitia"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "A blazing fast, lightweight web framework for Rust that ignitias your development"
 authors = ["Aarambh Dev Hub <your@email.com>"]
