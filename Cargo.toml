@@ -11,6 +11,9 @@ repository = "https://github.com/AarambhDevHub/ignitia"
 homepage = "https://github.com/AarambhDevHub/ignitia"
 documentation = "https://docs.rs/ignitia"
 
+[features]
+default = []
+websocket = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:sha1", "dep:base64", "dep:lazy_static"]
 
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }
@@ -39,6 +42,15 @@ httpdate = "1.0" # Add this line
 
 parking_lot = "0.12" # Faster synchronization
 arc-swap = "1.6" # For atomic router updates
+
+# WebSocket dependencies (optional)
+tokio-tungstenite = { version = "0.21", optional = true }
+tungstenite = { version = "0.21", optional = true }
+sha1 = { version = "0.10", optional = true }
+base64 = { version = "0.21", optional = true }
+lazy_static = { version = "1.4", optional = true }
+
+uuid = { version = "1.17.0", features = ["serde", "v4"] }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }

@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
     println!("Serving files from ./static directory");
     println!("Try: http://127.0.0.1:3003/example.html");
 
-    server.run().await.unwrap();
+    server.ignitia().await.unwrap();
     Ok(())
 }
 

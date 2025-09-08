@@ -44,8 +44,8 @@ async fn main() -> Result<()> {
         .get("/users", list_users) // Uses Query extractor
         .get("/users/:id", get_user) // Uses Path extractor
         .post("/users", create_user) // Uses Json extractor
-        .get("/old-style", raw_handler(old_style_handler)) // For Request access
-        .not_found(not_found);
+        .get("/old-style", raw_handler(old_style_handler)); // For Request access
+                                                            // .not_found(not_found);
 
     // Create and run server
     let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
     println!("  POST /users (with JSON body)");
     println!("  GET  /old-style");
 
-    server.run().await.unwrap();
+    server.ignitia().await.unwrap();
     Ok(())
 }
 

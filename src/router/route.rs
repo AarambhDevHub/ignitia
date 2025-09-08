@@ -16,8 +16,9 @@ pub struct Route {
     pub regex: Regex,
     pub param_names: Vec<String>,
     pub wildcard_names: Vec<String>,
-    // Cache the total parameter count
+    // Cache the total parameter count and segment count for faster matching
     total_params: usize,
+    segment_count: usize,
 }
 
 impl Route {
@@ -25,6 +26,7 @@ impl Route {
         let (regex_pattern, param_names, wildcard_names) = Self::build_regex(path);
         let regex = Self::compile_regex(&regex_pattern);
         let total_params = param_names.len() + wildcard_names.len();
+        let segment_count = path.matches('/').count();
 
         Self {
             path: path.to_string(),
@@ -34,6 +36,7 @@ impl Route {
             param_names,
             wildcard_names,
             total_params,
+            segment_count,
         }
     }
 
@@ -56,13 +59,15 @@ impl Route {
         });
 
         // Then handle regular parameters
-        let regex_pattern =
+        let path_with_params =
             PARAM_REGEX.replace_all(&path_with_wildcards, |caps: &regex::Captures| {
                 param_names.push(caps[1].to_string());
                 "([^/]+)"
             });
 
-        let escaped_pattern = escape_regex(&regex_pattern);
+        // Escape only the parts that aren't our regex groups
+        let escaped_pattern = escape_regex_selective(&path_with_params);
+
         (
             format!("^{}$", escaped_pattern),
             param_names,
@@ -71,15 +76,22 @@ impl Route {
     }
 
     pub fn matches(&self, req: &Request) -> Option<HashMap<String, String>> {
+        // Fast path: check method first
         if self.method != req.method {
             return None;
         }
 
         let path = req.uri.path();
 
-        // Quick length check - if path is shorter than pattern minus params, skip
+        // Quick length and segment checks for early rejection
         let min_length = self.path.len().saturating_sub(self.total_params * 3);
         if path.len() < min_length {
+            return None;
+        }
+
+        // Check segment count for early rejection
+        let request_segments = path.matches('/').count();
+        if request_segments < self.segment_count.saturating_sub(self.total_params) {
             return None;
         }
 
@@ -108,14 +120,42 @@ impl Route {
 
         Some(params)
     }
+
+    // Helper method for testing and debugging
+    pub fn get_param_names(&self) -> Vec<String> {
+        let mut names = self.param_names.clone();
+        names.extend(self.wildcard_names.clone());
+        names
+    }
 }
 
-fn escape_regex(s: &str) -> String {
+fn escape_regex_selective(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 2);
+    let mut chars = s.chars().peekable();
 
-    for c in s.chars() {
+    while let Some(c) = chars.next() {
         match c {
-            '\\' | '.' | '+' | '*' | '?' | '^' | '$' | '(' | ')' | '[' | ']' | '{' | '}' | '|' => {
+            // Don't escape if we're in a regex group pattern
+            '(' => {
+                result.push(c);
+                // Copy everything until the matching ')'
+                let mut paren_count = 1;
+                while let Some(inner_c) = chars.next() {
+                    result.push(inner_c);
+                    match inner_c {
+                        '(' => paren_count += 1,
+                        ')' => {
+                            paren_count -= 1;
+                            if paren_count == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // Escape other regex special characters
+            '\\' | '.' | '+' | '*' | '?' | '^' | '$' | '[' | ']' | '{' | '}' | '|' => {
                 result.push('\\');
                 result.push(c);
             }

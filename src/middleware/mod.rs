@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod cors;
+pub mod error_handler;
 pub mod logger;
 
 use crate::{Request, Response, Result};
@@ -17,4 +18,5 @@ pub trait Middleware: Send + Sync {
 
 pub use self::auth::AuthMiddleware;
 pub use self::cors::CorsMiddleware;
+pub use self::error_handler::ErrorHandlerMiddleware;
 pub use self::logger::LoggerMiddleware;

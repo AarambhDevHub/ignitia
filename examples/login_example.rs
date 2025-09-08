@@ -99,7 +99,7 @@ async fn main() -> Result<()> {
     println!("   admin / admin123 (admin role)");
     println!("   user / user123 (user role)");
 
-    server.run().await.unwrap();
+    server.ignitia().await.unwrap();
     Ok(())
 }
 

@@ -1,6 +1,7 @@
 use http::StatusCode;
 use ignitia::{
-    Extension, Json, Middleware, Request, Response, ResponseBuilder, Result, Router, Server,
+    CustomError, Extension, Json, Middleware, Request, Response, ResponseBuilder, Result, Router,
+    Server,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -65,8 +66,7 @@ async fn main() -> Result<()> {
         .get("/todos", list_todos)
         .post("/todos", create_todo);
 
-    let app = Router::new()
-        .nest("/api", router);
+    let app = Router::new().nest("/api", router);
 
     let addr: SocketAddr = "127.0.0.1:3002".parse().unwrap();
     let server = Server::new(app, addr);

@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     println!("📋 Built-in Cookie Functionality Demo");
     println!("🔗 Try: http://127.0.0.1:3006/");
 
-    server.run().await.unwrap();
+    server.ignitia().await.unwrap();
     Ok(())
 }
 

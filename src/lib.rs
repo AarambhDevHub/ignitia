@@ -34,8 +34,14 @@ pub mod router;
 pub mod server;
 pub mod utils;
 
+#[cfg(feature = "websocket")]
+pub mod websocket;
+
 pub use cookie::{Cookie, CookieJar, SameSite};
-pub use error::{Error, Result};
+pub use error::{
+    CustomError, Error, ErrorExt, ErrorHandler, ErrorHandlerType, ErrorHandlerWithRequest,
+    ErrorResponse, Result,
+};
 pub use extension::{Extension, Extensions};
 pub use handler::extractor::{
     Body, Cookies, Headers, Json, Method as IgnitiaMethod, Path, Query, Uri,
@@ -43,11 +49,20 @@ pub use handler::extractor::{
 pub use handler::{
     handler_fn, into_handler, raw_handler, Handler, HandlerFn, IntoHandler, RawRequest,
 };
-pub use middleware::Middleware;
+pub use middleware::{
+    AuthMiddleware, CorsMiddleware, ErrorHandlerMiddleware, LoggerMiddleware, Middleware,
+};
 pub use request::Request;
 pub use response::{Response, ResponseBuilder};
 pub use router::{Route, Router};
 pub use server::Server;
+
+#[cfg(feature = "websocket")]
+pub use websocket::{
+    is_websocket_request, upgrade_connection, websocket_batch_handler, websocket_handler,
+    websocket_message_handler, BatchMessageHandler, CloseFrame, Message, MessageType,
+    OptimizedMessageHandler, WebSocketConnection, WebSocketHandler,
+};
 
 // Re-export commonly used types
 pub use async_trait::async_trait;

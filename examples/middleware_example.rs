@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
     println!("🔑 To test protected route:");
     println!("   curl -H \"Authorization: Bearer secret-token\" http://127.0.0.1:3001/protected");
 
-    server.run().await.unwrap();
+    server.ignitia().await.unwrap();
     Ok(())
 }
 
