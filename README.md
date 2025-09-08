@@ -66,7 +66,7 @@ Add Ignitia to your `Cargo.toml`:
 
 ```
 [dependencies]
-ignitia = "0.1.4"
+ignitia = "0.1.5"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -733,7 +733,7 @@ Ignitia provides first-class WebSocket support with an optimized, easy-to-use AP
 
 ```rust
 
-// ignitia = { version = "0.1.3", features = ["websocket"] }
+// ignitia = { version = "0.1.5", features = ["websocket"] }
 
 use ignitia::{Router, websocket_handler, WebSocketConnection, Message};
 use serde::{Deserialize, Serialize};
@@ -1235,7 +1235,7 @@ cd my-ignitia-app
 
 # Add ignitia to Cargo.toml
 echo '[dependencies]
-ignitia = "0.1.4"
+ignitia = "0.1.5"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"' >> Cargo.toml

@@ -12,6 +12,7 @@ use tokio::net::TcpListener;
 use tracing::info;
 
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 use crate::websocket::upgrade::generate_accept_key;
 
 pub struct Server {
@@ -69,6 +70,7 @@ async fn handle_request(
 
     // Check for WebSocket upgrade first (fast path)
     #[cfg(feature = "websocket")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
     {
         if is_websocket_upgrade(&req) {
             return handle_websocket_upgrade(router, req, &path).await;
@@ -80,6 +82,7 @@ async fn handle_request(
 }
 
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 fn is_websocket_upgrade(req: &hyper::Request<hyper::body::Incoming>) -> bool {
     use hyper::header::{CONNECTION, UPGRADE};
 
@@ -115,6 +118,7 @@ fn is_websocket_upgrade(req: &hyper::Request<hyper::body::Incoming>) -> bool {
 }
 
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 async fn handle_websocket_upgrade(
     router: Arc<Router>,
     req: hyper::Request<hyper::body::Incoming>,

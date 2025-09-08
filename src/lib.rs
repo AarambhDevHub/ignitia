@@ -35,6 +35,7 @@ pub mod server;
 pub mod utils;
 
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub mod websocket;
 
 pub use cookie::{Cookie, CookieJar, SameSite};
@@ -58,6 +59,7 @@ pub use router::{Route, Router};
 pub use server::Server;
 
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub use websocket::{
     is_websocket_request, upgrade_connection, websocket_batch_handler, websocket_handler,
     websocket_message_handler, BatchMessageHandler, CloseFrame, Message, MessageType,
