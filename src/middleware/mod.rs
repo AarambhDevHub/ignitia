@@ -383,6 +383,6 @@ pub trait Middleware: Send + Sync {
 }
 
 pub use self::auth::AuthMiddleware;
-pub use self::cors::CorsMiddleware;
+pub use self::cors::Cors as CorsMiddleware;
 pub use self::error_handler::ErrorHandlerMiddleware;
 pub use self::logger::LoggerMiddleware;

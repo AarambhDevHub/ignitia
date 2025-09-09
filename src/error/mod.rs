@@ -129,10 +129,10 @@ pub enum Error {
     ///
     /// # Example
     /// ```
-    /// let error = Error::unauthorized();
+    /// let error = Error::unauthorized("Invalid API key provided");
     /// ```
-    #[error("Unauthorized")]
-    Unauthorized,
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
 
     /// HTTP 403 - Forbidden error.
     ///
@@ -140,10 +140,21 @@ pub enum Error {
     ///
     /// # Example
     /// ```
-    /// let error = Error::forbidden();
+    /// let error = Error::forbidden("Insufficient permissions to access this resource");
     /// ```
-    #[error("Forbidden")]
-    Forbidden,
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
+    /// HTTP 429 - Too Many Requests error.
+    ///
+    /// Used when rate limiting is applied and the client has exceeded the allowed request rate.
+    ///
+    /// # Example
+    /// ```
+    /// let error = Error::too_many_requests("Rate limit exceeded. Try again in 60 seconds");
+    /// ```
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
 
     /// HTTP 400 - Validation error.
     ///
@@ -379,8 +390,9 @@ impl Error {
             Error::NotFound(_) => StatusCode::NOT_FOUND,
             Error::MethodNotAllowed(_) => StatusCode::METHOD_NOT_ALLOWED,
             Error::BadRequest(_) | Error::Validation(_) => StatusCode::BAD_REQUEST,
-            Error::Unauthorized => StatusCode::UNAUTHORIZED,
-            Error::Forbidden => StatusCode::FORBIDDEN,
+            Error::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            Error::Forbidden(_) => StatusCode::FORBIDDEN,
+            Error::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Error::Database(_) | Error::ExternalService(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::Custom(custom) => custom.status_code(),
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -401,8 +413,9 @@ impl Error {
             Error::NotFound(_) => "not_found",
             Error::MethodNotAllowed(_) => "method_not_allowed",
             Error::BadRequest(_) => "bad_request",
-            Error::Unauthorized => "unauthorized",
-            Error::Forbidden => "forbidden",
+            Error::Unauthorized(_) => "unauthorized",
+            Error::Forbidden(_) => "forbidden",
+            Error::TooManyRequests(_) => "too_many_requests",
             Error::Validation(_) => "validation_error",
             Error::Database(_) => "database_error",
             Error::ExternalService(_) => "external_service_error",
@@ -452,30 +465,46 @@ impl Error {
         Error::Validation(msg.into())
     }
 
-    /// Creates a new "Unauthorized" error.
+    /// Creates a new "Unauthorized" error with the specified message.
     ///
     /// # Example
     /// ```
     /// use ignitia::Error;
     ///
-    /// let error = Error::unauthorized();
+    /// let error = Error::unauthorized("Invalid API key provided");
+    /// let error2 = Error::unauthorized("Authentication token has expired");
     /// ```
     #[inline]
-    pub fn unauthorized() -> Self {
-        Error::Unauthorized
+    pub fn unauthorized(msg: impl Into<String>) -> Self {
+        Error::Unauthorized(msg.into())
     }
 
-    /// Creates a new "Forbidden" error.
+    /// Creates a new "Forbidden" error with the specified message.
     ///
     /// # Example
     /// ```
     /// use ignitia::Error;
     ///
-    /// let error = Error::forbidden();
+    /// let error = Error::forbidden("Insufficient permissions to access this resource");
+    /// let error2 = Error::forbidden("Admin access required");
     /// ```
     #[inline]
-    pub fn forbidden() -> Self {
-        Error::Forbidden
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Error::Forbidden(msg.into())
+    }
+
+    /// Creates a new "Too Many Requests" error with the specified message.
+    ///
+    /// # Example
+    /// ```
+    /// use ignitia::Error;
+    ///
+    /// let error = Error::too_many_requests("Rate limit exceeded. Try again in 60 seconds");
+    /// let error2 = Error::too_many_requests("API quota exceeded for this hour");
+    /// ```
+    #[inline]
+    pub fn too_many_requests(msg: impl Into<String>) -> Self {
+        Error::TooManyRequests(msg.into())
     }
 
     /// Creates a new "Internal Server Error" with the specified message.
@@ -695,7 +724,7 @@ where
     /// let result = authenticate_user().unauthorized();
     /// ```
     fn unauthorized(self) -> Result<T> {
-        self.map_err(|_| Error::unauthorized())
+        self.map_err(|e| Error::unauthorized(e.to_string()))
     }
 
     /// Converts any error to a "Forbidden" error.
@@ -707,7 +736,7 @@ where
     /// let result = check_permissions().forbidden();
     /// ```
     fn forbidden(self) -> Result<T> {
-        self.map_err(|_| Error::forbidden())
+        self.map_err(|e| Error::forbidden(e.to_string()))
     }
 
     /// Converts any error to an "Internal Server Error".

@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
     let router = Router::new()
         // Apply middleware in order
         .middleware(LoggerMiddleware)
-        .middleware(CorsMiddleware::new())
+        .middleware(CorsMiddleware::new().allow_any_origin().build()?)
         .middleware(AuthMiddleware::new("secret-token").protect_path("/protected"))
         // Routes using modern extractor pattern
         .get("/public", public_route)

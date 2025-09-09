@@ -65,9 +65,14 @@ impl UserService {
     }
 }
 
+#[derive(Deserialize)]
+struct userId {
+    id: u32,
+}
+
 // Simpler handlers - errors are handled by middleware
-async fn get_user_handler(Path(user_id): Path<u32>) -> Result<Response> {
-    let user = UserService::get_user(user_id)?;
+async fn get_user_handler(Path(user): Path<userId>) -> Result<Response> {
+    let user = UserService::get_user(user.id)?;
     Response::json(&user)
 }
 
@@ -147,7 +152,11 @@ async fn main() -> Result<()> {
 
         // Add CORS and logging middleware
         .middleware(LoggerMiddleware)
-        .middleware(CorsMiddleware::new().allow_origin("*"))
+        .middleware(CorsMiddleware::new()
+            .allowed_origin(&"http://localhost:8000")
+            .allowed_methods(&[Method::GET, Method::POST, Method::OPTIONS])
+            .build()?
+        )
 
         // Routes - errors are automatically handled by middleware
         .get("/users/:id", get_user_handler)

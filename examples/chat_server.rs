@@ -858,7 +858,7 @@ async fn main() -> Result<()> {
     let mut router = Router::new()
         .get("/", serve_chat_ui)
         .middleware(middleware::LoggerMiddleware)
-        .middleware(middleware::CorsMiddleware::new());
+        .middleware(middleware::CorsMiddleware::new().build()?);
 
     // Add WebSocket support if feature is enabled
     #[cfg(feature = "websocket")]

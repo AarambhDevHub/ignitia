@@ -485,7 +485,7 @@ use serde::Serialize;
 ///
 /// let response = Response::html(html);
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Response {
     /// HTTP status code
     pub status: StatusCode,

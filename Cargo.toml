@@ -21,7 +21,7 @@ include = [
 ]
 
 [features]
-default = ["websocket"]
+default = []
 websocket = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:sha1", "dep:base64", "dep:lazy_static"]
 
 # Core async runtime and HTTP dependencies
@@ -61,6 +61,8 @@ base64 = { version = "0.22", optional = true }
 lazy_static = { version = "1.4", optional = true }
 
 uuid = { version = "1.17.0", features = ["serde", "v4"] }
+
+tower-http = { version = "0.5", features = ["cors"] }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }
