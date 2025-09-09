@@ -66,7 +66,7 @@ Add Ignitia to your `Cargo.toml`:
 
 ```
 [dependencies]
-ignitia = "0.1.6"
+ignitia = "0.1.7"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -1235,7 +1235,7 @@ cd my-ignitia-app
 
 # Add ignitia to Cargo.toml
 echo '[dependencies]
-ignitia = "0.1.6"
+ignitia = "0.1.7"
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"' >> Cargo.toml
