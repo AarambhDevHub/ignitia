@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 //! # ignitia Web Framework
 //!
 //! A blazing fast, lightweight web framework for Rust that ignitias your development.
