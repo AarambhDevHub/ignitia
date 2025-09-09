@@ -1,20 +1,30 @@
 [package]
 name = "ignitia"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
-description = "A blazing fast, lightweight web framework for Rust that ignitias your development"
+rust-version = "1.70"
+description = "A blazing fast, lightweight web framework for Rust that ignites your development journey"
 authors = ["Aarambh Dev Hub <your@email.com>"]
 license = "MIT"
-keywords = ["web", "framework", "fast", "ignitia", "http"]
-categories = ["web-programming::http-server"]
-repository = "https://github.com/AarambhDevHub/ignitia"
+readme = "README.md"
 homepage = "https://github.com/AarambhDevHub/ignitia"
+repository = "https://github.com/AarambhDevHub/ignitia"
 documentation = "https://docs.rs/ignitia"
+keywords = ["web", "framework", "fast", "http", "async"]
+categories = ["web-programming::http-server", "asynchronous"]
+include = [
+    "src/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE*",
+    "CHANGELOG.md"
+]
 
 [features]
-default = []
+default = ["websocket"]
 websocket = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:sha1", "dep:base64", "dep:lazy_static"]
 
+# Core async runtime and HTTP dependencies
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }
 hyper = { version = "1.4", features = ["full"] }
@@ -44,10 +54,10 @@ parking_lot = "0.12" # Faster synchronization
 arc-swap = "1.6" # For atomic router updates
 
 # WebSocket dependencies (optional)
-tokio-tungstenite = { version = "0.21", optional = true }
-tungstenite = { version = "0.21", optional = true }
+tokio-tungstenite = { version = "0.23", optional = true }
+tungstenite = { version = "0.23", optional = true }
 sha1 = { version = "0.10", optional = true }
-base64 = { version = "0.21", optional = true }
+base64 = { version = "0.22", optional = true }
 lazy_static = { version = "1.4", optional = true }
 
 uuid = { version = "1.17.0", features = ["serde", "v4"] }
@@ -56,7 +66,18 @@ uuid = { version = "1.17.0", features = ["serde", "v4"] }
 reqwest = { version = "0.12", features = ["json"] }
 tokio-test = "0.4"
 
-
+# Documentation configuration
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+# Profile optimizations
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+debug = true
+split-debuginfo = "unpacked"
