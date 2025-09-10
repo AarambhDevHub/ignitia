@@ -735,7 +735,7 @@ async fn handle_tls_connection(
         let router = Arc::clone(&router);
         async move {
             // FIX: Ensure proper return type
-            handle_request(router, req).await
+            handle_request(router, req, config.max_request_body_size).await
         }
     });
 
@@ -798,7 +798,7 @@ async fn handle_connection(
 
     let service = service_fn(move |req| {
         let router = Arc::clone(&router);
-        async move { handle_request(router, req).await }
+        async move { handle_request(router, req, config.max_request_body_size).await }
     });
 
     if config.auto_protocol_detection && config.http1_enabled && config.http2.enabled {
@@ -1012,6 +1012,7 @@ where
 async fn handle_request(
     router: Arc<Router>,
     req: hyper::Request<hyper::body::Incoming>,
+    max_body_size: usize,
 ) -> Result<hyper::Response<Full<Bytes>>, hyper::Error> {
     let path = req.uri().path().to_string();
 
@@ -1025,7 +1026,7 @@ async fn handle_request(
     }
 
     // Handle regular HTTP request
-    handle_regular_http_request(router, req).await
+    handle_regular_http_request(router, req, max_body_size).await
 }
 
 /// Determines if an incoming request is a WebSocket upgrade request.
@@ -1226,17 +1227,18 @@ async fn handle_websocket_upgrade(
 async fn handle_regular_http_request(
     router: Arc<Router>,
     req: hyper::Request<hyper::body::Incoming>,
+    max_body_size: usize,
 ) -> Result<hyper::Response<Full<Bytes>>, hyper::Error> {
     let (parts, body) = req.into_parts();
 
     // Limit request body size (10MB max)
-    const MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
+    // const MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
 
     let body_bytes = match body.collect().await {
         Ok(collected) => {
             let bytes = collected.to_bytes();
             // Check body size using len() instead of size()
-            if bytes.len() > MAX_BODY_SIZE {
+            if bytes.len() > max_body_size {
                 let mut response =
                     hyper::Response::new(Full::new(Bytes::from("Request too large")));
                 *response.status_mut() = http::StatusCode::PAYLOAD_TOO_LARGE;
@@ -1274,25 +1276,3 @@ async fn handle_regular_http_request(
 
     Ok(builder.body(Full::new(response.body)).unwrap())
 }
-
-// /// Server configuration and customization utilities.
-// ///
-// /// This module provides additional functionality for server configuration,
-// /// monitoring, and customization beyond the basic server setup.
-// pub mod config {
-//     //! Server configuration utilities and constants.
-
-//     use std::time::Duration;
-
-//     /// Default request body size limit (10MB).
-//     pub const DEFAULT_MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
-
-//     /// Default server read timeout.
-//     pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
-
-//     /// Default server write timeout.
-//     pub const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
-
-//     /// Default keep-alive timeout.
-//     pub const DEFAULT_KEEP_ALIVE: Duration = Duration::from_secs(75);
-// }

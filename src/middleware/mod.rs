@@ -36,6 +36,7 @@
 //!
 //! - **LoggerMiddleware**: HTTP request and response logging
 //! - **CorsMiddleware**: Cross-Origin Resource Sharing handling
+//! - **BodySizeLimitMiddleware**: Limit the size of incoming request bodies
 //! - **AuthMiddleware**: Token-based authentication for protected routes
 //! - **ErrorHandlerMiddleware**: Advanced error handling and logging
 //!
@@ -142,6 +143,7 @@
 //! - Use early returns to avoid unnecessary processing
 
 pub mod auth;
+pub mod body_limit;
 pub mod cors;
 pub mod error_handler;
 pub mod logger;
@@ -383,6 +385,7 @@ pub trait Middleware: Send + Sync {
 }
 
 pub use self::auth::AuthMiddleware;
+pub use self::body_limit::{BodySizeLimitBuilder, BodySizeLimitMiddleware};
 pub use self::cors::Cors as CorsMiddleware;
 pub use self::error_handler::ErrorHandlerMiddleware;
 pub use self::logger::LoggerMiddleware;

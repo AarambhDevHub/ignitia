@@ -537,6 +537,86 @@ pub struct ServerConfig {
     /// let dev_config = ServerConfig::default().redirect_to_https(8443);
     /// ```
     pub https_port: Option<u16>,
+
+    /// Maximum size of HTTP request body in bytes.
+    ///
+    /// Controls the server-level limit on incoming request body size. Requests with bodies
+    /// larger than this limit are immediately rejected with a `413 Payload Too Large` response
+    /// before reaching any middleware or handlers.
+    ///
+    /// # Server vs Middleware Limits
+    ///
+    /// This server-level limit acts as a **hard ceiling** and should be set higher than or
+    /// equal to any middleware body size limits. The processing order is:
+    ///
+    /// 1. **Server limit** (this setting) - Applied first during request parsing
+    /// 2. **Middleware limits** - Applied during middleware processing
+    /// 3. **Handler processing** - Only reached if all limits pass
+    ///
+    /// # Default
+    /// `10 * 1024 * 1024` (10MB)
+    ///
+    /// # Security Considerations
+    ///
+    /// - **DoS Protection**: Prevents memory exhaustion from extremely large requests
+    /// - **Resource Management**: Limits server memory usage per connection
+    /// - **Early Rejection**: Saves processing cycles by rejecting oversized requests immediately
+    ///
+    /// # Performance Impact
+    ///
+    /// - **Low limits (1-10MB)**: Good for APIs with small payloads (JSON, forms)
+    /// - **Medium limits (10-100MB)**: Suitable for file uploads, media processing
+    /// - **High limits (100MB-1GB+)**: For bulk data transfer, video uploads
+    ///
+    /// # Examples
+    ///
+    /// ## API Server (Small Payloads)
+    /// ```
+    /// use ignitia::ServerConfig;
+    ///
+    /// let api_config = ServerConfig::default()
+    ///     .with_max_request_body_size(5 * 1024 * 1024); // 5MB
+    /// ```
+    ///
+    /// ## File Upload Server
+    /// ```
+    /// use ignitia::ServerConfig;
+    ///
+    /// let upload_config = ServerConfig::default()
+    ///     .with_max_request_body_size(500 * 1024 * 1024); // 500MB
+    /// ```
+    ///
+    /// ## High-Volume Data Processing
+    /// ```
+    /// use ignitia::ServerConfig;
+    ///
+    /// let bulk_config = ServerConfig::default()
+    ///     .with_max_request_body_size(2 * 1024 * 1024 * 1024); // 2GB
+    /// ```
+    ///
+    /// # Middleware Coordination
+    ///
+    /// ```
+    /// use ignitia::{ServerConfig, Router, middleware::BodySizeLimitMiddleware};
+    ///
+    /// // Server allows up to 100MB (safety net)
+    /// let config = ServerConfig::default()
+    ///     .with_max_request_body_size(100 * 1024 * 1024);
+    ///
+    /// // Middleware enforces 50MB business logic limit
+    /// let router = Router::new()
+    ///     .middleware(BodySizeLimitMiddleware::new(50 * 1024 * 1024));
+    /// ```
+    ///
+    /// # Error Handling
+    ///
+    /// When this limit is exceeded, the server returns:
+    /// - **Status**: `413 Payload Too Large`
+    /// - **Body**: `"Request too large"`
+    /// - **Timing**: Before any middleware or handlers execute
+    ///
+    /// For custom error handling, ensure middleware limits are lower than this value.
+    pub max_request_body_size: usize,
 }
 
 impl Default for ServerConfig {
@@ -579,6 +659,7 @@ impl Default for ServerConfig {
             tls: None,
             redirect_http_to_https: false,
             https_port: None,
+            max_request_body_size: 10 * 1024 * 1024,
         }
     }
 }
@@ -729,5 +810,74 @@ impl ServerConfig {
     #[cfg(not(feature = "tls"))]
     pub fn is_tls_enabled(&self) -> bool {
         false
+    }
+
+    /// Configure the maximum allowed request body size in bytes.
+    ///
+    /// Sets the server-level hard limit for HTTP request body size. This limit is
+    /// enforced before any middleware processing and provides DoS protection against
+    /// extremely large requests.
+    ///
+    /// # Arguments
+    /// * `size` - Maximum body size in bytes
+    ///
+    /// # Returns
+    /// Modified `ServerConfig` with the new body size limit
+    ///
+    /// # Recommendations
+    ///
+    /// **Choose based on your use case:**
+    /// - **REST APIs**: 1-10MB for JSON payloads
+    /// - **File uploads**: 50-500MB depending on file types
+    /// - **Bulk data**: 1GB+ for data processing applications
+    /// - **Development**: Higher limits for testing flexibility
+    ///
+    /// **Always set higher than middleware limits:**
+    /// ```
+    /// use ignitia::{ServerConfig, Router};
+    ///
+    /// // Server: 100MB safety limit
+    /// let config = ServerConfig::default()
+    ///     .with_max_request_body_size(100 * 1024 * 1024);
+    ///
+    /// // Middleware: 50MB business logic limit
+    /// let router = Router::new()
+    ///     .middleware(/* body size middleware with 50MB limit */);
+    /// ```
+    ///
+    /// # Examples
+    ///
+    /// ## Conservative API Server
+    /// ```
+    /// use ignitia::ServerConfig;
+    ///
+    /// let config = ServerConfig::default()
+    ///     .with_max_request_body_size(1024 * 1024); // 1MB
+    /// ```
+    ///
+    /// ## Media Upload Service
+    /// ```
+    /// use ignitia::ServerConfig;
+    ///
+    /// let config = ServerConfig::default()
+    ///     .with_max_request_body_size(1024 * 1024 * 1024); // 1GB
+    /// ```
+    ///
+    /// ## Development Environment
+    /// ```
+    /// use ignitia::ServerConfig;
+    ///
+    /// let config = ServerConfig::default()
+    ///     .with_max_request_body_size(5 * 1024 * 1024 * 1024); // 5GB for testing
+    /// ```
+    ///
+    /// # Security Impact
+    ///
+    /// - **Too Low**: Legitimate requests may be rejected
+    /// - **Too High**: Server vulnerable to memory exhaustion attacks
+    /// - **Balanced**: Protects server while allowing intended use cases
+    pub fn with_max_request_body_size(mut self, size: usize) -> Self {
+        self.max_request_body_size = size;
+        self
     }
 }
