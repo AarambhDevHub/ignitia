@@ -597,15 +597,19 @@ impl Middleware for AuthMiddleware {
             return Ok(());
         }
 
-        let auth_header = req.header("Authorization").ok_or(Error::Unauthorized)?;
+        let auth_header = req.header("Authorization").ok_or(Error::Unauthorized(
+            "Missing Authorization header".to_string(),
+        ))?;
 
         if !auth_header.starts_with("Bearer ") {
-            return Err(Error::Unauthorized);
+            return Err(Error::Unauthorized(
+                "Invalid Authorization header format".to_string(),
+            ));
         }
 
         let token = &auth_header[7..];
         if token != self.token {
-            return Err(Error::Unauthorized);
+            return Err(Error::Unauthorized("Invalid token".to_string()));
         }
 
         Ok(())

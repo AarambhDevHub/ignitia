@@ -486,7 +486,7 @@ pub use request::Request;
 pub use response::{Response, ResponseBuilder};
 
 // Re-export routing components
-pub use router::{Route, Router};
+pub use router::{LayeredHandler, Route, Router};
 
 // Re-export server components
 pub use server::Server;

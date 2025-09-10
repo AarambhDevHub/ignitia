@@ -423,12 +423,12 @@ impl ApiKeyMiddleware {
             key_info.last_used = Some(Instant::now());
 
             if path.contains("/admin/") && !key_info.permissions.contains(&"admin".to_string()) {
-                return Err(Error::Unauthorized);
+                return Err(Error::Unauthorized("Insufficient permissions".to_string()));
             }
 
             Ok(key_info.clone())
         } else {
-            Err(Error::Unauthorized)
+            Err(Error::Unauthorized("Invalid API key".to_string()))
         }
     }
 }
@@ -467,7 +467,7 @@ impl Middleware for ApiKeyMiddleware {
         }
 
         error!("❌ Invalid or missing API key for path: {}", path);
-        Err(Error::Unauthorized)
+        Err(Error::Unauthorized("Invalid API key".to_string()))
     }
 }
 

@@ -313,8 +313,10 @@ async fn dashboard(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result
     // Check authentication
     let username = cookies
         .get("session_user")
-        .ok_or_else(|| Error::Unauthorized)?;
-    let user = db.get_user(&username).ok_or_else(|| Error::Unauthorized)?;
+        .ok_or_else(|| Error::Unauthorized("Invalid session".to_string()))?;
+    let user = db
+        .get_user(&username)
+        .ok_or_else(|| Error::Unauthorized("Invalid user".to_string()))?;
 
     let html = format!(
         r#"
@@ -374,8 +376,10 @@ async fn dashboard(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result
 async fn profile(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<Response> {
     let username = cookies
         .get("session_user")
-        .ok_or_else(|| Error::Unauthorized)?;
-    let user = db.get_user(&username).ok_or_else(|| Error::Unauthorized)?;
+        .ok_or_else(|| Error::Unauthorized("Invalid session".to_string()))?;
+    let user = db
+        .get_user(&username)
+        .ok_or_else(|| Error::Unauthorized("Invalid user".to_string()))?;
 
     let html = format!(
         r#"
@@ -413,8 +417,10 @@ async fn profile(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<R
 async fn admin_panel(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<Response> {
     let username = cookies
         .get("session_user")
-        .ok_or_else(|| Error::Unauthorized)?;
-    let user = db.get_user(&username).ok_or_else(|| Error::Unauthorized)?;
+        .ok_or_else(|| Error::Unauthorized("Invalid session".to_string()))?;
+    let user = db
+        .get_user(&username)
+        .ok_or_else(|| Error::Unauthorized("Invalid user".to_string()))?;
 
     // Check admin role
     if user.role != "admin" {

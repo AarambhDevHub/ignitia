@@ -119,11 +119,11 @@
 //! // Matches: /proxy/https://example.com/api/data -> url = "https://example.com/api/data"
 //! ```
 
-use crate::{HandlerFn, Request};
+use crate::{HandlerFn, Middleware, Request};
 use http::Method;
 use once_cell::sync::Lazy;
 use regex::{Regex, RegexBuilder};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 /// Pre-compiled regex for matching named parameters in route patterns.
 ///
@@ -206,6 +206,8 @@ pub struct Route {
     total_params: usize,
     /// Cached path segment count for performance optimization
     segment_count: usize,
+    /// Middleware to be executed before the route handler
+    pub middleware: Vec<Arc<dyn Middleware>>,
 }
 
 impl Route {
@@ -267,7 +269,52 @@ impl Route {
             wildcard_names,
             total_params,
             segment_count,
+            middleware: Vec::new(),
         }
+    }
+
+    /// Adds middleware to this specific route.
+    ///
+    /// Route-level middleware is applied in addition to global router middleware.
+    /// The middleware execution order follows the standard pattern:
+    /// - Global middleware `before` hooks (in registration order)
+    /// - Route middleware `before` hooks (in registration order)
+    /// - Handler execution
+    /// - Route middleware `after` hooks (in reverse order)
+    /// - Global middleware `after` hooks (in reverse order)
+    ///
+    /// # Type Parameters
+    /// - `M`: Middleware type that implements the `Middleware` trait
+    ///
+    /// # Parameters
+    /// - `mw`: The middleware instance to add to this route
+    ///
+    /// # Returns
+    /// The route instance for method chaining
+    ///
+    /// # Use Cases
+    /// - Authentication for specific endpoints
+    /// - Rate limiting for resource-intensive routes
+    /// - Logging for debug routes
+    /// - Custom validation for specific route patterns
+    ///
+    /// # Examples
+    /// ```
+    /// use ignitia::{router::Route, middleware::AuthMiddleware};
+    /// use http::Method;
+    /// use std::sync::Arc;
+    ///
+    /// let handler = Arc::new(|req| Box::pin(async move {
+    ///     Ok(ignitia::Response::text("Protected resource"))
+    /// }));
+    ///
+    /// let route = Route::new("/admin/users", Method::GET, handler)
+    ///     .with_middleware(AuthMiddleware::new("admin-token"))
+    ///     .with_middleware(RateLimitMiddleware::new(10));
+    /// ```
+    pub fn with_middleware(mut self, mw: impl Middleware + 'static) -> Self {
+        self.middleware.push(Arc::new(mw));
+        self
     }
 
     /// Compiles a regex pattern with optimized settings for route matching.

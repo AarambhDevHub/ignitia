@@ -317,6 +317,136 @@ macro_rules! define_http_method {
     };
 }
 
+/// A handler with associated middleware layers.
+///
+/// `LayeredHandler` allows you to attach middleware specifically to individual
+/// handlers before they're registered with the router. This provides fine-grained
+/// control over which middleware applies to which routes.
+///
+/// # Examples
+///
+/// ```
+/// use ignitia::{LayeredHandler, Response, AuthMiddleware, RateLimitMiddleware};
+///
+/// let handler = LayeredHandler::new(|| async { Ok(Response::text("Protected")) })
+///     .layer(AuthMiddleware::new("secret"))
+///     .layer(RateLimitMiddleware::new(100));
+/// ```
+#[derive(Clone)]
+pub struct LayeredHandler {
+    /// The core handler function to execute
+    handler: HandlerFn,
+    /// Stack of middleware to apply to this handler
+    middleware: Vec<Arc<dyn Middleware>>,
+}
+
+impl LayeredHandler {
+    /// Creates a new layered handler from a handler that implements `IntoHandler`.
+    ///
+    /// # Type Parameters
+    /// - `H`: Handler type that implements `IntoHandler`
+    ///
+    /// # Parameters
+    /// - `handler`: The handler to wrap
+    ///
+    /// # Returns
+    /// A new `LayeredHandler` with no middleware layers
+    ///
+    /// # Examples
+    /// ```
+    /// use ignitia::{LayeredHandler, Response};
+    ///
+    /// let handler = LayeredHandler::new(|| async {
+    ///     Ok(Response::text("Hello, World!"))
+    /// });
+    /// ```
+    pub fn new<H, T>(handler: H) -> Self
+    where
+        H: IntoHandler<T>,
+    {
+        Self {
+            handler: into_handler(handler),
+            middleware: Vec::new(),
+        }
+    }
+
+    /// Adds a middleware layer to this handler.
+    ///
+    /// Middleware is applied in the order it's added. The first middleware added
+    /// will be the outermost layer (executed first for `before` hooks and last
+    /// for `after` hooks).
+    ///
+    /// # Type Parameters
+    /// - `M`: Middleware type that implements the `Middleware` trait
+    ///
+    /// # Parameters
+    /// - `mw`: The middleware to add
+    ///
+    /// # Returns
+    /// The layered handler for method chaining
+    ///
+    /// # Examples
+    /// ```
+    /// use ignitia::{LayeredHandler, Response, LoggerMiddleware, AuthMiddleware};
+    ///
+    /// let handler = LayeredHandler::new(|| async { Ok(Response::text("Data")) })
+    ///     .layer(LoggerMiddleware)
+    ///     .layer(AuthMiddleware::new("secret"));
+    /// ```
+    pub fn layer<M: Middleware + 'static>(mut self, mw: M) -> Self {
+        self.middleware.push(Arc::new(mw));
+        self
+    }
+
+    /// Converts the layered handler into a `HandlerFn` that can be registered with the router.
+    ///
+    /// This method creates a new handler function that wraps the original handler
+    /// with all the configured middleware layers. The middleware is executed in
+    /// the correct order (FIFO for `before` hooks, LIFO for `after` hooks).
+    ///
+    /// # Returns
+    /// A `HandlerFn` that executes the handler with its middleware stack
+    ///
+    /// # Middleware Execution Order
+    /// - `before` hooks: Execute in the order middleware was added
+    /// - `after` hooks: Execute in reverse order (LIFO)
+    ///
+    /// # Examples
+    /// ```
+    /// use ignitia::{LayeredHandler, Router, Response};
+    ///
+    /// let layered = LayeredHandler::new(|| async { Ok(Response::text("Test")) });
+    /// let handler_fn = layered.into_handler();
+    ///
+    /// let router = Router::new().route("/test", http::Method::GET, handler_fn);
+    /// ```
+    pub fn into_handler(self) -> HandlerFn {
+        let handler = self.handler;
+        let middleware = self.middleware;
+
+        Arc::new(move |mut req: Request| {
+            let middleware = middleware.clone();
+            let handler = handler.clone();
+
+            Box::pin(async move {
+                // Run middleware.before() in order
+                for mw in &middleware {
+                    mw.before(&mut req).await?;
+                }
+
+                let mut res = handler.handle(req).await?;
+
+                // Run middleware.after() in reverse order
+                for mw in middleware.iter().rev() {
+                    mw.after(&mut res).await?;
+                }
+
+                Ok(res)
+            })
+        })
+    }
+}
+
 /// Compiled router state for efficient request handling.
 ///
 /// This structure contains the optimized representation of all routes,
@@ -498,6 +628,34 @@ impl Router {
         H: IntoHandler<T>,
     {
         self.route(path, method, into_handler(handler))
+    }
+
+    /// Adds a route with a pre-layered handler.
+    ///
+    /// This method allows you to register a `LayeredHandler` that already has
+    /// middleware attached. The layered handler will be converted to a regular
+    /// handler function that includes the middleware execution.
+    ///
+    /// # Parameters
+    /// - `path`: The route path pattern
+    /// - `method`: The HTTP method for this route
+    /// - `lh`: The layered handler with its middleware stack
+    ///
+    /// # Returns
+    /// The router instance for method chaining
+    ///
+    /// # Examples
+    /// ```
+    /// use ignitia::{Router, Response, LayeredHandler, AuthMiddleware};
+    ///
+    /// let layered = LayeredHandler::new(|| async { Ok(Response::text("Protected")) })
+    ///     .layer(AuthMiddleware::new("secret"));
+    ///
+    /// let router = Router::new()
+    ///     .route_with_layered("/admin", http::Method::GET, layered);
+    /// ```
+    pub fn route_with_layered(self, path: &str, method: http::Method, lh: LayeredHandler) -> Self {
+        self.route(path, method, lh.into_handler())
     }
 
     // HTTP method convenience functions
@@ -1092,9 +1250,19 @@ impl Router {
                 if let Some(params) = route.matches(&req) {
                     req.params = params;
 
+                    // Apply route middleware before handler
+                    for mw in &route.middleware {
+                        mw.before(&mut req).await?;
+                    }
+
                     let mut response = route.handler.handle(req).await?;
 
-                    // Apply middleware in reverse order
+                    // Apply route middleware after handler in reverse order
+                    for mw in route.middleware.iter().rev() {
+                        mw.after(&mut response).await?;
+                    }
+
+                    // Apply global middleware after handler in reverse order
                     for mw in compiled.middleware.iter().rev() {
                         mw.after(&mut response).await?;
                     }

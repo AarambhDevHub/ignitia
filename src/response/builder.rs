@@ -761,6 +761,327 @@ impl ResponseBuilder {
         self
     }
 
+    /// Sets redirect location and status code for the response.
+    ///
+    /// This method configures the response to redirect clients to a different URL
+    /// with the specified HTTP status code. It sets the `Location` header and
+    /// the appropriate status code.
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - The HTTP status code for the redirect (typically 3xx series)
+    /// * `location` - The URL to redirect to
+    ///
+    /// # Examples
+    ///
+    /// ## Custom Status Redirect
+    /// ```
+    /// use ignitia::{ResponseBuilder, StatusCode};
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .redirect(StatusCode::FOUND, "/dashboard")
+    ///     .build();
+    ///
+    /// assert_eq!(response.status, StatusCode::FOUND);
+    /// ```
+    ///
+    /// ## API Endpoint Redirect
+    /// ```
+    /// use ignitia::{ResponseBuilder, StatusCode};
+    ///
+    /// fn api_redirect_response() -> ignitia::Response {
+    ///     ResponseBuilder::new()
+    ///         .redirect(StatusCode::MOVED_PERMANENTLY, "/api/v2/users")
+    ///         .header("x-api-version", "2.0")
+    ///         .build()
+    /// }
+    /// ```
+    ///
+    /// ## Conditional Redirect with Headers
+    /// ```
+    /// use ignitia::{ResponseBuilder, StatusCode};
+    ///
+    /// fn redirect_with_tracking(destination: &str, user_id: u32) -> ignitia::Response {
+    ///     ResponseBuilder::new()
+    ///         .redirect(StatusCode::FOUND, destination)
+    ///         .header("x-user-id", user_id.to_string())
+    ///         .header("x-redirect-reason", "user-preference")
+    ///         .build()
+    /// }
+    /// ```
+    pub fn redirect(mut self, status: StatusCode, location: impl Into<String>) -> Self {
+        self.status = status;
+        self.headers.insert(
+            http::header::LOCATION,
+            http::HeaderValue::from_str(&location.into())
+                .unwrap_or_else(|_| http::HeaderValue::from_static("/")),
+        );
+        self
+    }
+
+    /// Creates a temporary redirect response (HTTP 302 Found).
+    ///
+    /// This is the most commonly used redirect method in web applications.
+    /// The client will make a new request to the provided location, but should
+    /// continue to use the original URL for future requests. The HTTP method
+    /// may change to GET for the redirected request.
+    ///
+    /// # Arguments
+    ///
+    /// * `location` - The URL to redirect to
+    ///
+    /// # Examples
+    ///
+    /// ## Simple Login Redirect
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .temporary_redirect("/login")
+    ///     .build();
+    ///
+    /// assert_eq!(response.status, ignitia::StatusCode::FOUND);
+    /// ```
+    ///
+    /// ## Redirect with Additional Headers
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// fn login_redirect_with_message() -> ignitia::Response {
+    ///     ResponseBuilder::new()
+    ///         .temporary_redirect("/login")
+    ///         .header("x-login-required", "true")
+    ///         .header("x-original-url", "/protected-resource")
+    ///         .build()
+    /// }
+    /// ```
+    ///
+    /// ## Conditional User Redirect
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// fn redirect_by_user_type(user_type: &str) -> ignitia::Response {
+    ///     let destination = match user_type {
+    ///         "admin" => "/admin/dashboard",
+    ///         "premium" => "/premium/dashboard",
+    ///         _ => "/dashboard",
+    ///     };
+    ///
+    ///     ResponseBuilder::new()
+    ///         .temporary_redirect(destination)
+    ///         .header("x-user-type", user_type)
+    ///         .build()
+    /// }
+    /// ```
+    pub fn temporary_redirect(self, location: impl Into<String>) -> Self {
+        self.redirect(StatusCode::FOUND, location)
+    }
+
+    /// Creates a permanent redirect response (HTTP 301 Moved Permanently).
+    ///
+    /// Use this when a resource has permanently moved to a new location.
+    /// Search engines and browsers will update their records to use the new URL.
+    /// The HTTP method may change to GET for the redirected request.
+    ///
+    /// # Arguments
+    ///
+    /// * `location` - The new permanent URL location
+    ///
+    /// # Examples
+    ///
+    /// ## SEO-Friendly URL Migration
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .permanent_redirect("/articles/new-blog-structure")
+    ///     .build();
+    ///
+    /// assert_eq!(response.status, ignitia::StatusCode::MOVED_PERMANENTLY);
+    /// ```
+    ///
+    /// ## Domain Migration with Cache Headers
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// fn migrate_to_new_domain() -> ignitia::Response {
+    ///     ResponseBuilder::new()
+    ///         .permanent_redirect("https://newdomain.com/same-path")
+    ///         .header("cache-control", "public, max-age=31536000")
+    ///         .header("x-migration-date", "2025-09-10")
+    ///         .build()
+    /// }
+    /// ```
+    ///
+    /// ## Product URL Restructuring
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// fn redirect_old_product_url(product_slug: &str) -> ignitia::Response {
+    ///     ResponseBuilder::new()
+    ///         .permanent_redirect(&format!("/products/{}", product_slug))
+    ///         .header("x-url-migration", "v2-structure")
+    ///         .build()
+    /// }
+    /// ```
+    pub fn permanent_redirect(self, location: impl Into<String>) -> Self {
+        self.redirect(StatusCode::MOVED_PERMANENTLY, location)
+    }
+
+    /// Creates a "See Other" redirect response (HTTP 303 See Other).
+    ///
+    /// This redirect is ideal for the POST-redirect-GET pattern. After processing
+    /// a POST request, redirect the client to a GET endpoint to prevent duplicate
+    /// form submissions when the user refreshes the page.
+    ///
+    /// # Arguments
+    ///
+    /// * `location` - The URL to redirect to (typically a GET endpoint)
+    ///
+    /// # Examples
+    ///
+    /// ## Form Submission Success
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .see_other("/form-success")
+    ///     .build();
+    ///
+    /// assert_eq!(response.status, ignitia::StatusCode::SEE_OTHER);
+    /// ```
+    ///
+    /// ## E-commerce Checkout Flow
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// fn checkout_success_redirect(order_id: u32) -> ignitia::Response {
+    ///     ResponseBuilder::new()
+    ///         .see_other(&format!("/orders/{}/confirmation", order_id))
+    ///         .header("x-order-id", order_id.to_string())
+    ///         .header("x-checkout-completed", "true")
+    ///         .build()
+    /// }
+    /// ```
+    ///
+    /// ## User Registration Flow
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// fn registration_complete(user_id: u32) -> ignitia::Response {
+    ///     ResponseBuilder::new()
+    ///         .see_other("/welcome")
+    ///         .header("set-cookie", &format!("user_id={}; Path=/; HttpOnly", user_id))
+    ///         .header("x-registration-success", "true")
+    ///         .build()
+    /// }
+    /// ```
+    pub fn see_other(self, location: impl Into<String>) -> Self {
+        self.redirect(StatusCode::SEE_OTHER, location)
+    }
+
+    /// Creates a temporary redirect that preserves the HTTP method (HTTP 307 Temporary Redirect).
+    ///
+    /// Unlike 302 redirects, this guarantees that the client will use the same HTTP method
+    /// when making the redirected request. Use this when method preservation is important.
+    ///
+    /// # Arguments
+    ///
+    /// * `location` - The temporary URL to redirect to
+    ///
+    /// # Examples
+    ///
+    /// ## API Load Balancing
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .temporary_redirect_307("/api/v1/backup-server")
+    ///     .build();
+    ///
+    /// assert_eq!(response.status, ignitia::StatusCode::TEMPORARY_REDIRECT);
+    /// ```
+    ///
+    /// ## Maintenance Mode Redirect
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// fn maintenance_redirect() -> ignitia::Response {
+    ///     ResponseBuilder::new()
+    ///         .temporary_redirect_307("/maintenance")
+    ///         .header("retry-after", "3600")
+    ///         .header("x-maintenance-reason", "database-upgrade")
+    ///         .build()
+    /// }
+    /// ```
+    ///
+    /// ## Server Migration with Method Preservation
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// fn preserve_method_redirect(backup_server: &str) -> ignitia::Response {
+    ///     ResponseBuilder::new()
+    ///         .temporary_redirect_307(&format!("https://{}/api/endpoint", backup_server))
+    ///         .header("x-server-status", "primary-unavailable")
+    ///         .build()
+    /// }
+    /// ```
+    pub fn temporary_redirect_307(self, location: impl Into<String>) -> Self {
+        self.redirect(StatusCode::TEMPORARY_REDIRECT, location)
+    }
+
+    /// Creates a permanent redirect that preserves the HTTP method (HTTP 308 Permanent Redirect).
+    ///
+    /// This is like 301 but guarantees the client will use the same HTTP method for the redirect.
+    /// Use this for permanent moves where preserving the original HTTP method is crucial.
+    ///
+    /// # Arguments
+    ///
+    /// * `location` - The new permanent URL
+    ///
+    /// # Examples
+    ///
+    /// ## API Endpoint Migration
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .permanent_redirect_308("/api/v2/users")
+    ///     .build();
+    ///
+    /// assert_eq!(response.status, ignitia::StatusCode::PERMANENT_REDIRECT);
+    /// ```
+    ///
+    /// ## RESTful API Versioning
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// fn api_version_migration() -> ignitia::Response {
+    ///     ResponseBuilder::new()
+    ///         .permanent_redirect_308("/api/v3/resources")
+    ///         .header("x-api-version", "3.0")
+    ///         .header("x-deprecated-version", "2.0")
+    ///         .header("cache-control", "public, max-age=86400")
+    ///         .build()
+    /// }
+    /// ```
+    ///
+    /// ## Webhook Endpoint Migration
+    /// ```
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// fn webhook_migration(new_endpoint: &str) -> ignitia::Response {
+    ///     ResponseBuilder::new()
+    ///         .permanent_redirect_308(new_endpoint)
+    ///         .header("x-webhook-migration", "v2")
+    ///         .header("x-migration-date", "2025-09-10")
+    ///         .build()
+    /// }
+    /// ```
+    pub fn permanent_redirect_308(self, location: impl Into<String>) -> Self {
+        self.redirect(StatusCode::PERMANENT_REDIRECT, location)
+    }
+
     /// Builds and returns the final Response.
     ///
     /// This method consumes the builder and creates a `Response` instance with

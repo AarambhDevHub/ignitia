@@ -947,7 +947,7 @@ impl CorsMiddleware {
         // Validate origin
         if !self.is_origin_allowed(origin) {
             debug!("CORS preflight rejected: origin not allowed: {}", origin);
-            return Err(crate::Error::Forbidden);
+            return Err(crate::Error::Forbidden("Origin not allowed".to_string()));
         }
 
         // Validate request method

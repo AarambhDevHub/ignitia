@@ -1,6 +1,7 @@
+use http::Method;
 use ignitia::{
-    async_trait, Body, Cookie, Cookies, Error, Extension, Middleware, Response, Result, Router,
-    SameSite, Server,
+    async_trait, Body, Cookie, Cookies, Error, Extension, IgnitiaMethod, LayeredHandler,
+    Middleware, Response, Result, Router, SameSite, Server,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -119,13 +120,13 @@ impl Middleware for AuthMiddleware {
         // Check for session cookie
         let username = req.cookie("session_user").ok_or_else(|| {
             println!("🔒 Authentication required for {}", path);
-            Error::Unauthorized
+            Error::Unauthorized("Invalid session".to_string())
         })?;
 
         // Validate user exists in database
         if user_db.get_user(&username).is_none() {
             println!("❌ Invalid session for user: {}", username);
-            return Err(Error::Unauthorized);
+            return Err(Error::Unauthorized("Invalid user".to_string()));
         }
 
         println!("✅ Authenticated user: {} accessing {}", username, path);
@@ -165,11 +166,11 @@ impl Middleware for RoleMiddleware {
 
             let username = req
                 .cookie("session_user")
-                .ok_or_else(|| Error::Unauthorized)?;
+                .ok_or_else(|| Error::Unauthorized("Invalid session".to_string()))?;
 
             let user = user_db
                 .get_user(&username)
-                .ok_or_else(|| Error::Unauthorized)?;
+                .ok_or_else(|| Error::Unauthorized("Invalid user".to_string()))?;
 
             if user.role != *required_role {
                 println!(
@@ -224,14 +225,14 @@ async fn main() -> Result<()> {
     let auth_middleware =
         AuthMiddleware::new().protect_paths(vec!["/dashboard", "/profile", "/admin"]);
 
-    let role_middleware = RoleMiddleware::new().require_role("/admin", "admin");
+    // let role_middleware = RoleMiddleware::new().require_role("/admin", "admin");
 
     let router = Router::new()
         // Apply global middleware
         .middleware(RequestLoggerMiddleware)
         .middleware(UserDBMiddleware::new(user_db))
         .middleware(auth_middleware)
-        .middleware(role_middleware)
+        // .middleware(role_middleware)
         // Public routes (no auth required)
         .get("/", home)
         .get("/login", login_form)
@@ -240,7 +241,13 @@ async fn main() -> Result<()> {
         .get("/dashboard", dashboard)
         .get("/profile", profile)
         // Admin-only routes (both auth and role middleware will apply)
-        .get("/admin", admin_panel)
+        // .get("/admin", admin_panel)
+        .route_with_layered(
+            "/admin",
+            Method::GET,
+            LayeredHandler::new(admin_panel)
+                .layer(RoleMiddleware::new().require_role("/admin", "admin")),
+        )
         // Logout (public)
         .get("/logout", logout);
 
