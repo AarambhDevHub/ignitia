@@ -931,25 +931,3 @@ cargo run
 *Where every line of code ignites possibilities.*
 
 </div>
-```
-
-## Key Updates Made:
-
-### 🆕 **New Sections Added:**
-1. **HTTP/2 & HTTPS Support** - Comprehensive protocol documentation
-2. **Advanced CORS Configuration** - Regex origins and security features
-3. **Enhanced Error Handling** - Custom error types and middleware
-4. **Production REST API Example** - Complete real-world implementation
-5. **Protocol Performance Benchmarks** - HTTP/2 vs HTTP/1.1 comparisons
-
-### 🔧 **Enhanced Features:**
-- **Multi-protocol support** (HTTP/1.1, HTTP/2, HTTPS)
-- **TLS configuration** with ALPN and self-signed cert support
-- **WebSocket optimizations** with batch processing
-- **Advanced middleware** with custom implementations
-- **Security improvements** with modern TLS and CORS
-
-### 📈 **Updated Performance Data:**
-- Real benchmark results showing Ignitia's leading performance
-- HTTP/2 vs HTTP/1.1 performance comparison
-- Zero-copy optimizations and connection pooling benefits
