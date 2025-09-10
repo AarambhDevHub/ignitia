@@ -215,7 +215,7 @@ Complete TLS implementation for secure connections.
 
 Ignitia uses Cargo features to enable optional functionality:
 
-```
+```toml
 [features]
 default = ["websocket", "self-signed"]
 websocket = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:sha1", "dep:base64", "dep:lazy_static"]
@@ -229,14 +229,14 @@ self-signed = ["tls", "dep:rcgen"]
 
 Add to your `Cargo.toml`:
 
-```
+```toml
 [dependencies]
 ignitia = { version = "0.1.8", features = ["websocket", "tls"] }
 ```
 
 ### Basic HTTP Example
 
-```
+```rust
 use ignitia::{Router, Server, Response, Json, Path};
 use serde::{Deserialize, Serialize};
 
@@ -285,7 +285,7 @@ async fn main() -> ignitia::Result<()> {
 
 ### HTTPS Example
 
-```
+```rust
 use ignitia::{Router, Server, Response};
 
 async fn hello() -> ignitia::Result<Response> {
@@ -307,7 +307,7 @@ async fn main() -> ignitia::Result<()> {
 
 ### Self-Signed Certificate Example (Development)
 
-```
+```rust
 use ignitia::{Router, Server, Response};
 
 async fn hello() -> ignitia::Result<Response> {
@@ -329,7 +329,7 @@ async fn main() -> ignitia::Result<()> {
 
 ### WebSocket Example
 
-```
+```rust
 use ignitia::{Router, Server, websocket_handler};
 use ignitia::websocket::{WebSocketConnection, Message};
 
@@ -360,7 +360,7 @@ async fn main() -> ignitia::Result<()> {
 
 ### Middleware Example
 
-```
+```rust
 use ignitia::{Router, Server, Response};
 use ignitia::middleware::{LoggerMiddleware, Cors};
 
@@ -410,7 +410,7 @@ async fn main() -> ignitia::Result<()> {
 
 ### Custom Error Handling
 
-```
+```rust
 use ignitia::{define_error, Error, CustomError};
 use http::StatusCode;
 
@@ -430,7 +430,7 @@ async fn login() -> Result<Response, UserError> {
 
 ### Route Parameters and Wildcards
 
-```
+```rust
 use ignitia::{Router, Path};
 use serde::Deserialize;
 
@@ -460,7 +460,7 @@ let router = Router::new()
 
 ### Extensions and Request Context
 
-```
+```rust
 use ignitia::{Router, Request, Extension};
 use std::sync::Arc;
 

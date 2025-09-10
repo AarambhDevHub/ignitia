@@ -87,7 +87,7 @@ tracing-subscriber = "0.3"
 
 ### Basic HTTP/2 + HTTPS Server
 
-```
+```rust
 use ignitia::{
     Router, Server, Response, Result, Http2Config, ServerConfig, TlsConfig,
     handler::extractor::{Path, Query, Json},
@@ -168,7 +168,7 @@ async fn create_data(Json(data): Json<ApiData>) -> Result<Response> {
 Ignitia provides comprehensive support for modern HTTP protocols with automatic negotiation:
 
 #### Production HTTPS Configuration
-```
+```rust
 use ignitia::{Server, Router, TlsConfig, TlsVersion};
 
 let router = Router::new()
@@ -187,7 +187,7 @@ Server::new(router, "0.0.0.0:443".parse()?)
 ```
 
 #### HTTP to HTTPS Redirect
-```
+```rust
 // Automatic redirect from HTTP to HTTPS
 Server::new(router, "0.0.0.0:80".parse()?)
     .redirect_to_https(443)
@@ -196,7 +196,7 @@ Server::new(router, "0.0.0.0:80".parse()?)
 ```
 
 #### H2C (HTTP/2 Cleartext) Support
-```
+```rust
 let config = ServerConfig {
     http2: Http2Config {
         enabled: true,
@@ -213,7 +213,7 @@ let config = ServerConfig {
 
 First-class WebSocket implementation with optimized performance:
 
-```
+```rust
 use ignitia::{websocket_handler, websocket_message_handler, Message, WebSocketConnection};
 use serde::{Deserialize, Serialize};
 
@@ -279,7 +279,7 @@ let router = Router::new()
 
 Comprehensive CORS middleware with flexible origin matching:
 
-```
+```rust
 use ignitia::{CorsMiddleware, Method};
 
 // Development CORS (permissive)
@@ -309,7 +309,7 @@ let router = Router::new()
 
 Comprehensive error handling with custom error types and responses:
 
-```
+```rust
 use ignitia::{define_error, ErrorHandlerMiddleware, ErrorFormat};
 
 // Define domain-specific errors
@@ -354,7 +354,7 @@ async fn get_user_with_validation(Path(user_id): Path<String>) -> Result<Respons
 
 ### Path Parameter Extraction with Types
 
-```
+```rust
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -377,7 +377,7 @@ let router = Router::new()
 
 ### Wildcard Routes
 
-```
+```rust
 // Wildcard routing for file serving
 async fn serve_static(Path(path): Path<String>) -> Result<Response> {
     let safe_path = sanitize_path(&path)?;
@@ -390,7 +390,7 @@ let router = Router::new()
 
 ### Nested Routers
 
-```
+```rust
 // API v1 routes
 let api_v1 = Router::new()
     .get("/users", list_users)
@@ -415,7 +415,7 @@ let router = Router::new()
 
 ### Built-in Middleware Stack
 
-```
+```rust
 use ignitia::{LoggerMiddleware, CorsMiddleware, AuthMiddleware, ErrorHandlerMiddleware};
 
 let router = Router::new()
@@ -450,7 +450,7 @@ let router = Router::new()
 
 ### Custom Middleware Implementation
 
-```
+```rust
 use ignitia::{Middleware, Request, Response, Result};
 
 struct RateLimitMiddleware {
@@ -506,7 +506,7 @@ impl Middleware for RateLimitMiddleware {
 
 ### Secure Session Management
 
-```
+```rust
 use ignitia::{Cookie, SameSite};
 
 // Production-ready session cookie
@@ -588,7 +588,7 @@ HTTP/2 vs HTTP/1.1 Performance (Ignitia)
 
 ### Performance Features
 
-```
+```rust
 // Zero-copy request processing
 async fn high_performance_handler(Body(body): Body) -> Result<Response> {
     // Process large payloads efficiently without copying
@@ -611,7 +611,7 @@ async fn optimized_page() -> Result<Response> {
 
 ### 🏢 Production REST API
 
-```
+```rust
 use ignitia::{Router, Server, Response, Json, Path, Query, CorsMiddleware, LoggerMiddleware};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
