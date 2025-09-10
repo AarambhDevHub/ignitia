@@ -892,7 +892,7 @@ impl Middleware for CorsMiddleware {
     ///
     /// # Returns
     /// Always returns `Ok(())` as header addition should not fail
-    async fn after(&self, res: &mut Response) -> Result<()> {
+    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
         self.add_cors_headers(res);
         Ok(())
     }

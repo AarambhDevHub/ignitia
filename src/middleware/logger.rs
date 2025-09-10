@@ -259,7 +259,7 @@ impl Middleware for LoggerMiddleware {
     /// Response: 404
     /// Response: 500
     /// ```
-    async fn after(&self, res: &mut Response) -> Result<()> {
+    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
         info!("Response: {}", res.status.as_u16());
         Ok(())
     }

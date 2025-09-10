@@ -1,7 +1,7 @@
 use http::Method;
 use ignitia::{
-    async_trait, Body, Cookie, Cookies, Error, Extension, LayeredHandler, Middleware, Response,
-    Result, Router, SameSite, Server,
+    async_trait, Body, Cookie, Cookies, Error, Extension, LayeredHandler, Middleware, Request,
+    Response, Result, Router, SameSite, Server,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -209,7 +209,7 @@ impl Middleware for RequestLoggerMiddleware {
         Ok(())
     }
 
-    async fn after(&self, res: &mut Response) -> Result<()> {
+    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
         println!("📤 Response: {}", res.status.as_u16());
         Ok(())
     }

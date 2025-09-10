@@ -434,11 +434,11 @@ impl LayeredHandler {
                     mw.before(&mut req).await?;
                 }
 
-                let mut res = handler.handle(req).await?;
+                let mut res = handler.handle(req.clone()).await?;
 
                 // Run middleware.after() in reverse order
                 for mw in middleware.iter().rev() {
-                    mw.after(&mut res).await?;
+                    mw.after(&req, &mut res).await?;
                 }
 
                 Ok(res)
@@ -1255,16 +1255,16 @@ impl Router {
                         mw.before(&mut req).await?;
                     }
 
-                    let mut response = route.handler.handle(req).await?;
+                    let mut response = route.handler.handle(req.clone()).await?;
 
                     // Apply route middleware after handler in reverse order
                     for mw in route.middleware.iter().rev() {
-                        mw.after(&mut response).await?;
+                        mw.after(&req, &mut response).await?;
                     }
 
                     // Apply global middleware after handler in reverse order
                     for mw in compiled.middleware.iter().rev() {
-                        mw.after(&mut response).await?;
+                        mw.after(&req, &mut response).await?;
                     }
 
                     return Ok(response);

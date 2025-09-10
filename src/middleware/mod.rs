@@ -37,6 +37,7 @@
 //! - **LoggerMiddleware**: HTTP request and response logging
 //! - **CorsMiddleware**: Cross-Origin Resource Sharing handling
 //! - **BodySizeLimitMiddleware**: Limit the size of incoming request bodies
+//! - **CompressionMiddleware**: Compress response bodies using gzip or brotli
 //! - **AuthMiddleware**: Token-based authentication for protected routes
 //! - **ErrorHandlerMiddleware**: Advanced error handling and logging
 //!
@@ -75,7 +76,7 @@
 //!
 //! #[async_trait]
 //! impl Middleware for CustomHeaderMiddleware {
-//!     async fn after(&self, res: &mut Response) -> Result<()> {
+//!     async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
 //!         res.headers.insert(
 //!             "X-Custom-Header",
 //!             "Added by middleware".parse().unwrap()
@@ -144,9 +145,11 @@
 
 pub mod auth;
 pub mod body_limit;
+pub mod compression;
 pub mod cors;
 pub mod error_handler;
 pub mod logger;
+pub mod request_id;
 
 use crate::{Request, Response, Result};
 
@@ -198,14 +201,14 @@ use crate::{Request, Response, Result};
 ///
 /// ### Response Processing Only
 /// ```
-/// use ignitia::{Middleware, Response, Result};
+/// use ignitia::{Middleware, Request, Response, Result};
 /// use async_trait::async_trait;
 ///
 /// struct SecurityHeadersMiddleware;
 ///
 /// #[async_trait]
 /// impl Middleware for SecurityHeadersMiddleware {
-///     async fn after(&self, res: &mut Response) -> Result<()> {
+///     async fn after(&self, req: &Request, res: &mut Response) -> Result<()> {
 ///         res.headers.insert("X-Frame-Options", "DENY".parse().unwrap());
 ///         res.headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
 ///         Ok(())
@@ -228,7 +231,7 @@ use crate::{Request, Response, Result};
 ///         Ok(())
 ///     }
 ///
-///     async fn after(&self, res: &mut Response) -> Result<()> {
+///     async fn after(&self, req: &Request, res: &mut Response) -> Result<()> {
 ///         // Note: We can't access the request in after phase
 ///         // This is a limitation of the current design
 ///         res.headers.insert("X-Processing-Time", "calculated".parse().unwrap());
@@ -258,7 +261,7 @@ use crate::{Request, Response, Result};
 ///         Ok(())
 ///     }
 ///
-///     async fn after(&self, res: &mut Response) -> Result<()> {
+///     async fn after(&self, req: &Request, res: &mut Response) -> Result<()> {
 ///         if !self.enabled {
 ///             return Ok(());
 ///         }
@@ -344,6 +347,7 @@ pub trait Middleware: Send + Sync {
     /// - Transform response data
     ///
     /// # Parameters
+    /// - `req`: Immutable reference to the request
     /// - `res`: Mutable reference to the response from the handler
     ///
     /// # Returns
@@ -355,14 +359,14 @@ pub trait Middleware: Send + Sync {
     ///
     /// # Examples
     /// ```
-    /// use ignitia::{Middleware, Response, Result};
+    /// use ignitia::{Middleware, Response, Result, Request};
     /// use async_trait::async_trait;
     ///
     /// struct CompressionMiddleware;
     ///
     /// #[async_trait]
     /// impl Middleware for CompressionMiddleware {
-    ///     async fn after(&self, res: &mut Response) -> Result<()> {
+    ///     async fn after(&self, req: &Request, res: &mut Response) -> Result<()> {
     ///         // Add compression headers if body is large enough
     ///         if res.body.len() > 1024 {
     ///             res.headers.insert(
@@ -379,13 +383,15 @@ pub trait Middleware: Send + Sync {
     /// Currently, the after phase doesn't have access to the original request.
     /// If you need request data in the after phase, store it in response
     /// extensions or headers during the before phase.
-    async fn after(&self, _res: &mut Response) -> Result<()> {
+    async fn after(&self, _req: &Request, _res: &mut Response) -> Result<()> {
         Ok(())
     }
 }
 
 pub use self::auth::AuthMiddleware;
 pub use self::body_limit::{BodySizeLimitBuilder, BodySizeLimitMiddleware};
+pub use self::compression::CompressionMiddleware;
 pub use self::cors::Cors as CorsMiddleware;
 pub use self::error_handler::ErrorHandlerMiddleware;
 pub use self::logger::LoggerMiddleware;
+pub use self::request_id::{IdGenerator, RequestIdMiddleware};

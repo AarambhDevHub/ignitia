@@ -652,7 +652,7 @@ impl Middleware for ErrorHandlerMiddleware {
     /// ERROR HTTP 500 - Internal Server Error (Body length: 45 bytes)
     /// WARN  HTTP 404 - Not Found (Body length: 23 bytes)
     /// ```
-    async fn after(&self, res: &mut Response) -> Result<()> {
+    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
         // Only process error responses
         if res.status.is_success() {
             return Ok(());

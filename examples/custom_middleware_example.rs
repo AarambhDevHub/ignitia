@@ -116,7 +116,7 @@ impl Middleware for RateLimitMiddleware {
         Ok(())
     }
 
-    async fn after(&self, res: &mut Response) -> Result<()> {
+    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
         res.headers.insert(
             HeaderName::from_static("x-ratelimit-limit"),
             HeaderValue::from_str(&format!("{}", self.max_requests)).unwrap(),
@@ -222,7 +222,7 @@ impl SecurityHeadersMiddleware {
 
 #[async_trait]
 impl Middleware for SecurityHeadersMiddleware {
-    async fn after(&self, res: &mut Response) -> Result<()> {
+    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
         let security_headers = [
             ("x-frame-options", "DENY"),
             ("x-content-type-options", "nosniff"),
@@ -325,7 +325,7 @@ impl Middleware for TimingMiddleware {
         Ok(())
     }
 
-    async fn after(&self, res: &mut Response) -> Result<()> {
+    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
         if let Some(req_id_header) = res.headers.get("x-request-id").cloned() {
             if let Ok(request_id) = req_id_header.to_str() {
                 let mut request_data = self.request_data.lock().unwrap();
@@ -528,7 +528,7 @@ impl Middleware for EnhancedCorsMiddleware {
         Ok(())
     }
 
-    async fn after(&self, res: &mut Response) -> Result<()> {
+    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
         res.headers.insert(
             HeaderName::from_static("access-control-allow-origin"),
             HeaderValue::from_str(&self.allow_origins.join(", ")).unwrap(),

@@ -353,7 +353,7 @@ use std::{collections::HashMap, sync::Arc};
 ///     )))
 /// }
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Request {
     /// HTTP method (GET, POST, PUT, DELETE, etc.)
     pub method: Method,
