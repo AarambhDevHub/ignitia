@@ -1,6 +1,6 @@
 [package]
 name = "ignitia"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 rust-version = "1.70"
 description = "A blazing fast, lightweight web framework for Rust that ignites your development journey"
@@ -23,12 +23,14 @@ include = [
 [features]
 default = []
 websocket = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:sha1", "dep:base64", "dep:lazy_static"]
+tls = ["dep:tokio-rustls", "dep:rustls", "dep:rustls-pemfile"]
+self-signed = ["tls", "dep:rcgen"]
 
 # Core async runtime and HTTP dependencies
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }
-hyper = { version = "1.4", features = ["full"] }
-hyper-util = { version = "0.1", features = ["full"] }
+hyper = { version = "1.4", features = ["full", "server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["full",  "server", "http1", "http2", "tokio"] }
 http-body-util = "0.1"
 bytes = "1.7"
 serde = { version = "1.0", features = ["derive"] }
@@ -62,7 +64,13 @@ lazy_static = { version = "1.4", optional = true }
 
 uuid = { version = "1.17.0", features = ["serde", "v4"] }
 
-tower-http = { version = "0.5", features = ["cors"] }
+# TLS dependencies (optional)
+tokio-rustls = { version = "0.24", optional = true }
+rustls = { version = "0.21", optional = true }
+rustls-pemfile = { version = "1.0", optional = true }
+
+# For self-signed certificates (development only)
+rcgen = { version = "0.11", optional = true, features = ["pem"] }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }

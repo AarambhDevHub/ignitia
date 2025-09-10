@@ -1,7 +1,6 @@
 use http::StatusCode;
 use ignitia::{
-    CustomError, Extension, Json, Middleware, Request, Response, ResponseBuilder, Result, Router,
-    Server,
+    Extension, Json, Middleware, Request, Response, ResponseBuilder, Result, Router, Server,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

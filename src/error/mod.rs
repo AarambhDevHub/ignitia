@@ -51,6 +51,10 @@ use std::{fmt, sync::Arc};
 
 use crate::{Request, Response};
 
+#[cfg(feature = "tls")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
+use crate::server::tls::TlsError;
+
 /// The main error type for the Ignitia web framework.
 ///
 /// This enum represents all possible errors that can occur during request processing.
@@ -206,6 +210,41 @@ pub enum Error {
     /// Automatically converts `serde_json::Error` into framework errors.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    /// TLS/SSL configuration and connection error.
+    ///
+    /// Used when TLS-related operations fail, such as certificate loading,
+    /// handshake failures, or SSL/TLS configuration issues.
+    ///
+    /// This error type is only available when the "tls" feature is enabled.
+    ///
+    /// # Common Scenarios
+    /// - Certificate file not found or invalid
+    /// - Private key parsing failures
+    /// - TLS handshake errors
+    /// - Invalid TLS configuration
+    /// - Self-signed certificate generation failures (when "self-signed" feature is enabled)
+    ///
+    /// # Example
+    /// ```
+    /// use ignitia::{Server, Router};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> ignitia::Result<()> {
+    ///     let app = Router::new()
+    ///         .get("/", || async { Ok(ignitia::Response::text("Hello HTTPS!")) });
+    ///
+    ///     let server = Server::new(app, "127.0.0.1:8443".parse().unwrap())
+    ///         .enable_https("cert.pem", "key.pem")?; // May return TLS error
+    ///
+    ///     server.ignitia().await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(feature = "tls")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
+    #[error("TLS error: {0}")]
+    Tls(#[from] TlsError),
 
     /// Custom application-specific error.
     ///
@@ -394,6 +433,9 @@ impl Error {
             Error::Forbidden(_) => StatusCode::FORBIDDEN,
             Error::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Error::Database(_) | Error::ExternalService(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            #[cfg(feature = "tls")]
+            #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
+            Error::Tls(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Error::Custom(custom) => custom.status_code(),
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -419,6 +461,9 @@ impl Error {
             Error::Validation(_) => "validation_error",
             Error::Database(_) => "database_error",
             Error::ExternalService(_) => "external_service_error",
+            #[cfg(feature = "tls")]
+            #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
+            Error::Tls(_) => "tls_error",
             Error::Custom(custom) => custom.error_type(),
             _ => "internal_server_error",
         }
