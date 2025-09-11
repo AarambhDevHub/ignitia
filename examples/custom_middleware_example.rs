@@ -3,7 +3,7 @@ use ignitia::{
     async_trait,
     handler::extractor::{Headers, Json, Path, Query},
     middleware::{LoggerMiddleware, Middleware},
-    Cookie, CookieJar, Error, Extensions, Request, Response, Result, Router, Server,
+    Error, Request, Response, Result, Router, Server,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -214,7 +214,7 @@ impl SecurityHeadersMiddleware {
         }
     }
 
-    pub fn csp_policy(mut self, policy: &str) -> Self {
+    pub fn _csp_policy(mut self, policy: &str) -> Self {
         self.csp_policy = policy.to_string();
         self
     }
@@ -363,7 +363,7 @@ struct ApiKeyMiddleware {
 struct ApiKeyInfo {
     name: String,
     permissions: Vec<String>,
-    rate_limit: Option<usize>,
+    _rate_limit: Option<usize>,
     last_used: Option<Instant>,
 }
 
@@ -376,7 +376,7 @@ impl ApiKeyMiddleware {
             ApiKeyInfo {
                 name: "Development Key".to_string(),
                 permissions: vec!["read".to_string(), "write".to_string()],
-                rate_limit: Some(100),
+                _rate_limit: Some(100),
                 last_used: None,
             },
         );
@@ -386,7 +386,7 @@ impl ApiKeyMiddleware {
             ApiKeyInfo {
                 name: "Production Key".to_string(),
                 permissions: vec!["read".to_string()],
-                rate_limit: Some(1000),
+                _rate_limit: Some(1000),
                 last_used: None,
             },
         );
@@ -396,7 +396,7 @@ impl ApiKeyMiddleware {
             ApiKeyInfo {
                 name: "Admin Key".to_string(),
                 permissions: vec!["read".to_string(), "write".to_string(), "admin".to_string()],
-                rate_limit: None,
+                _rate_limit: None,
                 last_used: None,
             },
         );

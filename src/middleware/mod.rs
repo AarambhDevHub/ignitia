@@ -39,6 +39,8 @@
 //! - **BodySizeLimitMiddleware**: Limit the size of incoming request bodies
 //! - **CompressionMiddleware**: Compress response bodies using gzip or brotli
 //! - **SecurityMiddleware**: Security headers and content security policy
+//! - **RateLimitingMiddleware**: Rate limiting for API endpoints
+//! - **RequestIdMiddleware**: Generate a unique request ID for each request
 //! - **AuthMiddleware**: Token-based authentication for protected routes
 //! - **ErrorHandlerMiddleware**: Advanced error handling and logging
 //!

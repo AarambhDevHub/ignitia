@@ -50,7 +50,10 @@ pub enum IdGenerator {
     /// UUID v4 (default) - cryptographically random
     Uuid,
     /// Nanoid - URL-safe, shorter than UUID
-    NanoId { length: usize },
+    NanoId {
+        /// Length of the generated ID
+        length: usize,
+    },
     /// Custom function for ID generation
     Custom(fn() -> String),
 }

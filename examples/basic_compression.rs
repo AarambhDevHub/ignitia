@@ -7,7 +7,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt().init();
 
     let router = Router::new()
-        // .middleware(LoggerMiddleware)
+        .middleware(LoggerMiddleware)
         // Add compression middleware
         .middleware(CompressionMiddleware::new())
         // Basic text endpoint

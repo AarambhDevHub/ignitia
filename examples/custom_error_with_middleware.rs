@@ -66,12 +66,12 @@ impl UserService {
 }
 
 #[derive(Deserialize)]
-struct userId {
+struct UserId {
     id: u32,
 }
 
 // Simpler handlers - errors are handled by middleware
-async fn get_user_handler(Path(user): Path<userId>) -> Result<Response> {
+async fn get_user_handler(Path(user): Path<UserId>) -> Result<Response> {
     let user = UserService::get_user(user.id)?;
     Response::json(&user)
 }

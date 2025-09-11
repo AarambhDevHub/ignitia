@@ -22,7 +22,7 @@
 //!
 //! ```
 //! [dependencies]
-//! ignitia = { version = "0.1.8", features = ["tls", "websocket"] }
+//! ignitia = { version = "0.1.9", features = ["tls", "websocket"] }
 //! tokio = { version = "1.40", features = ["full"] }
 //! serde = { version = "1.0", features = ["derive"] }
 //! ```
@@ -330,7 +330,7 @@
 //!
 //! ```
 //! [dependencies]
-//! ignitia = { version = "0.1.8", features = ["websocket", "tls"] }
+//! ignitia = { version = "0.1.9", features = ["websocket", "tls"] }
 //! ```
 //!
 //! ### Advanced WebSocket Server
@@ -435,16 +435,16 @@
 //! ```
 //! [dependencies]
 //! # Full feature set (recommended for production)
-//! ignitia = { version = "0.1.8", features = ["tls", "websocket", "self-signed"] }
+//! ignitia = { version = "0.1.9", features = ["tls", "websocket", "self-signed"] }
 //!
 //! # TLS/HTTPS support only
-//! ignitia = { version = "0.1.8", features = ["tls"] }
+//! ignitia = { version = "0.1.9", features = ["tls"] }
 //!
 //! # WebSocket support only
-//! ignitia = { version = "0.1.8", features = ["websocket"] }
+//! ignitia = { version = "0.1.9", features = ["websocket"] }
 //!
 //! # Minimal installation (HTTP only)
-//! ignitia = "0.1.8"
+//! ignitia = "0.1.9"
 //! ```
 //!
 //! ### Available Features:
@@ -695,7 +695,8 @@ pub use handler::{
 pub use middleware::{
     AuthMiddleware, BodySizeLimitBuilder, BodySizeLimitMiddleware, CompressionMiddleware,
     CorsMiddleware, ErrorHandlerMiddleware, IdGenerator, LoggerMiddleware, Middleware,
-    RequestIdMiddleware, SecurityMiddleware,
+    RateLimitConfig, RateLimitInfo, RateLimitStats, RateLimitingMiddleware, RequestIdMiddleware,
+    SecurityMiddleware,
 };
 
 // Re-export core request and response types

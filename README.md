@@ -68,7 +68,7 @@ Add Ignitia to your `Cargo.toml`:
 
 ```
 [dependencies]
-ignitia = { version = "0.1.8", features = ["tls", "websocket", "self-signed"] }
+ignitia = { version = "0.1.9", features = ["tls", "websocket", "self-signed"] }
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -863,7 +863,7 @@ cargo run --example websocket_chat
 
 ## 📝 Changelog
 
-### v0.1.8 - Protocol Master Release 🚀
+### v0.1.9 - Protocol Master Release 🚀
 
 #### 🆕 New Features
 - ✅ **HTTP/2 Support**: Full HTTP/2 implementation with ALPN negotiation
@@ -910,7 +910,7 @@ If you find Ignitia helpful, consider:
 cargo new my-ignitia-app && cd my-ignitia-app
 
 # Add Ignitia with all features
-echo 'ignitia = { version = "0.1.8", features = ["tls", "websocket", "self-signed"] }' >> Cargo.toml
+echo 'ignitia = { version = "0.1.9", features = ["tls", "websocket", "self-signed"] }' >> Cargo.toml
 
 # Create your first HTTP/2 + WebSocket app
 cargo run

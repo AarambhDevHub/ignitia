@@ -293,18 +293,6 @@ use std::sync::Arc;
 
 pub use route::Route;
 
-// // Helper macros for common HTTP methods
-// macro_rules! http_method {
-//     ($name:ident, $method:expr) => {
-//         pub fn $name<H, T>(self, path: &str, handler: H) -> Self
-//         where
-//             H: IntoHandler<T>,
-//         {
-//             self.route_with(path, $method, handler)
-//         }
-//     };
-// }
-
 macro_rules! define_http_method {
     ($name:ident, $method:expr, $doc:expr) => {
         #[doc = $doc]
@@ -659,86 +647,6 @@ impl Router {
     }
 
     // HTTP method convenience functions
-
-    // /// Adds a GET route.
-    // ///
-    // /// # Parameters
-    // /// - `path`: The route path pattern
-    // /// - `handler`: The handler function for GET requests
-    // ///
-    // /// # Examples
-    // /// ```
-    // /// use ignitia::{Router, Response};
-    // ///
-    // /// let router = Router::new()
-    // ///     .get("/", || async { Ok(Response::text("Home")) })
-    // ///     .get("/users/:id", |path: ignitia::Path<u32>| async move {
-    // ///         Ok(Response::text(format!("User {}", path.0)))
-    // ///     });
-    // /// ```
-    // http_method!(get, Method::GET);
-
-    // /// Adds a POST route.
-    // ///
-    // /// # Parameters
-    // /// - `path`: The route path pattern
-    // /// - `handler`: The handler function for POST requests
-    // ///
-    // /// # Examples
-    // /// ```
-    // /// use ignitia::{Router, Response, Json};
-    // /// use serde::Deserialize;
-    // ///
-    // /// #[derive(Deserialize)]
-    // /// struct CreateUser {
-    // ///     name: String,
-    // ///     email: String,
-    // /// }
-    // ///
-    // /// let router = Router::new()
-    // ///     .post("/users", |Json(user): Json<CreateUser>| async move {
-    // ///         Ok(Response::json(serde_json::json!({
-    // ///             "message": "User created",
-    // ///             "name": user.name
-    // ///         }))?)
-    // ///     });
-    // /// ```
-    // http_method!(post, Method::POST);
-
-    // /// Adds a PUT route.
-    // ///
-    // /// # Parameters
-    // /// - `path`: The route path pattern
-    // /// - `handler`: The handler function for PUT requests
-    // http_method!(put, Method::PUT);
-
-    // /// Adds a DELETE route.
-    // ///
-    // /// # Parameters
-    // /// - `path`: The route path pattern
-    // /// - `handler`: The handler function for DELETE requests
-    // http_method!(delete, Method::DELETE);
-
-    // /// Adds a PATCH route.
-    // ///
-    // /// # Parameters
-    // /// - `path`: The route path pattern
-    // /// - `handler`: The handler function for PATCH requests
-    // http_method!(patch, Method::PATCH);
-
-    // /// Adds a HEAD route.
-    // ///
-    // /// # Parameters
-    // /// - `path`: The route path pattern
-    // /// - `handler`: The handler function for HEAD requests
-    // http_method!(head, Method::HEAD);
-
-    // /// Adds an OPTIONS route.
-    // ///
-    // /// # Parameters
-    // /// - `path`: The route path pattern
-    // /// - `handler`: The handler function for OPTIONS requests
-    // http_method!(options, Method::OPTIONS);
 
     define_http_method!(
         get,
