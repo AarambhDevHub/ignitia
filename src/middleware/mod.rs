@@ -38,6 +38,7 @@
 //! - **CorsMiddleware**: Cross-Origin Resource Sharing handling
 //! - **BodySizeLimitMiddleware**: Limit the size of incoming request bodies
 //! - **CompressionMiddleware**: Compress response bodies using gzip or brotli
+//! - **SecurityMiddleware**: Security headers and content security policy
 //! - **AuthMiddleware**: Token-based authentication for protected routes
 //! - **ErrorHandlerMiddleware**: Advanced error handling and logging
 //!
@@ -149,7 +150,9 @@ pub mod compression;
 pub mod cors;
 pub mod error_handler;
 pub mod logger;
+pub mod rate_limit;
 pub mod request_id;
+pub mod security;
 
 use crate::{Request, Response, Result};
 
@@ -394,4 +397,8 @@ pub use self::compression::CompressionMiddleware;
 pub use self::cors::Cors as CorsMiddleware;
 pub use self::error_handler::ErrorHandlerMiddleware;
 pub use self::logger::LoggerMiddleware;
+pub use self::rate_limit::{
+    RateLimitConfig, RateLimitInfo, RateLimitStats, RateLimitingMiddleware,
+};
 pub use self::request_id::{IdGenerator, RequestIdMiddleware};
+pub use self::security::SecurityMiddleware;

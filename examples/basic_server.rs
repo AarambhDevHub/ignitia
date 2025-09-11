@@ -1,6 +1,9 @@
-use ignitia::{raw_handler, Json, Path, Query, Request, Response, Result, Router, Server};
+use ignitia::{
+    middleware::{RateLimitConfig, RateLimitingMiddleware},
+    raw_handler, Json, Path, Query, Request, Response, Result, Router, Server,
+};
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 use tracing_subscriber;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -37,8 +40,12 @@ async fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
+    // Initialize rate limiting middleware
+    let rate_limiting_middleware = RateLimitConfig::new(10, Duration::from_secs(60));
+
     // Create router using the new handler system
     let router = Router::new()
+        .middleware(RateLimitingMiddleware::new(rate_limiting_middleware))
         .get("/", home) // No extractors - works directly
         .get("/hello/:name", hello) // Uses Path extractor
         .get("/users", list_users) // Uses Query extractor

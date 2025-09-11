@@ -695,7 +695,7 @@ pub use handler::{
 pub use middleware::{
     AuthMiddleware, BodySizeLimitBuilder, BodySizeLimitMiddleware, CompressionMiddleware,
     CorsMiddleware, ErrorHandlerMiddleware, IdGenerator, LoggerMiddleware, Middleware,
-    RequestIdMiddleware,
+    RequestIdMiddleware, SecurityMiddleware,
 };
 
 // Re-export core request and response types
