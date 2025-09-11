@@ -658,6 +658,7 @@ pub mod error;
 pub mod extension;
 pub mod handler;
 pub mod middleware;
+pub mod multipart;
 pub mod request;
 pub mod response;
 pub mod router;
@@ -708,6 +709,9 @@ pub use router::{LayeredHandler, Route, Router};
 
 // Re-export server components
 pub use server::{Http2Config, Server, ServerConfig};
+
+// Re-export multipart components
+pub use multipart::{Field, FileField, Multipart, MultipartConfig, MultipartError, TextField};
 
 #[cfg(feature = "tls")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]

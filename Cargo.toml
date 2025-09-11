@@ -55,6 +55,12 @@ httpdate = "1.0" # Add this line
 parking_lot = "0.12" # Faster synchronization
 arc-swap = "1.6" # For atomic router updates
 
+multer = "3.1"
+tempfile = "3.8"
+futures-util = "0.3"
+mime = "0.3"
+async-tempfile = "0.6"
+
 # WebSocket dependencies (optional)
 tokio-tungstenite = { version = "0.23", optional = true }
 tungstenite = { version = "0.23", optional = true }
