@@ -1607,7 +1607,7 @@ If you find Ignitia helpful, consider:
 cargo new my-ignitia-app && cd my-ignitia-app
 
 # Add Ignitia with all features
-echo 'ignitia = { version = "0.2.0", features = ["tls", "websocket", "multipart", "self-signed"] }' >> Cargo.toml
+echo 'ignitia = { version = "0.2.0", features = ["tls", "websocket", "self-signed"] }' >> Cargo.toml
 
 # Create your first high-performance app
 cargo run
