@@ -22,7 +22,7 @@
 //!
 //! ```
 //! [dependencies]
-//! ignitia = { version = "0.1.9", features = ["tls", "websocket"] }
+//! ignitia = { version = "0.2.0", features = ["tls", "websocket"] }
 //! tokio = { version = "1.40", features = ["full"] }
 //! serde = { version = "1.0", features = ["derive"] }
 //! ```
@@ -330,7 +330,7 @@
 //!
 //! ```
 //! [dependencies]
-//! ignitia = { version = "0.1.9", features = ["websocket", "tls"] }
+//! ignitia = { version = "0.2.0", features = ["websocket", "tls"] }
 //! ```
 //!
 //! ### Advanced WebSocket Server
@@ -435,16 +435,16 @@
 //! ```
 //! [dependencies]
 //! # Full feature set (recommended for production)
-//! ignitia = { version = "0.1.9", features = ["tls", "websocket", "self-signed"] }
+//! ignitia = { version = "0.2.0", features = ["tls", "websocket", "self-signed"] }
 //!
 //! # TLS/HTTPS support only
-//! ignitia = { version = "0.1.9", features = ["tls"] }
+//! ignitia = { version = "0.2.0", features = ["tls"] }
 //!
 //! # WebSocket support only
-//! ignitia = { version = "0.1.9", features = ["websocket"] }
+//! ignitia = { version = "0.2.0", features = ["websocket"] }
 //!
 //! # Minimal installation (HTTP only)
-//! ignitia = "0.1.9"
+//! ignitia = "0.2.0"
 //! ```
 //!
 //! ### Available Features:
@@ -643,7 +643,6 @@
 //! - [Repository](https://github.com/AarambhDevHub/ignitia)
 //! - [Documentation](https://docs.rs/ignitia)
 //! - [Examples](https://github.com/AarambhDevHub/ignitia/tree/main/examples)
-//! - [Changelog](https://github.com/AarambhDevHub/ignitia/blob/main/CHANGELOG.md)
 
 // Enable documentation features for docs.rs
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -684,7 +683,7 @@ pub use extension::{Extension, Extensions};
 
 // Re-export handler extractors with aliases to avoid naming conflicts
 pub use handler::extractor::{
-    Body, Cookies, Headers, Json, Method as IgnitiaMethod, Path, Query, Uri,
+    Body, Cookies, Form, Headers, Json, Method as IgnitiaMethod, Path, Query, State, Uri,
 };
 
 // Re-export handler types and utilities

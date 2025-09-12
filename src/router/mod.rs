@@ -284,7 +284,7 @@ pub mod route;
 
 use crate::handler::{into_handler, IntoHandler};
 use crate::middleware::Middleware;
-use crate::{Error, Handler, HandlerFn, Request, Response, Result};
+use crate::{Error, Extensions, Handler, HandlerFn, Request, Response, Result};
 use arc_swap::ArcSwap;
 use http::Method;
 use parking_lot::RwLock;
@@ -500,6 +500,8 @@ struct RouterInner {
     nested_routers: Vec<(String, Router)>,
     /// Flag indicating if router needs recompilation
     dirty: bool,
+    /// Extensions for state management
+    extensions: Extensions,
     /// WebSocket route handlers (when feature is enabled)
     #[cfg(feature = "websocket")]
     #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
@@ -524,6 +526,7 @@ impl Router {
             middleware: Vec::new(),
             not_found_handler: None,
             nested_routers: Vec::new(),
+            extensions: Extensions::new(),
             dirty: true,
             #[cfg(feature = "websocket")]
             #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
@@ -995,6 +998,156 @@ impl Router {
         panic!("WebSocket support is not enabled. Add 'websocket' feature to your Cargo.toml");
     }
 
+    /// Add application state that will be available to all handlers in this router.
+    ///
+    /// The state can be extracted in handlers using the `State<T>` extractor.
+    /// State is shared efficiently using `Arc<T>` internally.
+    ///
+    /// # Requirements
+    ///
+    /// The state type must implement `Clone + Send + Sync + 'static`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// #[derive(Clone)]
+    /// struct AppState {
+    ///     db: DatabasePool,
+    ///     config: Config,
+    /// }
+    ///
+    /// let state = AppState {
+    ///     db: create_pool(),
+    ///     config: load_config(),
+    /// };
+    ///
+    /// let app = Router::new()
+    ///     .route("/users", get_users)
+    ///     .state(state);
+    /// ```
+    ///
+    /// # Multiple States
+    ///
+    /// You can add multiple different state types:
+    ///
+    /// ```
+    /// let app = Router::new()
+    ///     .state(database_pool)
+    ///     .state(redis_client)
+    ///     .state(app_config);
+    /// ```
+    pub fn state<T>(self, state: T) -> Self
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        {
+            let mut inner = self.inner.write();
+            inner.dirty = true;
+            inner.extensions.insert(state);
+        }
+        self
+    }
+
+    /// Add application state using an `Arc<T>` for maximum efficiency.
+    ///
+    /// This method is preferred when you already have your state wrapped in `Arc<T>`
+    /// or when you want to share the exact same state instance across multiple routers.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    ///
+    /// let shared_state = Arc::new(AppState::new());
+    ///
+    /// let api_router = Router::new()
+    ///     .route("/v1/users", get_users)
+    ///     .state_arc(shared_state.clone());
+    ///
+    /// let admin_router = Router::new()
+    ///     .route("/admin/stats", get_stats)
+    ///     .state_arc(shared_state.clone());
+    /// ```
+    pub fn state_arc<T>(self, state: Arc<T>) -> Self
+    where
+        T: Send + Sync + 'static,
+    {
+        {
+            let mut inner = self.inner.write();
+            inner.dirty = true;
+            inner.extensions.insert(state);
+        }
+        self
+    }
+
+    /// Add state using a factory function that will be called once during router setup.
+    ///
+    /// Useful for state that requires async initialization or depends on other router configuration.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let app = Router::new()
+    ///     .route("/data", get_data)
+    ///     .state_factory(|| {
+    ///         AppState {
+    ///             created_at: std::time::SystemTime::now(),
+    ///             id: uuid::Uuid::new_v4(),
+    ///         }
+    ///     });
+    /// ```
+    pub fn state_factory<T, F>(self, factory: F) -> Self
+    where
+        T: Clone + Send + Sync + 'static,
+        F: FnOnce() -> T,
+    {
+        let state = factory();
+        {
+            let mut inner = self.inner.write();
+            inner.dirty = true;
+            inner.extensions.insert(state);
+        }
+        self
+    }
+
+    /// Check if a specific state type has been added to this router.
+    ///
+    /// Useful for debugging state configuration issues.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let app = Router::new().state(app_config);
+    ///
+    /// assert!(app.has_state::<AppConfig>());
+    /// assert!(!app.has_state::<DatabasePool>());
+    /// ```
+    pub fn has_state<T: Send + Sync + Clone + 'static>(&self) -> bool {
+        let inner = self.inner.read();
+        inner.extensions.get::<T>().is_some()
+    }
+
+    /// Get a reference to state if it exists (for debugging/testing).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let config = AppConfig { debug: true };
+    /// let app = Router::new().state(config);
+    ///
+    /// if let Some(state) = app.get_state::<AppConfig>() {
+    ///     println!("Debug mode: {}", state.debug);
+    /// }
+    /// ```
+    pub fn get_state<T: Clone + Send + Sync + 'static>(&self) -> Option<T> {
+        let inner = self.inner.read();
+        // Extensions store Arc<T>, so we get the Arc and then clone the inner value
+        inner
+            .extensions
+            .get::<T>()
+            .map(|arc_t| arc_t.as_ref().clone())
+    }
+
     /// Ensures the router is compiled and returns the compiled version.
     ///
     /// This method performs lazy compilation of routes. If the router hasn't
@@ -1147,6 +1300,11 @@ impl Router {
     pub async fn handle(&self, mut req: Request) -> Result<Response> {
         let compiled = self.ensure_compiled();
 
+        {
+            let inner = self.inner.read();
+            req.extensions = inner.extensions.clone();
+        }
+
         // Apply middleware in order
         for mw in &compiled.middleware {
             mw.before(&mut req).await?;
@@ -1281,6 +1439,7 @@ impl Clone for Router {
                 not_found_handler: inner.not_found_handler.clone(),
                 nested_routers: inner.nested_routers.clone(),
                 dirty: inner.dirty,
+                extensions: inner.extensions.clone(),
                 #[cfg(feature = "websocket")]
                 #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
                 websocket_routes: inner.websocket_routes.clone(),

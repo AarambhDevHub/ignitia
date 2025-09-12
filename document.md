@@ -231,7 +231,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ignitia = { version = "0.1.9", features = ["websocket", "tls"] }
+ignitia = { version = "0.2.0", features = ["websocket", "tls"] }
 ```
 
 ### Basic HTTP Example

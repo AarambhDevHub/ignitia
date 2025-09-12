@@ -56,25 +56,6 @@ impl UserDB {
     }
 }
 
-// Middleware to inject UserDB as an extension into each request
-struct UserDBMiddleware {
-    db: UserDB,
-}
-
-impl UserDBMiddleware {
-    fn new(db: UserDB) -> Self {
-        Self { db }
-    }
-}
-
-#[ignitia::async_trait]
-impl Middleware for UserDBMiddleware {
-    async fn before(&self, req: &mut Request) -> Result<()> {
-        req.insert_extension(self.db.clone());
-        Ok(())
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -82,14 +63,15 @@ async fn main() -> Result<()> {
     let user_db = UserDB::new();
 
     let router = Router::new()
-        .middleware(UserDBMiddleware::new(user_db))
+        // .middleware(UserDBMiddleware::new(user_db))
         .get("/", home)
         .get("/login", login_form)
         .post("/login", login_process)
         .get("/dashboard", dashboard)
         .get("/profile", profile)
         .get("/admin", admin_panel)
-        .get("/logout", logout);
+        .get("/logout", logout)
+        .state(user_db.clone());
 
     let addr: SocketAddr = "127.0.0.1:3008".parse().unwrap();
     let server = Server::new(router, addr);

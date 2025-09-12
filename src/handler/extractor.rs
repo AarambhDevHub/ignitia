@@ -260,6 +260,116 @@ where
     }
 }
 
+/// Application state extractor that provides type-safe access to shared application data.
+///
+/// This extractor provides a semantic wrapper around `Extension<T>` specifically designed
+/// for application state. The state must be added to the router using `.state()` methods.
+///
+/// # Requirements
+///
+/// The state type `T` must implement:
+/// - `Clone` - For efficient sharing across handlers
+/// - `Send + Sync` - For thread safety in async context
+/// - `'static` - For lifetime requirements
+///
+/// # Example
+///
+/// ```
+/// use ignitia::{State, Router, Response, Result};
+/// use std::sync::Arc;
+///
+/// #[derive(Clone)]
+/// struct AppState {
+///     db_pool: Arc<DatabasePool>,
+///     config: AppConfig,
+/// }
+///
+/// // Handler using application state with destructuring
+/// async fn get_users(State(state): State<AppState>) -> Result<Response> {
+///     let users = state.db_pool.get_all_users().await?;
+///     Response::ok().json(users)
+/// }
+///
+/// // Alternative: without destructuring
+/// async fn get_posts(state: State<AppState>) -> Result<Response> {
+///     let posts = state.db_pool.get_all_posts().await?;
+///     Response::ok().json(posts)
+/// }
+///
+/// // Setting up the application
+/// let app = Router::new()
+///     .route("/users", get_users)
+///     .route("/posts", get_posts)
+///     .state(app_state);
+/// ```
+///
+/// # Multiple State Types
+///
+/// ```
+/// async fn api_handler(
+///     State(app_state): State<AppState>,
+///     State(metrics): State<MetricsCollector>,
+/// ) -> Result<Response> {
+///     metrics.increment_requests();
+///     let data = app_state.db_pool.query("SELECT * FROM api_data").await?;
+///     Response::ok().json(data)
+/// }
+/// ```
+#[derive(Debug)]
+pub struct State<T>(pub T);
+
+impl<T> State<T> {
+    /// Extract the inner value from the State wrapper.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use ignitia::State;
+    /// # let state = State("example".to_string());
+    /// let inner = state.into_inner();
+    /// println!("Inner: {}", inner);
+    /// ```
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T> std::ops::Deref for State<T> {
+    type Target = T;
+
+    /// Allows direct access to the inner value.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use ignitia::State;
+    /// # let state = State("example".to_string());
+    /// // Direct access without calling into_inner()
+    /// println!("Value: {}", *state);
+    /// ```
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> FromRequest for State<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    /// Extract application state from the request.
+    ///
+    /// This delegates to the existing `Extension<T>` extractor internally,
+    /// providing a semantic wrapper for application state.
+    ///
+    /// # Errors
+    ///
+    /// - `Error::Internal` - State type hasn't been added to the router
+    fn from_request(req: &Request) -> Result<Self> {
+        // Delegate to Extension<T> and wrap the result
+        Extension::<T>::from_request(req).map(|Extension(inner)| State(inner))
+    }
+}
+
 /// Extractor for typed path parameters.
 ///
 /// This extractor deserializes path parameters (like `/users/:id`) into a typed struct.
@@ -1067,3 +1177,202 @@ impl FromRequest for Uri {
 //         })
 //     }
 // }
+
+/// Form data extractor for `application/x-www-form-urlencoded` content.
+///
+/// This extractor parses form-encoded request bodies into strongly-typed structs.
+/// The target type must implement `serde::de::DeserializeOwned`.
+///
+/// # Content Type
+///
+/// This extractor expects the request to have a `Content-Type` header of
+/// `application/x-www-form-urlencoded`. If the content type is missing or different,
+/// it will return a `BadRequest` error.
+///
+/// # Example
+///
+/// ```
+/// use serde::Deserialize;
+/// use ignitia::{Form, Response, Result};
+///
+/// #[derive(Deserialize)]
+/// struct LoginForm {
+///     username: String,
+///     password: String,
+///     remember_me: Option<bool>,
+/// }
+///
+/// async fn login(Form(form): Form<LoginForm>) -> Result<Response> {
+///     println!("Username: {}", form.username);
+///     println!("Password: {}", form.password);
+///     println!("Remember me: {:?}", form.remember_me);
+///
+///     // Process login...
+///     Response::ok().json("Login successful")
+/// }
+/// ```
+///
+/// # Form Data Format
+///
+/// The extractor parses standard form-encoded data:
+/// ```
+/// username=john_doe&password=secret123&remember_me=true
+/// ```
+///
+/// # Nested Fields
+///
+/// Basic nested field support using dot notation:
+/// ```
+/// user.name=John&user.email=john@example.com&user.age=30
+/// ```
+///
+/// # Error Handling
+///
+/// - Returns `Error::BadRequest` if Content-Type is not form data
+/// - Returns `Error::BadRequest` if the body contains invalid UTF-8
+/// - Returns `Error::BadRequest` if deserialization fails
+///
+/// # Performance
+///
+/// This extractor clones the request body for parsing. For large form data,
+/// consider using streaming approaches or the `Body` extractor directly.
+#[derive(Debug)]
+pub struct Form<T>(pub T);
+
+impl<T> Form<T> {
+    /// Extract the inner value from the Form wrapper.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use serde::Deserialize;
+    /// # #[derive(Deserialize)]
+    /// # struct MyForm { name: String }
+    /// # let form = Form(MyForm { name: "test".to_string() });
+    /// let inner = form.into_inner();
+    /// println!("Name: {}", inner.name);
+    /// ```
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+impl<T> std::ops::Deref for Form<T> {
+    type Target = T;
+
+    /// Allows direct access to the inner value.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use serde::Deserialize;
+    /// # #[derive(Deserialize)]
+    /// # struct MyForm { name: String }
+    /// # let form = Form(MyForm { name: "test".to_string() });
+    /// // Direct field access without calling into_inner()
+    /// println!("Name: {}", form.name);
+    /// ```
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> FromRequest for Form<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    /// Extract form data from the request.
+    ///
+    /// # Errors
+    ///
+    /// - `Error::BadRequest` - Missing or invalid Content-Type header
+    /// - `Error::BadRequest` - Body contains invalid UTF-8
+    /// - `Error::BadRequest` - Form data deserialization failed
+    fn from_request(req: &Request) -> Result<Self> {
+        // Check Content-Type header
+        let content_type = req
+            .header("content-type")
+            .ok_or_else(|| Error::BadRequest("Missing Content-Type header".into()))?;
+
+        if !content_type.starts_with("application/x-www-form-urlencoded") {
+            return Err(Error::BadRequest(
+                "Expected 'application/x-www-form-urlencoded' content type".into(),
+            ));
+        }
+
+        // Convert body to UTF-8 string
+        let body_str = String::from_utf8(req.body.to_vec())
+            .map_err(|_| Error::BadRequest("Request body contains invalid UTF-8".into()))?;
+
+        // Parse form data using existing utility
+        let form_data = parse_form_data(&body_str);
+
+        // Convert to JSON value for serde deserialization
+        let form_value = convert_string_map_to_json_value(&form_data);
+
+        // Deserialize into target type
+        let extracted = T::deserialize(form_value).map_err(|e| {
+            Error::BadRequest(format!(
+                "Failed to deserialize form data: {} (from form: {:?})",
+                e, form_data
+            ))
+        })?;
+
+        Ok(Form(extracted))
+    }
+}
+
+/// Parse URL-encoded form data into a HashMap.
+///
+/// This function handles standard form encoding with proper URL decoding.
+///
+/// # Format
+///
+/// Supports the standard `key=value&key2=value2` format with URL encoding.
+///
+/// # Examples
+///
+/// ```
+/// let data = parse_form_data("name=John%20Doe&age=30&active=true");
+/// assert_eq!(data.get("name"), Some(&"John Doe".to_string()));
+/// assert_eq!(data.get("age"), Some(&"30".to_string()));
+/// ```
+///
+/// # Nested Fields
+///
+/// Basic support for dot-notation nested fields:
+/// ```
+/// let data = parse_form_data("user.name=John&user.age=30");
+/// // Results in: {"user.name": "John", "user.age": "30"}
+/// ```
+fn parse_form_data(body: &str) -> std::collections::HashMap<String, String> {
+    let mut form_data = std::collections::HashMap::new();
+
+    if body.is_empty() {
+        return form_data;
+    }
+
+    for pair in body.split('&') {
+        if let Some((key, value)) = pair.split_once('=') {
+            // URL decode key and value
+            let decoded_key = urlencoding::decode(key)
+                .unwrap_or_else(|_| std::borrow::Cow::Borrowed(key))
+                .into_owned();
+
+            let decoded_value = urlencoding::decode(value)
+                .unwrap_or_else(|_| std::borrow::Cow::Borrowed(value))
+                .into_owned();
+
+            form_data.insert(decoded_key, decoded_value);
+        } else {
+            // Handle keys without values (e.g., "submit" button)
+            let decoded_key = urlencoding::decode(pair)
+                .unwrap_or_else(|_| std::borrow::Cow::Borrowed(pair))
+                .into_owned();
+
+            form_data.insert(decoded_key, String::new());
+        }
+    }
+
+    form_data
+}

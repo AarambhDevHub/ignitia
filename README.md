@@ -32,14 +32,16 @@
 Ignitia embodies the spirit of **Aarambh** (new beginnings) - the spark that ignites your web development journey. Built for developers who demand speed, simplicity, and power with modern protocol support.
 
 - **🚀 Multi-Protocol**: HTTP/1.1, HTTP/2, and HTTPS with automatic protocol negotiation
+- **⚡ Industry-Leading Performance**: **18,367+ RPS** - faster than Axum, matches Actix-web
 - **🔒 TLS/HTTPS**: Built-in TLS support with ALPN and self-signed certificates for development
 - **🪶 Lightweight**: Minimal overhead, maximum efficiency
 - **🔥 Powerful**: Advanced routing, middleware, and WebSocket support
-- **⚡ Energetic**: Modern APIs that energize your development
-- **🎯 Developer-First**: Clean, intuitive, and productive
+- **🎯 Developer-First**: Clean, intuitive, and productive APIs
 - **🛡️ Secure**: Built-in security features and best practices
 - **🍪 Cookie Management**: Full-featured cookie handling with security attributes
 - **🌐 WebSocket Ready**: First-class WebSocket support with optimized performance
+- **📊 Type-Safe Extractors**: Path, Query, JSON, Form, Multipart, State, and custom extractors
+- **📁 Multipart Support**: Advanced file uploads with metadata extraction
 
 ---
 
@@ -47,16 +49,20 @@ Ignitia embodies the spirit of **Aarambh** (new beginnings) - the spark that ign
 
 - [Installation](#-installation)
 - [Quick Start](#-quick-start)
+- [Performance](#-performance--benchmarks)
 - [Core Features](#-core-features)
 - [HTTP/2 & HTTPS](#-http2--https)
 - [WebSocket Support](#-websocket-support)
+- [Extractors](#-type-safe-extractors)
+- [State Management](#-state-management)
+- [Form Handling](#-form-handling)
+- [File Uploads & Multipart](#-file-uploads--multipart)
 - [Routing](#-routing)
 - [Middleware](#-middleware)
 - [CORS Configuration](#-cors-configuration)
 - [Cookie Management](#-cookie-management)
 - [Authentication](#-authentication)
 - [Examples](#-examples)
-- [Performance](#-performance)
 - [API Reference](#-api-reference)
 - [Contributing](#-contributing)
 
@@ -68,7 +74,7 @@ Add Ignitia to your `Cargo.toml`:
 
 ```
 [dependencies]
-ignitia = { version = "0.1.9", features = ["tls", "websocket", "self-signed"] }
+ignitia = { version = "0.2.0", features = ["tls", "websocket", "self-signed"] }
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -85,65 +91,74 @@ tracing-subscriber = "0.3"
 
 ## 🚀 Quick Start
 
-### Basic HTTP/2 + HTTPS Server
+### Basic High-Performance Server
 
 ```rust
 use ignitia::{
-    Router, Server, Response, Result, Http2Config, ServerConfig, TlsConfig,
-    handler::extractor::{Path, Query, Json},
+    Router, Server, Response, Result, State,
+    handler::extractor::{Path, Query, Json, Form, Multipart},
 };
 use serde::{Deserialize, Serialize};
+
+#[derive(Clone)]
+struct AppState {
+    name: String,
+    version: String,
+    upload_dir: String,
+}
+
+#[derive(Deserialize)]
+struct UserForm {
+    name: String,
+    email: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::init();
 
-    let router = Router::new()
-        .get("/", || async {
-            Ok(Response::html("<h1>🔥 Welcome to Ignitia with HTTP/2!</h1>"))
-        })
-        .get("/users/:id", get_user)
-        .post("/api/data", create_data)
-        .get("/health", || async {
-            Ok(Response::json(serde_json::json!({
-                "status": "healthy",
-                "protocol": "HTTP/2",
-                "timestamp": chrono::Utc::now()
-            }))?)
-        });
-
-    // Configure HTTP/2 with optimized settings
-    let config = ServerConfig {
-        http1_enabled: true,
-        http2: Http2Config {
-            enabled: true,
-            enable_prior_knowledge: true, // H2C support
-            max_concurrent_streams: Some(1000),
-            initial_connection_window_size: Some(1024 * 1024), // 1MB
-            adaptive_window: true,
-            ..Default::default()
-        },
-        auto_protocol_detection: true,
-        ..Default::default()
+    // Create shared application state
+    let app_state = AppState {
+        name: "My Ignitia App".to_string(),
+        version: "1.0.0".to_string(),
+        upload_dir: "./uploads".to_string(),
     };
 
-    // HTTPS with automatic certificate (development)
-    Server::new(router, "127.0.0.1:8443".parse()?)
-        .with_config(config)
-        .with_self_signed_cert("localhost")? // ⚠️ Development only!
-        .ignitia()
+    let router = Router::new()
+        .get("/", home)
+        .get("/users/:id", get_user)
+        .post("/api/data", create_data)
+        .post("/forms/user", handle_form)
+        .post("/upload", handle_file_upload)  // File upload endpoint
+        .post("/upload/profile", handle_profile_upload)  // Profile with file
+        .get("/health", health_check)
+        .state(app_state); // Add shared state
+
+    // Start high-performance server
+    Server::new("127.0.0.1:8080")
+        .run(router)
         .await
 }
 
-async fn get_user(Path(user_id): Path<String>) -> Result<Response> {
-    Ok(Response::json(serde_json::json!({
-        "user_id": user_id,
-        "name": "John Doe",
-        "protocol": "HTTP/2"
-    }))?)
+// Handler with state access
+async fn home(State(state): State<AppState>) -> Result<Response> {
+    Response::html(format!(
+        "<h1>🔥 Welcome to {}!</h1><p>Version: {}</p>",
+        state.name, state.version
+    ))
 }
 
+// Path parameter extraction
+async fn get_user(Path(user_id): Path<String>) -> Result<Response> {
+    Response::json(serde_json::json!({
+        "user_id": user_id,
+        "name": "John Doe",
+        "framework": "Ignitia"
+    }))
+}
+
+// JSON body handling
 #[derive(Deserialize, Serialize)]
 struct ApiData {
     message: String,
@@ -151,13 +166,179 @@ struct ApiData {
 }
 
 async fn create_data(Json(data): Json<ApiData>) -> Result<Response> {
-    Ok(Response::json(serde_json::json!({
+    Response::json(serde_json::json!({
         "status": "created",
         "data": data,
         "received_at": chrono::Utc::now()
-    }))?)
+    }))
+}
+
+// Form data handling
+async fn handle_form(Form(form): Form<UserForm>) -> Result<Response> {
+    Response::json(serde_json::json!({
+        "message": "Form received",
+        "user": {
+            "name": form.name,
+            "email": form.email
+        }
+    }))
+}
+
+// File upload handling
+async fn handle_file_upload(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Response> {
+    let mut uploaded_files = Vec::new();
+
+    while let Some(field) = multipart.next_field().await? {
+        if let Some(filename) = field.file_name() {
+            let content_type = field.content_type().unwrap_or("application/octet-stream");
+            let data = field.bytes().await?;
+
+            // Save file
+            let file_path = format!("{}/{}", state.upload_dir, filename);
+            tokio::fs::write(&file_path, data).await?;
+
+            uploaded_files.push(serde_json::json!({
+                "filename": filename,
+                "size": data.len(),
+                "content_type": content_type,
+                "path": file_path
+            }));
+        }
+    }
+
+    Response::json(serde_json::json!({
+        "message": "Files uploaded successfully",
+        "files": uploaded_files
+    }))
+}
+
+// Profile with file upload
+#[derive(Deserialize)]
+struct ProfileForm {
+    name: String,
+    bio: String,
+    age: Option<u32>,
+}
+
+async fn handle_profile_upload(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Response> {
+    let mut profile_data = None;
+    let mut avatar_file = None;
+
+    while let Some(field) = multipart.next_field().await? {
+        let field_name = field.name().unwrap_or("unknown");
+
+        if let Some(filename) = field.file_name() {
+            // Handle file field
+            let data = field.bytes().await?;
+            let file_path = format!("{}/avatars/{}", state.upload_dir, filename);
+            tokio::fs::write(&file_path, &data).await?;
+
+            avatar_file = Some(serde_json::json!({
+                "filename": filename,
+                "size": data.len(),
+                "path": file_path
+            }));
+        } else {
+            // Handle text field
+            let value = field.text().await?;
+            match field_name {
+                "name" => profile_data = Some(ProfileForm {
+                    name: value,
+                    bio: "".to_string(),
+                    age: None
+                }),
+                _ => {} // Handle other fields
+            }
+        }
+    }
+
+    Response::json(serde_json::json!({
+        "message": "Profile updated successfully",
+        "profile": profile_data,
+        "avatar": avatar_file
+    }))
+}
+
+// Health check with state
+async fn health_check(State(state): State<AppState>) -> Result<Response> {
+    Response::json(serde_json::json!({
+        "status": "healthy",
+        "app": state.name,
+        "version": state.version,
+        "timestamp": chrono::Utc::now()
+    }))
 }
 ```
+
+---
+
+## 📊 Performance & Benchmarks
+
+### **🏆 Industry-Leading Performance**
+
+Ignitia delivers exceptional performance that outperforms popular frameworks:
+
+```
+📈 COMPREHENSIVE BENCHMARK RESULTS
+--------------------------------------------------
+🥇 Ignitia Framework
+   Average RPS: 18,367.7    (+185% vs Axum)
+   Peak RPS: 24,014.1       (Near Actix-web peak)
+   Average Response Time: 13.34ms  (45% faster than Axum)
+   Best Response Time: 0.14ms      (48% faster than Axum)
+   Failed Requests: 0              (100% reliability)
+
+🥈 Actix-web
+   Average RPS: 17,792.7
+   Peak RPS: 24,296.3
+   Average Response Time: 14.06ms
+   Best Response Time: 0.18ms
+   Failed Requests: 0
+
+🥉 Axum
+   Average RPS: 6,437.3
+   Peak RPS: 9,331.4
+   Average Response Time: 24.42ms
+   Best Response Time: 0.27ms
+   Failed Requests: 0
+```
+
+### **⚡ Performance Features**
+
+```rust
+// Zero-copy request processing
+async fn high_performance_handler(Body(body): Body) -> Result<Response> {
+    // Process large payloads efficiently without copying
+    let processed = process_large_data(&body).await?;
+    Response::binary(processed) // Zero-copy response
+}
+
+// HTTP/2 multiplexing advantage
+let config = ServerConfig {
+    http2: Http2Config {
+        enabled: true,
+        max_concurrent_streams: Some(1000),
+        initial_connection_window_size: Some(1024 * 1024), // 1MB
+        adaptive_window: true,
+        ..Default::default()
+    },
+    ..Default::default()
+};
+```
+
+### **🔥 Why Ignitia is Faster**
+
+1. **🔧 Compiled Router**: Zero-allocation route matching with `ArcSwap`
+2. **⚡ Efficient Extractors**: Minimal overhead type-safe parameter extraction
+3. **🚀 Smart Middleware**: Pipeline optimization without boxing overhead
+4. **📦 Memory Optimized**: Careful use of `Arc<T>` and `RwLock` for shared state
+5. **🎯 Direct Dispatch**: Minimal abstraction layers between request and handler
 
 ---
 
@@ -172,7 +353,7 @@ Ignitia provides comprehensive support for modern HTTP protocols with automatic 
 use ignitia::{Server, Router, TlsConfig, TlsVersion};
 
 let router = Router::new()
-    .get("/", || async { Ok(Response::text("Secure HTTPS with HTTP/2!")) });
+    .get("/", || async { Response::text("Secure HTTPS with HTTP/2!") });
 
 // Production TLS setup
 let tls_config = TlsConfig::new("production.crt", "production.key")
@@ -180,18 +361,18 @@ let tls_config = TlsConfig::new("production.crt", "production.key")
     .tls_versions(TlsVersion::TlsV12, TlsVersion::TlsV13)
     .enable_client_cert_verification();
 
-Server::new(router, "0.0.0.0:443".parse()?)
-    .with_tls(tls_config)?
-    .ignitia()
+Server::new("0.0.0.0:443")
+    .tls(tls_config)
+    .run(router)
     .await
 ```
 
-#### HTTP to HTTPS Redirect
+#### Development with Self-Signed Certificates
 ```rust
-// Automatic redirect from HTTP to HTTPS
-Server::new(router, "0.0.0.0:80".parse()?)
-    .redirect_to_https(443)
-    .ignitia()
+// Quick HTTPS setup for development
+Server::new("127.0.0.1:8443")
+    .self_signed_cert("localhost") // ⚠️ Development only!
+    .run(router)
     .await
 ```
 
@@ -209,7 +390,9 @@ let config = ServerConfig {
 // Test with: curl --http2-prior-knowledge http://localhost:8080/
 ```
 
-### 🌐 Advanced WebSocket Support
+---
+
+## 🌐 WebSocket Support
 
 First-class WebSocket implementation with optimized performance:
 
@@ -257,95 +440,627 @@ let router = Router::new()
             }
         }
         Ok(())
+    }));
+```
+
+---
+
+## 🎯 Type-Safe Extractors
+
+Ignitia provides powerful, type-safe extractors for handling various parts of HTTP requests:
+
+### **Available Extractors**
+
+```rust
+use ignitia::{Path, Query, Json, Form, Body, Headers, Cookies, State, Multipart};
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct UserParams {
+    user_id: u32,
+    post_id: String,
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+    page: Option<u32>,
+    per_page: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct CreateUser {
+    name: String,
+    email: String,
+    age: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct LoginForm {
+    username: String,
+    password: String,
+    remember_me: Option<bool>,
+}
+
+// Multiple extractors in one handler
+async fn advanced_handler(
+    Path(params): Path<UserParams>,           // URL parameters
+    Query(search): Query<SearchQuery>,        // Query string
+    Json(user_data): Json<CreateUser>,        // JSON body
+    Form(login): Form<LoginForm>,             // Form data
+    Body(raw_body): Body,                     // Raw request body
+    headers: Headers,                         // All headers
+    cookies: Cookies,                         // All cookies
+    State(app_state): State<AppState>,        // Shared state
+    mut multipart: Multipart,                 // Multipart data
+) -> Result<Response> {
+    // Access all extracted data
+    println!("User ID: {}", params.user_id);
+    println!("Search query: {}", search.q);
+    println!("New user: {}", user_data.name);
+    println!("Login attempt: {}", login.username);
+
+    // Process multipart if present
+    while let Some(field) = multipart.next_field().await? {
+        if let Some(filename) = field.file_name() {
+            let data = field.bytes().await?;
+            println!("Received file: {} ({} bytes)", filename, data.len());
+        }
+    }
+
+    Response::json(serde_json::json!({
+        "message": "All extractors working!",
+        "user_agent": headers.get("user-agent")
     }))
+}
+```
 
-    // Batch message processing
-    .websocket("/ws/batch", ignitia::websocket_batch_handler(
-        |ws, messages| async move {
-            let processed_count = messages.len();
-            let batch_response = serde_json::json!({
-                "processed": processed_count,
-                "timestamp": chrono::Utc::now()
-            });
-            ws.send_json(&batch_response).await?;
-            Ok(())
+---
+
+## 🗄️ State Management
+
+Ignitia provides powerful state management for sharing data across handlers:
+
+### **Application State Setup**
+
+```rust
+use ignitia::{Router, State};
+use std::sync::Arc;
+
+#[derive(Clone)]
+struct AppState {
+    db_pool: Arc<DatabasePool>,
+    config: AppConfig,
+    metrics: Arc<MetricsCollector>,
+}
+
+#[derive(Clone)]
+struct AppConfig {
+    api_url: String,
+    max_connections: u32,
+    debug: bool,
+}
+
+async fn main() -> Result<()> {
+    let app_state = AppState {
+        db_pool: Arc::new(create_database_pool().await?),
+        config: AppConfig {
+            api_url: "https://api.example.com".to_string(),
+            max_connections: 100,
+            debug: cfg!(debug_assertions),
         },
-        100, // batch size
-        500, // timeout ms
-    ));
-```
+        metrics: Arc::new(MetricsCollector::new()),
+    };
 
-### 🛡️ Advanced CORS Configuration
+    let router = Router::new()
+        .get("/users", list_users)
+        .post("/users", create_user)
+        .get("/metrics", get_metrics)
+        .state(app_state);  // Add state to router
 
-Comprehensive CORS middleware with flexible origin matching:
-
-```rust
-use ignitia::{CorsMiddleware, Method};
-
-// Development CORS (permissive)
-let dev_cors = CorsMiddleware::permissive();
-
-// Production CORS with specific origins
-let prod_cors = CorsMiddleware::new()
-    .allowed_origins(&["https://myapp.com", "https://api.myapp.com"])
-    .allowed_methods(&[Method::GET, Method::POST, Method::PUT, Method::DELETE])
-    .allowed_headers(&["Content-Type", "Authorization", "X-API-Key"])
-    .expose_headers(&["X-Total-Count", "X-Rate-Limit"])
-    .allow_credentials()
-    .max_age(86400) // 24 hours
-    .build()?;
-
-// Regex-based origin matching
-let regex_cors = CorsMiddleware::new()
-    .allowed_origin_regex(r"https://.*\.myapp\.com$") // All subdomains
-    .build()?;
-
-let router = Router::new()
-    .middleware(prod_cors)
-    .get("/api/data", api_handler);
-```
-
-### 🚨 Enhanced Error Handling
-
-Comprehensive error handling with custom error types and responses:
-
-```rust
-use ignitia::{define_error, ErrorHandlerMiddleware, ErrorFormat};
-
-// Define domain-specific errors
-define_error! {
-    ApiError {
-        UserNotFound(StatusCode::NOT_FOUND, "user_not_found", "USER_404"),
-        ValidationFailed(StatusCode::BAD_REQUEST, "validation_failed", "VALIDATION_ERROR"),
-        RateLimited(StatusCode::TOO_MANY_REQUESTS, "rate_limited", "RATE_LIMIT")
-    }
+    Server::new("127.0.0.1:8080")
+        .run(router)
+        .await
 }
 
-// Custom error handler middleware
-let error_middleware = ErrorHandlerMiddleware::new()
-    .with_details(cfg!(debug_assertions)) // Detailed errors in debug mode
-    .with_json_format(ErrorFormat::Detailed)
-    .with_logging(true)
-    .with_error_log_threshold(500); // Log 5xx as errors, 4xx as warnings
+// Handlers can access state
+async fn list_users(State(state): State<AppState>) -> Result<Response> {
+    let users = state.db_pool.get_all_users().await?;
+    state.metrics.increment("users_listed");
 
+    Response::json(users)
+}
+
+async fn create_user(
+    State(state): State<AppState>,
+    Json(user_data): Json<CreateUserRequest>,
+) -> Result<Response> {
+    let user = state.db_pool.create_user(user_data).await?;
+    state.metrics.increment("users_created");
+
+    Response::json(user).status(201)
+}
+
+// Multiple state types
+async fn get_metrics(
+    State(app_state): State<AppState>,
+    State(cache): State<RedisCache>,  // Multiple state types
+) -> Result<Response> {
+    let metrics = app_state.metrics.get_all();
+    cache.store("last_metrics", &metrics, 300).await?;
+
+    Response::json(metrics)
+}
+```
+
+### **State Methods**
+
+```rust
 let router = Router::new()
-    .middleware(error_middleware)
-    .get("/users/:id", get_user_with_validation);
+    .state(database_pool)           // Add single state
+    .state(redis_client)           // Add another state type
+    .state_arc(shared_config)      // Add Arc<T> directly
+    .state_factory(|| {            // Create state with factory
+        AppConfig::from_env()
+    });
+```
 
-async fn get_user_with_validation(Path(user_id): Path<String>) -> Result<Response> {
-    if user_id.is_empty() {
-        return Err(ApiError::ValidationFailed("User ID cannot be empty".into()).into());
+---
+
+## 📝 Form Handling
+
+Ignitia provides comprehensive form handling for both URL-encoded and multipart forms:
+
+### **URL-Encoded Forms**
+
+```rust
+use ignitia::{Form, Response};
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct ContactForm {
+    name: String,
+    email: String,
+    message: String,
+    newsletter: Option<bool>,
+}
+
+async fn handle_contact(Form(form): Form<ContactForm>) -> Result<Response> {
+    println!("Contact from: {} <{}>", form.name, form.email);
+    println!("Message: {}", form.message);
+    println!("Newsletter: {:?}", form.newsletter);
+
+    // Process form data...
+    send_email(&form).await?;
+
+    Response::html(r#"
+        <h2>Thank you!</h2>
+        <p>Your message has been received.</p>
+        <a href="/">Back to home</a>
+    "#)
+}
+
+// Form with validation
+#[derive(Deserialize)]
+struct LoginForm {
+    username: String,
+    password: String,
+    remember_me: Option<bool>,
+}
+
+async fn login(Form(form): Form<LoginForm>) -> Result<Response> {
+    // Validate form data
+    if form.username.is_empty() || form.password.is_empty() {
+        return Response::bad_request()
+            .text("Username and password are required");
     }
 
-    if user_id == "404" {
-        return Err(ApiError::UserNotFound(format!("User {} not found", user_id)).into());
+    // Authenticate user
+    if authenticate_user(&form.username, &form.password).await? {
+        let mut response = Response::json(serde_json::json!({
+            "success": true,
+            "user": form.username
+        }))?;
+
+        // Set session cookie if remember_me is checked
+        if form.remember_me.unwrap_or(false) {
+            response = response.add_cookie(
+                Cookie::new("session", generate_session_token())
+                    .max_age(86400 * 30) // 30 days
+                    .http_only()
+                    .secure()
+            );
+        }
+
+        Ok(response)
+    } else {
+        Response::unauthorized().text("Invalid credentials")
+    }
+}
+```
+
+### **HTML Form Example**
+
+```html
+<!-- Contact form -->
+<form action="/contact" method="post" enctype="application/x-www-form-urlencoded">
+    <input type="text" name="name" placeholder="Your Name" required>
+    <input type="email" name="email" placeholder="Your Email" required>
+    <textarea name="message" placeholder="Your Message" required></textarea>
+    <label>
+        <input type="checkbox" name="newsletter" value="true">
+        Subscribe to newsletter
+    </label>
+    <button type="submit">Send Message</button>
+</form>
+
+<!-- Login form -->
+<form action="/login" method="post">
+    <input type="text" name="username" placeholder="Username" required>
+    <input type="password" name="password" placeholder="Password" required>
+    <label>
+        <input type="checkbox" name="remember_me" value="true">
+        Remember me
+    </label>
+    <button type="submit">Login</button>
+</form>
+```
+
+---
+
+## 📁 File Uploads & Multipart
+
+Ignitia provides comprehensive multipart/form-data support for file uploads and mixed content:
+
+### **Basic File Upload**
+
+```rust
+use ignitia::{Multipart, Response, State};
+use std::path::Path;
+
+async fn upload_single_file(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Response> {
+    while let Some(field) = multipart.next_field().await? {
+        if let Some(filename) = field.file_name() {
+            let content_type = field.content_type().unwrap_or("application/octet-stream");
+            let data = field.bytes().await?;
+
+            // Validate file type
+            if !is_allowed_content_type(content_type) {
+                return Response::bad_request().text("File type not allowed");
+            }
+
+            // Validate file size (10MB limit)
+            if data.len() > 10 * 1024 * 1024 {
+                return Response::bad_request().text("File too large (max 10MB)");
+            }
+
+            // Generate safe filename
+            let safe_filename = sanitize_filename(filename);
+            let file_path = format!("{}/{}", state.upload_dir, safe_filename);
+
+            // Save file
+            tokio::fs::write(&file_path, &data).await?;
+
+            return Response::json(serde_json::json!({
+                "message": "File uploaded successfully",
+                "filename": safe_filename,
+                "size": data.len(),
+                "content_type": content_type,
+                "path": file_path
+            }));
+        }
     }
 
-    Ok(Response::json(serde_json::json!({
+    Response::bad_request().text("No file provided")
+}
+
+fn is_allowed_content_type(content_type: &str) -> bool {
+    matches!(content_type,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp" |
+        "application/pdf" | "text/plain" | "application/json"
+    )
+}
+
+fn sanitize_filename(filename: &str) -> String {
+    filename
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(*c, '.' | '-' | '_'))
+        .collect()
+}
+```
+
+### **Multiple File Upload**
+
+```rust
+async fn upload_multiple_files(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Response> {
+    let mut uploaded_files = Vec::new();
+    let mut total_size = 0;
+    const MAX_FILES: usize = 5;
+    const MAX_TOTAL_SIZE: usize = 50 * 1024 * 1024; // 50MB
+
+    while let Some(field) = multipart.next_field().await? {
+        if let Some(filename) = field.file_name() {
+            if uploaded_files.len() >= MAX_FILES {
+                return Response::bad_request()
+                    .text(format!("Too many files (max {})", MAX_FILES));
+            }
+
+            let data = field.bytes().await?;
+            total_size += data.len();
+
+            if total_size > MAX_TOTAL_SIZE {
+                return Response::bad_request()
+                    .text("Total file size too large (max 50MB)");
+            }
+
+            let safe_filename = sanitize_filename(filename);
+            let file_path = format!("{}/{}", state.upload_dir, safe_filename);
+
+            tokio::fs::write(&file_path, &data).await?;
+
+            uploaded_files.push(serde_json::json!({
+                "filename": safe_filename,
+                "size": data.len(),
+                "content_type": field.content_type().unwrap_or("application/octet-stream"),
+                "path": file_path
+            }));
+        }
+    }
+
+    Response::json(serde_json::json!({
+        "message": "Files uploaded successfully",
+        "files": uploaded_files,
+        "total_files": uploaded_files.len(),
+        "total_size": total_size
+    }))
+}
+```
+
+### **Mixed Form with Files and Data**
+
+```rust
+#[derive(Deserialize, Debug)]
+struct UserProfile {
+    name: String,
+    email: String,
+    bio: String,
+    age: Option<u32>,
+}
+
+async fn update_user_profile(
+    State(state): State<AppState>,
+    Path(user_id): Path<String>,
+    mut multipart: Multipart,
+) -> Result<Response> {
+    let mut profile_data: Option<UserProfile> = None;
+    let mut avatar_path: Option<String> = None;
+    let mut form_fields = std::collections::HashMap::new();
+
+    while let Some(field) = multipart.next_field().await? {
+        let field_name = field.name().unwrap_or("unknown").to_string();
+
+        if let Some(filename) = field.file_name() {
+            // Handle file uploads
+            if field_name == "avatar" {
+                let data = field.bytes().await?;
+
+                // Validate image
+                if !field.content_type().unwrap_or("").starts_with("image/") {
+                    return Response::bad_request().text("Avatar must be an image");
+                }
+
+                let safe_filename = format!("{}_{}", user_id, sanitize_filename(filename));
+                let file_path = format!("{}/avatars/{}", state.upload_dir, safe_filename);
+
+                // Create directory if it doesn't exist
+                if let Some(parent) = Path::new(&file_path).parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+
+                tokio::fs::write(&file_path, &data).await?;
+                avatar_path = Some(file_path);
+            }
+        } else {
+            // Handle text fields
+            let value = field.text().await?;
+            form_fields.insert(field_name, value);
+        }
+    }
+
+    // Parse form fields into struct
+    if !form_fields.is_empty() {
+        profile_data = Some(UserProfile {
+            name: form_fields.get("name").cloned().unwrap_or_default(),
+            email: form_fields.get("email").cloned().unwrap_or_default(),
+            bio: form_fields.get("bio").cloned().unwrap_or_default(),
+            age: form_fields.get("age")
+                .and_then(|s| s.parse().ok()),
+        });
+    }
+
+    // Update user profile in database
+    if let Some(profile) = &profile_data {
+        update_user_in_database(&user_id, profile, avatar_path.as_deref()).await?;
+    }
+
+    Response::json(serde_json::json!({
+        "message": "Profile updated successfully",
         "user_id": user_id,
-        "name": "John Doe"
-    }))?)
+        "profile": profile_data,
+        "avatar_uploaded": avatar_path.is_some(),
+        "avatar_path": avatar_path
+    }))
 }
+```
+
+### **Image Processing with Multipart**
+
+```rust
+use image::{ImageFormat, DynamicImage};
+
+async fn upload_and_process_image(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Response> {
+    while let Some(field) = multipart.next_field().await? {
+        if let Some(filename) = field.file_name() {
+            let content_type = field.content_type().unwrap_or("");
+
+            if !content_type.starts_with("image/") {
+                return Response::bad_request().text("Only image files allowed");
+            }
+
+            let data = field.bytes().await?;
+
+            // Process image
+            let image = image::load_from_memory(&data)
+                .map_err(|_| ignitia::Error::BadRequest("Invalid image format".into()))?;
+
+            // Create thumbnail (200x200)
+            let thumbnail = image.resize(200, 200, image::imageops::FilterType::Lanczos3);
+
+            // Save original
+            let original_path = format!("{}/images/original_{}", state.upload_dir, filename);
+            tokio::fs::write(&original_path, &data).await?;
+
+            // Save thumbnail
+            let thumb_path = format!("{}/images/thumb_{}", state.upload_dir, filename);
+            let mut thumb_bytes = Vec::new();
+            thumbnail.write_to(&mut std::io::Cursor::new(&mut thumb_bytes), ImageFormat::Jpeg)?;
+            tokio::fs::write(&thumb_path, &thumb_bytes).await?;
+
+            return Response::json(serde_json::json!({
+                "message": "Image processed successfully",
+                "original": {
+                    "path": original_path,
+                    "size": data.len(),
+                    "dimensions": {
+                        "width": image.width(),
+                        "height": image.height()
+                    }
+                },
+                "thumbnail": {
+                    "path": thumb_path,
+                    "size": thumb_bytes.len(),
+                    "dimensions": {
+                        "width": 200,
+                        "height": 200
+                    }
+                }
+            }));
+        }
+    }
+
+    Response::bad_request().text("No image provided")
+}
+```
+
+### **Streaming Large Files**
+
+```rust
+use tokio::fs::File;
+use tokio::io::{AsyncWriteExt, BufWriter};
+
+async fn upload_large_file_streaming(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Response> {
+    while let Some(field) = multipart.next_field().await? {
+        if let Some(filename) = field.file_name() {
+            let safe_filename = sanitize_filename(filename);
+            let file_path = format!("{}/large_files/{}", state.upload_dir, safe_filename);
+
+            // Create directory
+            if let Some(parent) = Path::new(&file_path).parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+
+            // Stream file to disk
+            let file = File::create(&file_path).await?;
+            let mut writer = BufWriter::new(file);
+            let mut total_size = 0;
+
+            // Stream chunks
+            while let Ok(Some(chunk)) = field.chunk().await {
+                total_size += chunk.len();
+
+                // Check size limit (1GB)
+                if total_size > 1024 * 1024 * 1024 {
+                    // Cleanup partial file
+                    let _ = tokio::fs::remove_file(&file_path).await;
+                    return Response::bad_request().text("File too large (max 1GB)");
+                }
+
+                writer.write_all(&chunk).await?;
+            }
+
+            writer.flush().await?;
+
+            return Response::json(serde_json::json!({
+                "message": "Large file uploaded successfully",
+                "filename": safe_filename,
+                "size": total_size,
+                "path": file_path
+            }));
+        }
+    }
+
+    Response::bad_request().text("No file provided")
+}
+```
+
+### **HTML File Upload Forms**
+
+```html
+<!-- Single file upload -->
+<form action="/upload" method="post" enctype="multipart/form-data">
+    <input type="file" name="file" required>
+    <button type="submit">Upload File</button>
+</form>
+
+<!-- Multiple file upload -->
+<form action="/upload/multiple" method="post" enctype="multipart/form-data">
+    <input type="file" name="files" multiple accept="image/*,application/pdf">
+    <button type="submit">Upload Files</button>
+</form>
+
+<!-- Profile with avatar -->
+<form action="/users/123/profile" method="post" enctype="multipart/form-data">
+    <input type="text" name="name" placeholder="Full Name" required>
+    <input type="email" name="email" placeholder="Email" required>
+    <textarea name="bio" placeholder="Bio"></textarea>
+    <input type="number" name="age" placeholder="Age" min="1" max="120">
+    <input type="file" name="avatar" accept="image/*">
+    <button type="submit">Update Profile</button>
+</form>
+
+<!-- Image upload with preview -->
+<form action="/upload/image" method="post" enctype="multipart/form-data" id="imageForm">
+    <input type="file" name="image" accept="image/*" id="imageInput" required>
+    <img id="preview" style="max-width: 300px; display: none;">
+    <button type="submit">Process Image</button>
+</form>
+
+<script>
+document.getElementById('imageInput').addEventListener('change', function(e) {
+    const file = e.target.files;
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const preview = document.getElementById('preview');
+            preview.src = e.target.result;
+            preview.style.display = 'block';
+        };
+        reader.readAsDataURL(file);
+    }
+});
+</script>
 ```
 
 ---
@@ -364,10 +1079,10 @@ struct UserPath {
 }
 
 async fn get_user_post(Path(params): Path<UserPath>) -> Result<Response> {
-    Ok(Response::json(serde_json::json!({
+    Response::json(serde_json::json!({
         "user_id": params.user_id,
         "post_id": params.post_id
-    }))?)
+    }))
 }
 
 // Supports: /users/123/posts/abc-def
@@ -453,11 +1168,10 @@ let router = Router::new()
 ```rust
 use ignitia::{Middleware, Request, Response, Result};
 
+#[derive(Clone)]
 struct RateLimitMiddleware {
     max_requests: usize,
     window_seconds: u64,
-    // In production, use Redis or similar
-    request_counts: Arc<Mutex<HashMap<String, (u64, std::time::Instant)>>>,
 }
 
 #[async_trait::async_trait]
@@ -465,39 +1179,51 @@ impl Middleware for RateLimitMiddleware {
     async fn before(&self, req: &mut Request) -> Result<()> {
         let client_ip = req.header("x-forwarded-for")
             .or_else(|| req.header("x-real-ip"))
-            .unwrap_or("unknown")
-            .to_string();
+            .unwrap_or("unknown");
 
-        let mut counts = self.request_counts.lock().await;
-        let now = std::time::Instant::now();
-
-        if let Some((count, last_reset)) = counts.get_mut(&client_ip) {
-            if now.duration_since(*last_reset).as_secs() > self.window_seconds {
-                *count = 1;
-                *last_reset = now;
-            } else {
-                *count += 1;
-                if *count > self.max_requests {
-                    return Err(ignitia::Error::BadRequest(
-                        "Rate limit exceeded".into()
-                    ));
-                }
-            }
-        } else {
-            counts.insert(client_ip, (1, now));
+        // Check rate limit (implement your logic)
+        if is_rate_limited(client_ip, self.max_requests, self.window_seconds).await? {
+            return Err(ignitia::Error::TooManyRequests("Rate limit exceeded".into()));
         }
 
         Ok(())
     }
 
     async fn after(&self, res: &mut Response) -> Result<()> {
-        res.headers.insert(
-            "X-Rate-Limit-Window",
-            self.window_seconds.to_string().parse().unwrap()
-        );
+        res.header("X-Rate-Limit-Window", &self.window_seconds.to_string());
         Ok(())
     }
 }
+```
+
+---
+
+## 🛡️ Advanced CORS Configuration
+
+```rust
+use ignitia::{CorsMiddleware, Method};
+
+// Development CORS (permissive)
+let dev_cors = CorsMiddleware::permissive();
+
+// Production CORS with specific origins
+let prod_cors = CorsMiddleware::new()
+    .allowed_origins(&["https://myapp.com", "https://api.myapp.com"])
+    .allowed_methods(&[Method::GET, Method::POST, Method::PUT, Method::DELETE])
+    .allowed_headers(&["Content-Type", "Authorization", "X-API-Key"])
+    .expose_headers(&["X-Total-Count", "X-Rate-Limit"])
+    .allow_credentials()
+    .max_age(86400) // 24 hours
+    .build()?;
+
+// Regex-based origin matching
+let regex_cors = CorsMiddleware::new()
+    .allowed_origin_regex(r"https://.*\.myapp\.com$") // All subdomains
+    .build()?;
+
+let router = Router::new()
+    .middleware(prod_cors)
+    .get("/api/data", api_handler);
 ```
 
 ---
@@ -522,27 +1248,18 @@ let create_session_cookie = |session_id: &str| {
 async fn login(Json(credentials): Json<LoginForm>) -> Result<Response> {
     if validate_credentials(&credentials).await? {
         let session_id = generate_secure_session_id();
-
         let session_cookie = create_session_cookie(&session_id);
 
         // Store session in your preferred store (Redis, database, etc.)
         store_session(&session_id, &credentials.username).await?;
 
-        Ok(Response::json(serde_json::json!({
+        Response::json(serde_json::json!({
             "status": "success",
             "user": credentials.username
-        }))?
-        .add_cookie(session_cookie))
+        }))?.add_cookie(session_cookie)
     } else {
         Err(ignitia::Error::Unauthorized)
     }
-}
-
-async fn logout() -> Result<Response> {
-    Ok(Response::json(serde_json::json!({
-        "status": "logged_out"
-    }))?
-    .remove_cookie("session"))
 }
 
 // Protected route using cookies
@@ -553,55 +1270,10 @@ async fn profile(cookies: Cookies) -> Result<Response> {
     let user = get_user_by_session(session_id).await?
         .ok_or(ignitia::Error::Unauthorized)?;
 
-    Ok(Response::json(serde_json::json!({
+    Response::json(serde_json::json!({
         "user": user,
         "session": session_id
-    }))?)
-}
-```
-
----
-
-## ⚡ Performance & Benchmarks
-
-### Real-World Performance Results
-
-```
-Framework Comparison (Higher is Better)
-┌─────────────┬───────────────┬─────────────┬──────────────┐
-│ Framework   │ Avg RPS       │ Peak RPS    │ Avg Latency  │
-├─────────────┼───────────────┼─────────────┼──────────────┤
-│ 🔥 Ignitia  │ 19,285.4      │ 25,050.5    │ 12.96ms      │
-│ Actix Web   │ 18,816.8      │ 24,981.7    │ 13.26ms      │
-│ Axum        │ 6,797.1       │ 9,753.9     │ 23.85ms      │
-└─────────────┴───────────────┴─────────────┴──────────────┘
-
-HTTP/2 vs HTTP/1.1 Performance (Ignitia)
-┌──────────────┬───────────────┬──────────────┐
-│ Protocol     │ Avg RPS       │ Concurrent   │
-├──────────────┼───────────────┼──────────────┤
-│ HTTP/2       │ 21,450.2      │ 1000         │
-│ HTTP/1.1     │ 19,285.4      │ 1000         │
-│ H2C          │ 20,892.1      │ 1000         │
-└──────────────┴───────────────┴──────────────┘
-```
-
-### Performance Features
-
-```rust
-// Zero-copy request processing
-async fn high_performance_handler(Body(body): Body) -> Result<Response> {
-    // Process large payloads efficiently without copying
-    let processed = process_large_data(&body).await?;
-    Ok(Response::binary(processed)) // Zero-copy response
-}
-
-// HTTP/2 server push (when supported by client)
-async fn optimized_page() -> Result<Response> {
-    let html = include_str!("page.html");
-    Ok(Response::html(html)
-        .with_header("Link", "</style.css>; rel=preload; as=style")
-        .with_header("Link", "</script.js>; rel=preload; as=script"))
+    }))
 }
 ```
 
@@ -612,7 +1284,7 @@ async fn optimized_page() -> Result<Response> {
 ### 🏢 Production REST API
 
 ```rust
-use ignitia::{Router, Server, Response, Json, Path, Query, CorsMiddleware, LoggerMiddleware};
+use ignitia::{Router, Server, Response, Json, Path, Query, State, CorsMiddleware, LoggerMiddleware};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -638,13 +1310,20 @@ struct UserQuery {
     search: Option<String>,
 }
 
-type UserStore = Arc<Mutex<HashMap<u32, User>>>;
+#[derive(Clone)]
+struct AppState {
+    users: Arc<Mutex<HashMap<u32, User>>>,
+    next_id: Arc<Mutex<u32>>,
+}
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     tracing_subscriber::init();
 
-    let store: UserStore = Arc::new(Mutex::new(HashMap::new()));
+    let app_state = AppState {
+        users: Arc::new(Mutex::new(HashMap::new())),
+        next_id: Arc::new(Mutex::new(1)),
+    };
 
     let router = Router::new()
         .middleware(LoggerMiddleware)
@@ -655,42 +1334,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
 
         // API routes
-        .get("/api/users", {
-            let store = Arc::clone(&store);
-            move |query: Query<UserQuery>| {
-                let store = Arc::clone(&store);
-                async move { list_users(store, query).await }
-            }
-        })
-        .post("/api/users", {
-            let store = Arc::clone(&store);
-            move |json: Json<CreateUserRequest>| {
-                let store = Arc::clone(&store);
-                async move { create_user(store, json).await }
-            }
-        })
-        .get("/api/users/:id", {
-            let store = Arc::clone(&store);
-            move |path: Path<u32>| {
-                let store = Arc::clone(&store);
-                async move { get_user(store, path).await }
-            }
-        })
-        .delete("/api/users/:id", {
-            let store = Arc::clone(&store);
-            move |path: Path<u32>| {
-                let store = Arc::clone(&store);
-                async move { delete_user(store, path).await }
-            }
-        });
+        .get("/api/users", list_users)
+        .post("/api/users", create_user)
+        .get("/api/users/:id", get_user)
+        .delete("/api/users/:id", delete_user)
+        .state(app_state);
 
-    Server::new(router, "0.0.0.0:8080".parse()?)
-        .ignitia()
+    Server::new("0.0.0.0:8080")
+        .run(router)
         .await
 }
 
-async fn list_users(store: UserStore, Query(query): Query<UserQuery>) -> Result<Response> {
-    let users = store.lock().unwrap();
+async fn list_users(
+    State(state): State<AppState>,
+    Query(query): Query<UserQuery>
+) -> Result<Response> {
+    let users = state.users.lock().unwrap();
     let mut user_list: Vec<&User> = users.values().collect();
 
     // Apply search filter
@@ -709,7 +1368,7 @@ async fn list_users(store: UserStore, Query(query): Query<UserQuery>) -> Result<
 
     let paginated_users: Vec<&User> = user_list[start..end].to_vec();
 
-    Ok(Response::json(serde_json::json!({
+    Response::json(serde_json::json!({
         "users": paginated_users,
         "pagination": {
             "page": page,
@@ -717,39 +1376,49 @@ async fn list_users(store: UserStore, Query(query): Query<UserQuery>) -> Result<
             "total": user_list.len(),
             "total_pages": (user_list.len() + per_page as usize - 1) / per_page as usize
         }
-    }))?)
+    }))
 }
 
-async fn create_user(store: UserStore, Json(req): Json<CreateUserRequest>) -> Result<Response> {
-    let mut users = store.lock().unwrap();
-    let id = users.len() as u32 + 1;
+async fn create_user(
+    State(state): State<AppState>,
+    Json(req): Json<CreateUserRequest>
+) -> Result<Response> {
+    let mut users = state.users.lock().unwrap();
+    let mut next_id = state.next_id.lock().unwrap();
 
     let user = User {
-        id,
+        id: *next_id,
         name: req.name,
         email: req.email,
         created_at: chrono::Utc::now(),
     };
 
-    users.insert(id, user.clone());
+    users.insert(*next_id, user.clone());
+    *next_id += 1;
 
-    Ok(Response::json(user)?.with_status_code(201))
+    Response::json(user)?.status(201)
 }
 
-async fn get_user(store: UserStore, Path(user_id): Path<u32>) -> Result<Response> {
-    let users = store.lock().unwrap();
+async fn get_user(
+    State(state): State<AppState>,
+    Path(user_id): Path<u32>
+) -> Result<Response> {
+    let users = state.users.lock().unwrap();
 
     match users.get(&user_id) {
-        Some(user) => Ok(Response::json(user)?),
+        Some(user) => Response::json(user),
         None => Err(ignitia::Error::NotFound(format!("User {} not found", user_id))),
     }
 }
 
-async fn delete_user(store: UserStore, Path(user_id): Path<u32>) -> Result<Response> {
-    let mut users = store.lock().unwrap();
+async fn delete_user(
+    State(state): State<AppState>,
+    Path(user_id): Path<u32>
+) -> Result<Response> {
+    let mut users = state.users.lock().unwrap();
 
     match users.remove(&user_id) {
-        Some(_) => Ok(Response::json(serde_json::json!({"status": "deleted"}))?),
+        Some(_) => Response::json(serde_json::json!({"status": "deleted"})),
         None => Err(ignitia::Error::NotFound(format!("User {} not found", user_id))),
     }
 }
@@ -771,16 +1440,16 @@ async fn delete_user(store: UserStore, Path(user_id): Path<u32>) -> Result<Respo
 | `.websocket(path, handler)` | Add WebSocket route | `.websocket("/ws", ws_handler)` |
 | `.middleware(middleware)` | Add middleware | `.middleware(LoggerMiddleware)` |
 | `.nest(path, router)` | Nest router | `.nest("/api/v1", api_router)` |
+| `.state(state)` | Add shared state | `.state(app_state)` |
 
 ### Server Configuration
 
 | Method | Description | Example |
 |--------|-------------|---------|
-| `Server::new(router, addr)` | Create server | `Server::new(router, addr)` |
-| `.with_config(config)` | Set server config | `.with_config(server_config)` |
-| `.with_tls(tls_config)` | Enable HTTPS | `.with_tls(tls_config)` |
-| `.redirect_to_https(port)` | HTTP redirect | `.redirect_to_https(443)` |
-| `.ignitia()` | Start server | `.ignitia().await` |
+| `Server::new(addr)` | Create server | `Server::new("127.0.0.1:8080")` |
+| `.tls(tls_config)` | Enable HTTPS | `.tls(tls_config)` |
+| `.self_signed_cert(domain)` | Dev HTTPS | `.self_signed_cert("localhost")` |
+| `.run(router)` | Start server | `.run(router).await` |
 
 ### Extractors
 
@@ -789,10 +1458,12 @@ async fn delete_user(store: UserStore, Path(user_id): Path<u32>) -> Result<Respo
 | `Path<T>` | URL parameters | `Path(user_id): Path<String>` |
 | `Query<T>` | Query parameters | `Query(params): Query<SearchParams>` |
 | `Json<T>` | JSON body | `Json(user): Json<User>` |
+| `Form<T>` | Form data | `Form(form): Form<LoginForm>` |
+| `Multipart` | Multipart data | `multipart: Multipart` |
 | `Body` | Raw body | `Body(body): Body` |
 | `Headers` | Request headers | `headers: Headers` |
 | `Cookies` | Request cookies | `cookies: Cookies` |
-| `Extension<T>` | Shared state | `Extension(state): Extension<AppState>` |
+| `State<T>` | Shared state | `State(state): State<AppState>` |
 
 ---
 
@@ -803,7 +1474,7 @@ async fn delete_user(store: UserStore, Path(user_id): Path<u32>) -> Result<Respo
 cargo test
 
 # Test with features
-cargo test --features "tls,websocket"
+cargo test --features "tls,websocket,multipart"
 
 # Integration tests
 cargo test --test integration
@@ -826,6 +1497,22 @@ curl -v --http2 https://localhost:8443/api/users
 
 # WebSocket
 websocat ws://localhost:8080/ws/echo
+
+# Form data
+curl -X POST -d "name=John&email=john@example.com" http://localhost:8080/forms/user
+
+# File upload
+curl -X POST -F "file=@image.jpg" http://localhost:8080/upload
+
+# Multiple file upload
+curl -X POST -F "files=@file1.pdf" -F "files=@file2.jpg" http://localhost:8080/upload/multiple
+
+# Mixed form with file
+curl -X POST \
+  -F "name=John Doe" \
+  -F "email=john@example.com" \
+  -F "avatar=@profile.jpg" \
+  http://localhost:8080/users/123/profile
 ```
 
 ---
@@ -850,6 +1537,7 @@ cargo test --all-features
 # Run examples
 cargo run --example basic_server
 cargo run --example websocket_chat
+cargo run --example file_upload
 ```
 
 ### Guidelines
@@ -858,34 +1546,43 @@ cargo run --example websocket_chat
 2. **Tests**: Add tests for new features
 3. **Documentation**: Update docs and examples
 4. **Performance**: Benchmark performance-critical changes
+5. **Compatibility**: Maintain backwards compatibility
 
 ---
 
 ## 📝 Changelog
 
-### v0.1.9 - Protocol Master Release 🚀
+### v0.2.0 - Performance Champion Release 🏆
 
-#### 🆕 New Features
+#### 🚀 **Industry-Leading Performance**
+- ✅ **18,367+ RPS**: Outperforms Axum by 185%, matches Actix-web
+- ✅ **Sub-millisecond responses**: 0.14ms best response time
+- ✅ **Zero failures**: 100% reliability across all benchmarks
+- ✅ **HTTP/2 optimization**: Enhanced multiplexing and connection handling
+
+#### 🆕 **New Features**
+- ✅ **State Management**: Type-safe shared application state with `State<T>`
+- ✅ **Form Handling**: Comprehensive form data extraction with `Form<T>`
+- ✅ **Multipart Support**: Advanced file uploads with `Multipart` extractor
+- ✅ **Enhanced Extractors**: More powerful parameter extraction
 - ✅ **HTTP/2 Support**: Full HTTP/2 implementation with ALPN negotiation
 - ✅ **TLS/HTTPS**: Comprehensive TLS support with certificate management
-- ✅ **H2C Support**: HTTP/2 cleartext for development and testing
-- ✅ **Self-Signed Certificates**: Automatic cert generation for development
 - ✅ **Advanced CORS**: Regex origin matching and credential support
 - ✅ **Enhanced WebSocket**: Optimized WebSocket with batch processing
-- ✅ **Custom Error Handling**: Detailed error types and responses
-- ✅ **Protocol Detection**: Automatic HTTP version negotiation
 
-#### 🚀 Performance
-- ✅ **19,285+ RPS**: Leading performance in Rust ecosystem
-- ✅ **Zero-Copy**: Efficient request/response handling
-- ✅ **Connection Pooling**: Optimized connection management
-- ✅ **HTTP/2 Multiplexing**: Multiple streams over single connection
-
-#### 🔒 Security
+#### 🔒 **Security & Reliability**
 - ✅ **TLS 1.2/1.3**: Modern TLS support with ALPN
 - ✅ **Secure Cookies**: Full security attribute support
 - ✅ **CORS Protection**: Advanced cross-origin controls
-- ✅ **Path Traversal Protection**: Secure file serving
+- ✅ **Input Validation**: Type-safe parameter extraction and validation
+- ✅ **File Upload Security**: Content type validation and size limits
+
+#### 🎯 **Developer Experience**
+- ✅ **Better Documentation**: Comprehensive examples and guides
+- ✅ **Error Messages**: Improved error handling and debugging
+- ✅ **Type Safety**: Enhanced compile-time guarantees
+- ✅ **Easy Setup**: Simplified configuration and deployment
+- ✅ **File Handling**: Streaming uploads for large files
 
 ---
 
@@ -910,9 +1607,9 @@ If you find Ignitia helpful, consider:
 cargo new my-ignitia-app && cd my-ignitia-app
 
 # Add Ignitia with all features
-echo 'ignitia = { version = "0.1.9", features = ["tls", "websocket", "self-signed"] }' >> Cargo.toml
+echo 'ignitia = { version = "0.2.0", features = ["tls", "websocket", "multipart", "self-signed"] }' >> Cargo.toml
 
-# Create your first HTTP/2 + WebSocket app
+# Create your first high-performance app
 cargo run
 ```
 
@@ -924,7 +1621,7 @@ cargo run
 
 ---
 
-### 🔥 **Ignitia. Build Fast. Scale Further.** 🔥
+### 🔥 **Ignitia. Build Fast. Scale Faster.** 🔥
 
 **Built with ❤️ by [Aarambh Dev Hub](https://youtube.com/@aarambhdevhub)**
 

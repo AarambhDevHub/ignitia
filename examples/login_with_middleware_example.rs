@@ -1,4 +1,5 @@
 use http::Method;
+use ignitia::handler::extractor::State;
 use ignitia::{
     async_trait, Body, Cookie, Cookies, Error, Extension, LayeredHandler, Middleware, Request,
     Response, Result, Router, SameSite, Server,
@@ -58,23 +59,23 @@ impl UserDB {
 }
 
 // UserDB Extension Middleware - Injects UserDB into requests
-struct UserDBMiddleware {
-    user_db: UserDB,
-}
+// struct UserDBMiddleware {
+//     user_db: UserDB,
+// }
 
-impl UserDBMiddleware {
-    fn new(user_db: UserDB) -> Self {
-        Self { user_db }
-    }
-}
+// impl UserDBMiddleware {
+//     fn new(user_db: UserDB) -> Self {
+//         Self { user_db }
+//     }
+// }
 
-#[async_trait]
-impl Middleware for UserDBMiddleware {
-    async fn before(&self, req: &mut ignitia::Request) -> Result<()> {
-        req.insert_extension(self.user_db.clone());
-        Ok(())
-    }
-}
+// #[async_trait]
+// impl Middleware for UserDBMiddleware {
+//     async fn before(&self, req: &mut ignitia::Request) -> Result<()> {
+//         req.insert_extension(self.user_db.clone());
+//         Ok(())
+//     }
+// }
 
 // Authentication Middleware - Checks if user is logged in
 struct AuthMiddleware {
@@ -219,6 +220,8 @@ impl Middleware for RequestLoggerMiddleware {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
+    // let user_db = UserDB::new();
+
     let user_db = UserDB::new();
 
     // Create middleware instances
@@ -230,7 +233,7 @@ async fn main() -> Result<()> {
     let router = Router::new()
         // Apply global middleware
         .middleware(RequestLoggerMiddleware)
-        .middleware(UserDBMiddleware::new(user_db))
+        // .middleware(UserDBMiddleware::new(user_db))
         .middleware(auth_middleware)
         // .middleware(role_middleware)
         // Public routes (no auth required)
@@ -249,7 +252,8 @@ async fn main() -> Result<()> {
                 .layer(RoleMiddleware::new().require_role("/admin", "admin")),
         )
         // Logout (public)
-        .get("/logout", logout);
+        .get("/logout", logout)
+        .state(user_db);
 
     let addr: SocketAddr = "127.0.0.1:3009".parse().unwrap();
     let server = Server::new(router, addr);
@@ -285,7 +289,7 @@ fn parse_form_data(body: &[u8]) -> Result<HashMap<String, String>> {
 }
 
 // Simplified handlers using extractors - no more manual auth checks!
-async fn home(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<Response> {
+async fn home(cookies: Cookies, State(db): State<UserDB>) -> Result<Response> {
     // Check if user is logged in (this is just for display, not security)
     let current_user = cookies.get("session_user").map(|s| s.clone());
 
