@@ -26,6 +26,11 @@ Ignitia is designed to provide developers with a powerful, async HTTP server fra
 ### Production Deployment
 - **[🔒 Security](SECURITY.md)** - Security middleware, HTTPS, and protection mechanisms
 
+### Static Files and I/O
+- **[📦 Static Files](STATIC_FILES.md)** - Handling of static file serving and caching
+- **[📬 Responses](RESPONSES.md)** - Response structure, builders, and helpers
+- **[📥 Requests](REQUESTS.md)** - Request structure, body extraction, and parameters
+
 ### Project Information
 - **[📝 Migration Guide](MIGRATION.md)** - Upgrading between versions
 - **[🤝 Contributing](CONTRIBUTING.md)** - How to contribute to Ignitia

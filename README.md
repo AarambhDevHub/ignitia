@@ -87,6 +87,9 @@ doc/
 ├── 📄 SERVER_CONFIG.md       # Server configuration options
 ├── 📄 SECURITY.md            # Security best practices
 ├── 📄 API_REFERENCE.md       # API reference documentation
+├── 📄 REQUESTS.md            # Request handling patterns
+├── 📄 RESPONSES.md           # Response handling patterns
+├── 📄 STATIC_FILES.md        # Serving static files
 ├── 📄 MIGRATION.md           # Migration from other frameworks
 ├── 📄 CONTRIBUTING.md        # How to contribute
 ├── 📄 CHANGELOG.md           # Version history
