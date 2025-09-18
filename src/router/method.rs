@@ -331,6 +331,9 @@ pub enum HttpMethod {
     Connect,
     /// TRACE method - diagnostic trace of request path
     Trace,
+
+    /// ANY method - match any method
+    Any,
 }
 
 impl From<Method> for HttpMethod {
@@ -406,6 +409,7 @@ impl From<HttpMethod> for Method {
             HttpMethod::Options => Method::OPTIONS,
             HttpMethod::Connect => Method::CONNECT,
             HttpMethod::Trace => Method::TRACE,
+            HttpMethod::Any => Method::from_bytes(b"ANY").unwrap_or(Method::GET),
         }
     }
 }
@@ -484,6 +488,7 @@ impl FromStr for HttpMethod {
             "OPTIONS" => Ok(HttpMethod::Options),
             "CONNECT" => Ok(HttpMethod::Connect),
             "TRACE" => Ok(HttpMethod::Trace),
+            "ANY" => Ok(HttpMethod::Any),
             _ => Err(()),
         }
     }

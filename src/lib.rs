@@ -711,7 +711,7 @@ pub use request::Request;
 pub use response::{Response, ResponseBuilder};
 
 // Re-export routing components
-pub use router::{LayeredHandler, Route, Router};
+pub use router::{LayeredHandler, Route, Router, RouterMode};
 
 // Re-export server components
 pub use server::{Http2Config, Server, ServerConfig};

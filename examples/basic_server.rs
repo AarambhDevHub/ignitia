@@ -46,13 +46,14 @@ async fn main() -> Result<()> {
     // Create router using the new handler system
     let router = Router::new()
         .middleware(RateLimitingMiddleware::new(rate_limiting_middleware))
+        .with_mode(ignitia::router::RouterMode::Radix)
         .get("/", home) // No extractors - works directly
         .get("/hello/:name", hello) // Uses Path extractor
         .get("/users", list_users) // Uses Query extractor
         .get("/users/:id", get_user) // Uses Path extractor
         .post("/users", create_user) // Uses Json extractor
-        .get("/old-style", raw_handler(old_style_handler)) // For Request access
-        .not_found(not_found);
+        .get("/old-style", raw_handler(old_style_handler)); // For Request access
+                                                            // .not_found(not_found);
 
     // Create and run server
     let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
