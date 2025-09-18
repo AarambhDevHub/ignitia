@@ -2,6 +2,7 @@ use ignitia::{Method, Multipart, Response, Router, Server, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::fs;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -354,7 +355,7 @@ async fn serve_uploaded_file(
             response
                 .headers
                 .insert("content-type", content_type.parse().unwrap());
-            response.body = contents.into();
+            response.body = Arc::new(contents.into());
             Ok(response)
         }
         Err(_) => Ok(Response::new(StatusCode::NOT_FOUND)),

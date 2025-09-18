@@ -1127,7 +1127,7 @@ async fn handle_websocket_upgrade(
 
     let websocket_handlers = router.get_websocket_handlers();
     let handler = match websocket_handlers.get(path) {
-        Some(handler) => Arc::clone(handler),
+        Some(handler) => Arc::clone(handler.value()),
         None => {
             tracing::debug!("No WebSocket handler found for path: {}", path);
             return Ok(hyper::Response::builder()
@@ -1262,7 +1262,7 @@ async fn handle_regular_http_request(
         Err(err) => {
             let status = err.status_code();
             let mut res = Response::new(status);
-            res.body = Bytes::from(err.to_string());
+            res.body = Arc::new(Bytes::from(err.to_string()));
             res
         }
     };
@@ -1274,5 +1274,5 @@ async fn handle_regular_http_request(
         builder = builder.header(key, value);
     }
 
-    Ok(builder.body(Full::new(response.body)).unwrap())
+    Ok(builder.body(Full::new((*response.body).clone())).unwrap())
 }

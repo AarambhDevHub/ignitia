@@ -345,7 +345,7 @@ impl FromRequest for Multipart {
             .ok_or_else(|| crate::Error::BadRequest("Missing boundary in Content-Type".into()))?;
 
         Ok(Multipart::new(
-            req.body.clone(),
+            (*req.body).clone(),
             boundary,
             MultipartConfig::default(),
         ))

@@ -183,6 +183,8 @@
 //! }
 //! ```
 
+use std::sync::Arc;
+
 use super::Response;
 use crate::error::Result;
 use bytes::Bytes;
@@ -1121,7 +1123,7 @@ impl ResponseBuilder {
         Response {
             status: self.status,
             headers: self.headers,
-            body: self.body.unwrap_or_else(|| Bytes::new()),
+            body: Arc::new(self.body.unwrap_or_else(|| Bytes::new())),
         }
     }
 }

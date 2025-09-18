@@ -651,6 +651,13 @@
 // Enable additional documentation lint rules
 #![warn(rustdoc::missing_crate_level_docs)]
 
+#[cfg(not(target_env = "msvc"))]
+use mimalloc::MiMalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 // Core framework modules
 pub mod cookie;
 pub mod error;

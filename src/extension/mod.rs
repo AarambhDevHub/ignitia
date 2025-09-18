@@ -94,9 +94,9 @@
 //! - Cloning occurs when extracting values (consider using `Arc<T>` for expensive-to-clone types)
 //! - Memory usage scales linearly with the number of unique types stored
 
+use dashmap::DashMap;
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// A thread-safe type map for storing arbitrary extensions.
 ///
@@ -183,7 +183,7 @@ use std::sync::{Arc, RwLock};
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct Extensions {
-    map: Arc<RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>>,
+    map: Arc<DashMap<TypeId, Box<dyn Any + Send + Sync>>>,
 }
 
 impl Extensions {
@@ -201,7 +201,7 @@ impl Extensions {
     /// ```
     pub fn new() -> Self {
         Self {
-            map: Arc::new(RwLock::new(HashMap::new())),
+            map: Arc::new(DashMap::new()),
         }
     }
 
@@ -245,8 +245,7 @@ impl Extensions {
     /// This method acquires a write lock on the internal map, so it may block
     /// if other threads are currently reading or writing.
     pub fn insert<T: Send + Sync + 'static>(&mut self, value: T) {
-        let mut map = self.map.write().unwrap();
-        map.insert(TypeId::of::<T>(), Box::new(value));
+        self.map.insert(TypeId::of::<T>(), Box::new(value));
     }
 
     /// Gets a reference to a value from the extensions map.
@@ -291,10 +290,11 @@ impl Extensions {
     where
         T: Clone,
     {
-        let map = self.map.read().unwrap();
-        map.get(&TypeId::of::<T>())
-            .and_then(|boxed| boxed.downcast_ref::<T>())
-            .map(|value| Arc::new(value.clone()))
+        self.map.get(&TypeId::of::<T>()).and_then(|boxed| {
+            boxed
+                .downcast_ref::<T>()
+                .map(|value| Arc::new(value.clone()))
+        })
     }
 
     /// Removes a value from the extensions map.
@@ -336,10 +336,9 @@ impl Extensions {
     /// This method acquires a write lock on the internal map, so it may block
     /// if other threads are currently reading or writing.
     pub fn remove<T: Send + Sync + 'static>(&mut self) -> Option<T> {
-        let mut map = self.map.write().unwrap();
-        map.remove(&TypeId::of::<T>())
-            .and_then(|boxed| boxed.downcast().ok())
-            .map(|boxed| *boxed)
+        self.map
+            .remove(&TypeId::of::<T>())
+            .map(|(_, boxed)| *boxed.downcast().ok().unwrap())
     }
 
     /// Checks if the extensions map contains a value of the specified type.
@@ -381,8 +380,7 @@ impl Extensions {
     /// key existence check, making it more efficient than `get()` when you
     /// don't need the actual value.
     pub fn contains<T: Send + Sync + 'static>(&self) -> bool {
-        let map = self.map.read().unwrap();
-        map.contains_key(&TypeId::of::<T>())
+        self.map.contains_key(&TypeId::of::<T>())
     }
 
     /// Returns the number of extensions stored in the map.
@@ -418,8 +416,7 @@ impl Extensions {
     /// This operation requires a read lock and calls `HashMap::len()`,
     /// which is O(1).
     pub fn len(&self) -> usize {
-        let map = self.map.read().unwrap();
-        map.len()
+        self.map.len()
     }
 
     /// Checks if the extensions map is empty.
@@ -447,8 +444,7 @@ impl Extensions {
     /// This is equivalent to `self.len() == 0` but may be slightly more
     /// efficient depending on the `HashMap` implementation.
     pub fn is_empty(&self) -> bool {
-        let map = self.map.read().unwrap();
-        map.is_empty()
+        self.map.is_empty()
     }
 
     /// Clears all extensions from the map.
@@ -482,8 +478,7 @@ impl Extensions {
     /// This method acquires a write lock on the internal map. All stored
     /// values will be dropped while holding the lock.
     pub fn clear(&mut self) {
-        let mut map = self.map.write().unwrap();
-        map.clear();
+        self.map.clear();
     }
 }
 

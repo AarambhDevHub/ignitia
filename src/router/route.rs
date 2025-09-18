@@ -119,11 +119,12 @@
 //! // Matches: /proxy/https://example.com/api/data -> url = "https://example.com/api/data"
 //! ```
 
-use crate::{HandlerFn, Middleware, Request};
+use crate::{HandlerFn, Request};
 use http::Method;
 use once_cell::sync::Lazy;
 use regex::{Regex, RegexBuilder};
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Pre-compiled regex for matching named parameters in route patterns.
 ///
@@ -202,12 +203,14 @@ pub struct Route {
     pub param_names: Vec<String>,
     /// Names of wildcard parameters in order of appearance
     pub wildcard_names: Vec<String>,
-    /// Cached total parameter count for performance optimization
+    // Cache the total parameter count and segment count for faster matching
     total_params: usize,
     /// Cached path segment count for performance optimization
     segment_count: usize,
     /// Middleware to be executed before the route handler
-    pub middleware: Vec<Arc<dyn Middleware>>,
+    pub middleware: Vec<Arc<dyn crate::middleware::Middleware>>,
+    // Precomputed path segments for faster matching
+    path_segments: Vec<String>,
 }
 
 impl Route {
@@ -259,6 +262,11 @@ impl Route {
         let regex = Self::compile_regex(&regex_pattern);
         let total_params = param_names.len() + wildcard_names.len();
         let segment_count = path.matches('/').count();
+        let path_segments = path
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
 
         Self {
             path: path.to_string(),
@@ -270,6 +278,7 @@ impl Route {
             total_params,
             segment_count,
             middleware: Vec::new(),
+            path_segments,
         }
     }
 
@@ -312,7 +321,7 @@ impl Route {
     ///     .with_middleware(AuthMiddleware::new("admin-token"))
     ///     .with_middleware(RateLimitMiddleware::new(10));
     /// ```
-    pub fn with_middleware(mut self, mw: impl Middleware + 'static) -> Self {
+    pub fn with_middleware(mut self, mw: impl crate::middleware::Middleware + 'static) -> Self {
         self.middleware.push(Arc::new(mw));
         self
     }
@@ -496,6 +505,21 @@ impl Route {
             return None;
         }
 
+        // Quick segment-by-segment comparison for static routes
+        if self.total_params == 0 {
+            let request_segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+            if request_segments.len() != self.path_segments.len() {
+                return None;
+            }
+
+            for (i, segment) in self.path_segments.iter().enumerate() {
+                if segment != &request_segments[i] {
+                    return None;
+                }
+            }
+            return Some(HashMap::new());
+        }
+
         let captures = match self.regex.captures(path) {
             Some(caps) => caps,
             None => return None,
@@ -619,38 +643,4 @@ fn escape_regex_selective(s: &str) -> String {
     }
 
     result
-}
-
-/// Trait for optimized route matching with fast-path checks.
-///
-/// This trait provides additional matching methods optimized for performance
-/// testing and routing efficiency analysis.
-pub trait RouteMatcher {
-    /// Performs a fast pre-check before full regex matching.
-    ///
-    /// This method implements the same fast-path optimizations as the full
-    /// `matches` method but only returns a boolean result. It's useful for
-    /// quickly filtering routes before more expensive operations.
-    ///
-    /// # Parameters
-    /// - `path`: The request path to check
-    ///
-    /// # Returns
-    /// `true` if the route might match (requires full matching to confirm)
-    fn fast_match(&self, path: &str) -> bool;
-}
-
-impl RouteMatcher for Route {
-    fn fast_match(&self, path: &str) -> bool {
-        // Very fast pre-check before regex matching
-        if path.len() < self.path.len().saturating_sub(self.total_params * 3) {
-            return false;
-        }
-
-        if path.matches('/').count() < self.segment_count.saturating_sub(self.total_params) {
-            return false;
-        }
-
-        self.regex.is_match(path)
-    }
 }

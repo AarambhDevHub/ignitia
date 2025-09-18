@@ -286,9 +286,9 @@ use crate::handler::{into_handler, IntoHandler};
 use crate::middleware::Middleware;
 use crate::{Error, Extensions, Handler, HandlerFn, Request, Response, Result};
 use arc_swap::ArcSwap;
+use dashmap::DashMap;
 use http::Method;
-use parking_lot::RwLock;
-use std::collections::HashMap;
+use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
 
 pub use route::Route;
@@ -443,11 +443,13 @@ impl LayeredHandler {
 #[derive(Clone)]
 struct CompiledRouter {
     /// Routes organized by HTTP method for fast lookup
-    routes: HashMap<Method, Vec<Route>>,
+    routes: DashMap<Method, Vec<Route>>,
     /// Middleware stack to apply to requests
     middleware: Vec<Arc<dyn Middleware>>,
     /// Optional custom 404 handler
     not_found_handler: Option<HandlerFn>,
+    /// Route cache for faster matching
+    route_cache: DashMap<String, Option<Arc<Route>>>,
 }
 
 /// High-performance HTTP router with middleware support and route compilation.
@@ -491,7 +493,7 @@ pub struct Router {
 /// Internal router state that can be modified during route building.
 struct RouterInner {
     /// Routes organized by HTTP method
-    routes: HashMap<Method, Vec<Route>>,
+    routes: DashMap<Method, Vec<Route>>,
     /// Middleware stack
     middleware: Vec<Arc<dyn Middleware>>,
     /// Custom 404 handler
@@ -505,7 +507,7 @@ struct RouterInner {
     /// WebSocket route handlers (when feature is enabled)
     #[cfg(feature = "websocket")]
     #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
-    websocket_routes: HashMap<String, Arc<dyn crate::websocket::WebSocketHandler>>,
+    websocket_routes: DashMap<String, Arc<dyn crate::websocket::WebSocketHandler>>,
 }
 
 impl Router {
@@ -522,7 +524,7 @@ impl Router {
     /// ```
     pub fn new() -> Self {
         let inner = RouterInner {
-            routes: HashMap::new(),
+            routes: DashMap::new(),
             middleware: Vec::new(),
             not_found_handler: None,
             nested_routers: Vec::new(),
@@ -530,15 +532,16 @@ impl Router {
             dirty: true,
             #[cfg(feature = "websocket")]
             #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
-            websocket_routes: HashMap::new(),
+            websocket_routes: DashMap::new(),
         };
 
         Self {
             inner: Arc::new(RwLock::new(inner)),
             compiled: ArcSwap::new(Arc::new(CompiledRouter {
-                routes: HashMap::new(),
+                routes: DashMap::new(),
                 middleware: Vec::new(),
                 not_found_handler: None,
+                route_cache: DashMap::new(),
             })),
         }
     }
@@ -578,7 +581,7 @@ impl Router {
             inner.dirty = true;
 
             let full_path = normalize_path(path);
-            let routes = inner.routes.entry(method.clone()).or_insert_with(Vec::new);
+            let mut routes = inner.routes.entry(method.clone()).or_insert_with(Vec::new);
 
             // Pre-compile the route for better performance
             let route = Route::new(&full_path, method, handler);
@@ -977,7 +980,7 @@ impl Router {
     #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
     pub fn get_websocket_handlers(
         &self,
-    ) -> HashMap<String, Arc<dyn crate::websocket::WebSocketHandler>> {
+    ) -> DashMap<String, Arc<dyn crate::websocket::WebSocketHandler>> {
         let inner = self.inner.read();
         inner.websocket_routes.clone()
     }
@@ -1195,16 +1198,20 @@ impl Router {
     /// # Returns
     /// A `CompiledRouter` with optimized route matching structures
     fn compile_inner(&self, inner: &RouterInner) -> CompiledRouter {
-        let mut routes = inner.routes.clone();
+        let routes = inner.routes.clone();
         let mut middleware = inner.middleware.clone();
         let mut not_found_handler = inner.not_found_handler.clone();
+        let route_cache = DashMap::new();
 
         // Process nested routers
         for (prefix, nested_router) in &inner.nested_routers {
             let nested_compiled = nested_router.ensure_compiled();
 
             // Merge routes with prefix
-            for (method, nested_routes) in &nested_compiled.routes {
+            for entry in nested_compiled.routes.iter() {
+                let method = entry.key().clone();
+                let nested_routes = entry.value();
+
                 for route in nested_routes {
                     let full_path = if route.path == "/" {
                         prefix.clone()
@@ -1235,7 +1242,8 @@ impl Router {
         }
 
         // Sort routes by specificity for faster matching
-        for routes in routes.values_mut() {
+        for mut entry in routes.iter_mut() {
+            let routes = entry.value_mut();
             routes.sort_by(|a, b| {
                 // Sort by number of path segments (more specific first)
                 let a_segments = a.path.matches('/').count();
@@ -1253,6 +1261,7 @@ impl Router {
             routes,
             middleware,
             not_found_handler,
+            route_cache,
         }
     }
 
@@ -1310,33 +1319,36 @@ impl Router {
             mw.before(&mut req).await?;
         }
 
-        // Get routes for this method only
-        if let Some(routes) = compiled.routes.get(&req.method) {
-            for route in routes {
+        // Generate cache key for route matching
+        let cache_key = format!("{}:{}", req.method, req.uri.path());
+
+        // Try to get cached route first
+        if let Some(cached_route) = compiled.route_cache.get(&cache_key) {
+            if let Some(route) = cached_route.value().as_ref() {
                 if let Some(params) = route.matches(&req) {
                     req.params = params;
-
-                    // Apply route middleware before handler
-                    for mw in &route.middleware {
-                        mw.before(&mut req).await?;
-                    }
-
-                    let mut response = route.handler.handle(req.clone()).await?;
-
-                    // Apply route middleware after handler in reverse order
-                    for mw in route.middleware.iter().rev() {
-                        mw.after(&req, &mut response).await?;
-                    }
-
-                    // Apply global middleware after handler in reverse order
-                    for mw in compiled.middleware.iter().rev() {
-                        mw.after(&req, &mut response).await?;
-                    }
-
-                    return Ok(response);
+                    return self.execute_route(route, req, &compiled.middleware).await;
                 }
             }
         }
+
+        // Get routes for this method only
+        if let Some(routes) = compiled.routes.get(&req.method) {
+            for route in routes.value() {
+                if let Some(params) = route.matches(&req) {
+                    // Cache this successful match
+                    compiled
+                        .route_cache
+                        .insert(cache_key, Some(Arc::new(route.clone())));
+
+                    req.params = params;
+                    return self.execute_route(route, req, &compiled.middleware).await;
+                }
+            }
+        }
+
+        // Cache the miss
+        compiled.route_cache.insert(cache_key, None);
 
         // Handle not found
         if let Some(handler) = &compiled.not_found_handler {
@@ -1346,18 +1358,33 @@ impl Router {
         }
     }
 
-    /// Checks if a route exists for the given method and path.
-    ///
-    /// This is a utility method primarily used for testing and debugging.
-    /// It checks if any route would match the given method and path without
-    /// actually processing a full request.
-    ///
-    /// # Parameters
-    /// - `method`: The HTTP method to check
-    /// - `path`: The path to check for matches
-    ///
-    /// # Returns
-    /// `true` if a route matches, `false` otherwise
+    async fn execute_route(
+        &self,
+        route: &Route,
+        mut req: Request,
+        global_middleware: &[Arc<dyn Middleware>],
+    ) -> Result<Response> {
+        // Apply route middleware before handler
+        for mw in &route.middleware {
+            mw.before(&mut req).await?;
+        }
+
+        let mut response = route.handler.handle(req.clone()).await?;
+
+        // Apply route middleware after handler in reverse order
+        for mw in route.middleware.iter().rev() {
+            mw.after(&req, &mut response).await?;
+        }
+
+        // Apply global middleware after handler in reverse order
+        for mw in global_middleware.iter().rev() {
+            mw.after(&req, &mut response).await?;
+        }
+
+        Ok(response)
+    }
+
+    /// Check if a route matches the given method and path
     ///
     /// # Examples
     /// ```
@@ -1373,7 +1400,7 @@ impl Router {
     pub fn matches(&self, method: &Method, path: &str) -> bool {
         let compiled = self.ensure_compiled();
         if let Some(routes) = compiled.routes.get(method) {
-            for route in routes {
+            for route in routes.value() {
                 // Create a mock request for matching
                 let mock_req = Request::new(
                     method.clone(),
@@ -1389,6 +1416,12 @@ impl Router {
             }
         }
         false
+    }
+
+    /// Clear the route cache (useful for testing or when routes change dynamically)
+    pub fn clear_cache(&self) {
+        let compiled = self.ensure_compiled();
+        compiled.route_cache.clear();
     }
 }
 
@@ -1445,9 +1478,10 @@ impl Clone for Router {
                 websocket_routes: inner.websocket_routes.clone(),
             })),
             compiled: ArcSwap::new(Arc::new(CompiledRouter {
-                routes: HashMap::new(),
+                routes: DashMap::new(),
                 middleware: Vec::new(),
                 not_found_handler: None,
+                route_cache: DashMap::new(),
             })),
         }
     }

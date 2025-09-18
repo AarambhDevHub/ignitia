@@ -303,6 +303,8 @@
 //! }
 //! ```
 
+use std::{borrow::Cow, sync::Arc};
+
 use crate::error::{Error, Result};
 use bytes::Bytes;
 use serde::de::DeserializeOwned;
@@ -342,7 +344,7 @@ use serde::de::DeserializeOwned;
 /// let body3 = Body::from(Bytes::from("Hello, World!"));
 /// ```
 pub struct Body {
-    inner: Bytes,
+    inner: Arc<Bytes>,
 }
 
 impl Body {
@@ -367,7 +369,9 @@ impl Body {
     /// assert_eq!(body.len(), 13);
     /// ```
     pub fn new(bytes: Bytes) -> Self {
-        Self { inner: bytes }
+        Self {
+            inner: Arc::new(bytes),
+        }
     }
 
     /// Returns a reference to the underlying bytes.
@@ -402,8 +406,30 @@ impl Body {
     ///     println!("This is a JPEG file");
     /// }
     /// ```
-    pub fn bytes(&self) -> &Bytes {
+    pub fn bytes(&self) -> Arc<&Bytes> {
+        Arc::new(&self.inner)
+    }
+
+    /// Reference to the underlying `Bytes`
+    ///
+    /// # Examples
+    /// ```
+    /// use ignitia::request::Body;
+    /// use bytes::Bytes;
+    ///
+    /// let body = Body::new(Bytes::from("Hello"));
+    /// let bytes_ref = body.bytes();
+    /// assert_eq!(bytes_ref.len(), 5);
+    /// ```
+    pub fn as_bytes(&self) -> &Bytes {
         &self.inner
+    }
+
+    /// Zero-copy clone
+    pub fn clone_shared(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
     }
 
     /// Converts the body to a UTF-8 string.
@@ -462,9 +488,14 @@ impl Body {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn text(&self) -> Result<String> {
-        String::from_utf8(self.inner.to_vec())
-            .map_err(|_| Error::BadRequest("Invalid UTF-8 in body".into()))
+    pub fn text(&self) -> Result<Cow<'_, str>> {
+        std::str::from_utf8(&self.inner)
+            .map(Cow::Borrowed)
+            .or_else(|_| {
+                Ok(Cow::Owned(
+                    String::from_utf8_lossy(&self.inner).into_owned(),
+                ))
+            })
     }
 
     /// Parses the body as JSON and deserializes it to the specified type.
@@ -681,5 +712,11 @@ impl From<&str> for Body {
     /// ```
     fn from(s: &str) -> Self {
         Self::new(Bytes::from(s.to_string()))
+    }
+}
+
+impl Clone for Body {
+    fn clone(&self) -> Self {
+        self.clone_shared()
     }
 }
