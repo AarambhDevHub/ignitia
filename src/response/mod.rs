@@ -495,6 +495,14 @@ pub struct Response {
     pub headers: HeaderMap,
     /// Response body as bytes
     pub body: Arc<Bytes>,
+
+    pub cache_control: Option<CacheControl>, // Add this field
+}
+
+#[derive(Debug, Clone)]
+pub struct CacheControl {
+    pub max_age: u64,
+    pub key: String,
 }
 
 impl Response {
@@ -527,6 +535,7 @@ impl Response {
             status,
             headers: HeaderMap::new(),
             body: Arc::new(Bytes::new()),
+            cache_control: None,
         }
     }
 
@@ -1345,6 +1354,49 @@ impl Response {
     #[inline]
     pub fn redirect_moved(new_location: impl Into<String>) -> Self {
         Self::permanent_redirect(new_location)
+    }
+
+    /// Check if response is cacheable based on headers
+    pub fn is_cacheable(&self) -> bool {
+        self.status.is_success()
+            && self
+                .headers
+                .get("cache-control")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.contains("max-age=") && !v.contains("max-age=0"))
+                .unwrap_or(false)
+    }
+
+    /// Get cache max-age from headers
+    pub fn cache_max_age(&self) -> u64 {
+        self.headers
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split("max-age=").nth(1))
+            .and_then(|v| v.split(',').next())
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0)
+    }
+
+    /// Generate cache key
+    pub fn cache_key(&self, request_uri: &str) -> String {
+        format!(
+            "cache_{}_{}",
+            request_uri,
+            self.headers
+                .get("etag")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("default")
+        )
+    }
+
+    /// Set cache control header
+    pub fn with_cache_control(mut self, max_age: u64) -> Self {
+        self.headers.insert(
+            http::header::CACHE_CONTROL,
+            HeaderValue::from_str(&format!("max-age={}", max_age)).unwrap(),
+        );
+        self
     }
 }
 
