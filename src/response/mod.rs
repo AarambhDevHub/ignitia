@@ -495,13 +495,159 @@ pub struct Response {
     pub headers: HeaderMap,
     /// Response body as bytes
     pub body: Arc<Bytes>,
-
+    /// Cache control information
     pub cache_control: Option<CacheControl>, // Add this field
 }
 
+/// HTTP cache control configuration for optimizing response caching.
+///
+/// The `CacheControl` struct encapsulates caching metadata used to optimize
+/// HTTP response delivery through strategic cache management. It provides
+/// fine-grained control over cache behavior including cache duration and
+/// cache key generation for efficient content delivery.
+///
+/// # Purpose
+///
+/// This struct enables:
+/// - **Cache Duration Control**: Setting appropriate cache lifetimes via `max_age`
+/// - **Cache Key Management**: Generating unique identifiers for cached content
+/// - **Performance Optimization**: Reducing server load through intelligent caching
+/// - **CDN Integration**: Supporting Content Delivery Network caching strategies
+///
+/// # Cache Strategy
+///
+/// The cache control system implements a dual-approach strategy:
+/// 1. **Time-based Expiration**: Uses `max_age` for cache lifetime management
+/// 2. **Content-based Invalidation**: Uses `key` for cache versioning and invalidation
+///
+/// # Integration with Response
+///
+/// When attached to a `Response`, the `CacheControl` struct automatically:
+/// - Sets appropriate HTTP cache headers (`Cache-Control`, `ETag`, etc.)
+/// - Generates cache keys for storage systems
+/// - Enables conditional requests (304 Not Modified responses)
+/// - Supports cache invalidation strategies
+///
+/// # Examples
+///
+/// ## Basic Cache Control
+/// ```
+/// use ignitia::{Response, CacheControl};
+///
+/// let cache_control = CacheControl {
+///     max_age: 3600, // 1 hour
+///     key: "user_profile_123".to_string(),
+/// };
+///
+/// let response = Response::json(user_data)?
+///     .with_cache_control(cache_control);
+/// ```
+///
+/// ## Static Asset Caching
+/// ```
+/// // Long-term caching for static assets
+/// let static_cache = CacheControl {
+///     max_age: 31536000, // 1 year
+///     key: format!("static_{}_{}", filename, version_hash),
+/// };
+/// ```
+///
+/// ## API Response Caching
+/// ```
+/// // Short-term caching for API responses
+/// let api_cache = CacheControl {
+///     max_age: 300, // 5 minutes
+///     key: format!("api_{}_{}_{}", endpoint, user_id, timestamp),
+/// };
+/// ```
+///
+/// ## Dynamic Content Caching
+/// ```
+/// // User-specific content with medium cache duration
+/// let user_cache = CacheControl {
+///     max_age: 1800, // 30 minutes
+///     key: format!("content_{}_{}", content_id, last_modified),
+/// };
+/// ```
 #[derive(Debug, Clone)]
 pub struct CacheControl {
+    /// Maximum age for cached content in seconds.
+    ///
+    /// This field determines how long the content should be considered fresh
+    /// by browsers, CDNs, and intermediate caches. The value directly maps
+    /// to the HTTP `Cache-Control: max-age=` directive.
+    ///
+    /// # Common Values
+    /// - **0**: No caching (always revalidate)
+    /// - **300**: 5 minutes (dynamic API responses)
+    /// - **3600**: 1 hour (semi-static content)
+    /// - **86400**: 24 hours (daily updated content)
+    /// - **31536000**: 1 year (static assets with versioning)
+    ///
+    /// # Performance Considerations
+    /// - Longer cache times reduce server load but may serve stale content
+    /// - Shorter cache times ensure freshness but increase server requests
+    /// - Consider content update frequency when setting values
+    ///
+    /// # Examples
+    /// ```
+    /// // No caching for sensitive data
+    /// let sensitive = CacheControl { max_age: 0, key: "...".to_string() };
+    ///
+    /// // Medium caching for API responses
+    /// let api = CacheControl { max_age: 600, key: "...".to_string() };
+    ///
+    /// // Long caching for static assets
+    /// let static_content = CacheControl { max_age: 2592000, key: "...".to_string() };
+    /// ```
     pub max_age: u64,
+
+    /// Unique identifier for cache entry management and invalidation.
+    ///
+    /// The cache key serves multiple purposes in the caching infrastructure:
+    /// - **Uniqueness**: Ensures different content versions are cached separately
+    /// - **Invalidation**: Enables targeted cache clearing when content changes
+    /// - **Versioning**: Supports content versioning through key changes
+    /// - **Debugging**: Provides identifiable cache entries for troubleshooting
+    ///
+    /// # Key Generation Strategies
+    ///
+    /// ## Content-Based Keys
+    /// Include content identifiers that change when content changes:
+    /// ```
+    /// let key = format!("article_{}_{}", article_id, last_modified_timestamp);
+    /// ```
+    ///
+    /// ## User-Specific Keys
+    /// Include user context for personalized content:
+    /// ```
+    /// let key = format!("dashboard_{}_{}_{}", user_id, role, preferences_hash);
+    /// ```
+    ///
+    /// ## Version-Based Keys
+    /// Include application or content version for cache busting:
+    /// ```
+    /// let key = format!("api_response_{}_v{}", endpoint, api_version);
+    /// ```
+    ///
+    /// ## Hierarchical Keys
+    /// Use hierarchical structure for organized cache management:
+    /// ```
+    /// let key = format!("app:{}:user:{}:page:{}", app_version, user_id, page_id);
+    /// ```
+    ///
+    /// # Best Practices
+    /// - Include all relevant context that affects content
+    /// - Use consistent naming conventions across the application
+    /// - Include version or timestamp information for automatic invalidation
+    /// - Keep keys reasonably short while maintaining uniqueness
+    /// - Avoid sensitive information in cache keys
+    ///
+    /// # Performance Notes
+    /// - Shorter keys reduce memory overhead in cache systems
+    /// - Consistent key patterns improve cache hit rates
+    /// - Include enough context to avoid cache collisions
+    /// - Consider key distribution for cache sharding strategies
     pub key: String,
 }
 
@@ -1356,29 +1502,126 @@ impl Response {
         Self::permanent_redirect(new_location)
     }
 
-    /// Check if response is cacheable based on headers
-    pub fn is_cacheable(&self) -> bool {
-        self.status.is_success()
-            && self
-                .headers
-                .get("cache-control")
-                .and_then(|v| v.to_str().ok())
-                .map(|v| v.contains("max-age=") && !v.contains("max-age=0"))
-                .unwrap_or(false)
+    /// Sets cache control header with specified max-age value.
+    ///
+    /// This method adds a `Cache-Control` header to the response with the specified
+    /// maximum age in seconds. The cache control header instructs browsers, CDNs,
+    /// and other caching systems how long to cache this response before considering
+    /// it stale and requiring revalidation.
+    ///
+    /// # Parameters
+    /// - `max_age`: Cache lifetime in seconds (0 = no caching)
+    ///
+    /// # HTTP Header Generated
+    /// Creates: `Cache-Control: max-age={max_age}`
+    ///
+    /// # Common Cache Durations
+    /// - **0**: No caching (immediate expiration)
+    /// - **300**: 5 minutes (dynamic API responses)
+    /// - **3600**: 1 hour (semi-static content)
+    /// - **86400**: 24 hours (daily updated content)
+    /// - **2592000**: 30 days (monthly content)
+    /// - **31536000**: 1 year (static assets with versioning)
+    ///
+    /// # Examples
+    ///
+    /// ## API Response Caching
+    /// ```
+    /// use ignitia::Response;
+    /// use serde_json::json;
+    ///
+    /// async fn user_profile() -> ignitia::Result<Response> {
+    ///     let profile = get_user_profile().await?;
+    ///
+    ///     Response::json(profile)?
+    ///         .with_cache_control(1800) // Cache for 30 minutes
+    /// }
+    /// ```
+    ///
+    /// ## Static Asset Caching
+    /// ```
+    /// async fn serve_css() -> Response {
+    ///     Response::text_static(include_str!("styles.css"))
+    ///         .with_cache_control(31536000) // Cache for 1 year
+    /// }
+    /// ```
+    ///
+    /// ## No-Cache for Sensitive Data
+    /// ```
+    /// async fn user_balance() -> ignitia::Result<Response> {
+    ///     let balance = get_current_balance().await?;
+    ///
+    ///     Response::json(balance)?
+    ///         .with_cache_control(0) // Never cache sensitive financial data
+    /// }
+    /// ```
+    #[inline]
+    pub fn with_cache_control(mut self, max_age: u64) -> Self {
+        self.headers.insert(
+            http::header::CACHE_CONTROL,
+            HeaderValue::from_str(&format!("max-age={}", max_age)).unwrap(),
+        );
+        self
     }
 
-    /// Get cache max-age from headers
-    pub fn cache_max_age(&self) -> u64 {
-        self.headers
-            .get("cache-control")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split("max-age=").nth(1))
-            .and_then(|v| v.split(',').next())
-            .and_then(|v| v.trim().parse().ok())
-            .unwrap_or(0)
-    }
-
-    /// Generate cache key
+    /// Generates a unique cache key for this response based on request URI and ETag.
+    ///
+    /// Creates a cache key that uniquely identifies this response for storage in
+    /// cache systems like Redis, Memcached, or CDN edge caches. The key combines
+    /// the request URI with the response's ETag header (if present) to ensure
+    /// cache invalidation when content changes.
+    ///
+    /// # Key Format
+    /// `cache_{request_uri}_{etag_or_default}`
+    ///
+    /// # Parameters
+    /// - `request_uri`: The URI path of the original request
+    ///
+    /// # Cache Key Strategy
+    /// - Uses request URI as the primary identifier
+    /// - Includes ETag header value for content versioning
+    /// - Falls back to "default" if no ETag is present
+    /// - Ensures unique keys for different content versions
+    ///
+    /// # Use Cases
+    /// - **CDN Cache Keys**: Identifying cached responses in CDN systems
+    /// - **Application Cache**: Storing responses in Redis/Memcached
+    /// - **Cache Invalidation**: Targeting specific cached entries for removal
+    /// - **Analytics**: Tracking cache hit/miss ratios per endpoint
+    ///
+    /// # Examples
+    ///
+    /// ## Basic Cache Key Generation
+    /// ```
+    /// use ignitia::Response;
+    ///
+    /// let response = Response::json(user_data)?
+    ///     .with_header("etag", "\"abc123\"");
+    ///
+    /// let cache_key = response.cache_key("/api/users/123");
+    /// // Returns: "cache_/api/users/123_abc123"
+    /// ```
+    ///
+    /// ## Cache Storage Integration
+    /// ```
+    /// async fn cached_response(uri: &str) -> ignitia::Result<Response> {
+    ///     let response = Response::json(expensive_computation().await)?;
+    ///     let cache_key = response.cache_key(uri);
+    ///
+    ///     // Store in Redis for future requests
+    ///     redis_client.set(&cache_key, &response.body).await?;
+    ///
+    ///     Ok(response)
+    /// }
+    /// ```
+    ///
+    /// ## Cache Invalidation
+    /// ```
+    /// async fn invalidate_user_cache(user_id: u64) {
+    ///     let pattern = format!("cache_/api/users/{}_*", user_id);
+    ///     redis_client.delete_pattern(&pattern).await;
+    /// }
+    /// ```
     pub fn cache_key(&self, request_uri: &str) -> String {
         format!(
             "cache_{}_{}",
@@ -1390,13 +1633,171 @@ impl Response {
         )
     }
 
-    /// Set cache control header
-    pub fn with_cache_control(mut self, max_age: u64) -> Self {
-        self.headers.insert(
-            http::header::CACHE_CONTROL,
-            HeaderValue::from_str(&format!("max-age={}", max_age)).unwrap(),
-        );
-        self
+    /// Extracts the max-age value from the Cache-Control header.
+    ///
+    /// Parses the `Cache-Control` header to extract the `max-age` directive value,
+    /// which indicates how many seconds the response should be cached. Returns 0
+    /// if no valid max-age directive is found or if the header is malformed.
+    ///
+    /// # Parsing Logic
+    /// 1. Retrieves `Cache-Control` header value
+    /// 2. Searches for `max-age=` directive
+    /// 3. Extracts numeric value after the equals sign
+    /// 4. Handles comma-separated directives correctly
+    /// 5. Returns 0 for invalid or missing values
+    ///
+    /// # Return Value
+    /// - **> 0**: Cache lifetime in seconds
+    /// - **0**: No caching or invalid header
+    ///
+    /// # Examples
+    ///
+    /// ## Reading Cache Duration
+    /// ```
+    /// use ignitia::Response;
+    ///
+    /// let response = Response::json(data)?
+    ///     .with_cache_control(3600);
+    ///
+    /// assert_eq!(response.cache_max_age(), 3600);
+    /// ```
+    ///
+    /// ## Conditional Processing Based on Cache Duration
+    /// ```
+    /// async fn process_response(response: &Response) {
+    ///     let cache_duration = response.cache_max_age();
+    ///
+    ///     match cache_duration {
+    ///         0 => {
+    ///             // No caching - always fetch fresh
+    ///             log::info!("Response not cacheable");
+    ///         }
+    ///         1..=300 => {
+    ///             // Short-term cache - good for dynamic content
+    ///             log::info!("Short-term cache: {} seconds", cache_duration);
+    ///         }
+    ///         301..=3600 => {
+    ///             // Medium-term cache - semi-static content
+    ///             log::info!("Medium-term cache: {} seconds", cache_duration);
+    ///         }
+    ///         _ => {
+    ///             // Long-term cache - static assets
+    ///             log::info!("Long-term cache: {} seconds", cache_duration);
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// ## Cache Validation Logic
+    /// ```
+    /// fn should_serve_from_cache(response: &Response, cached_at: SystemTime) -> bool {
+    ///     let max_age = response.cache_max_age();
+    ///     if max_age == 0 {
+    ///         return false; // Never cache
+    ///     }
+    ///
+    ///     let elapsed = cached_at.elapsed().unwrap_or_default();
+    ///     elapsed.as_secs() < max_age
+    /// }
+    /// ```
+    pub fn cache_max_age(&self) -> u64 {
+        self.headers
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split("max-age=").nth(1))
+            .and_then(|v| v.split(',').next())
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0)
+    }
+
+    /// Determines if this response is cacheable based on status and headers.
+    ///
+    /// Analyzes the response to determine if it should be cached by browsers,
+    /// CDNs, and other caching systems. A response is considered cacheable if:
+    /// 1. The HTTP status indicates success (2xx range)
+    /// 2. The Cache-Control header contains a valid `max-age` directive
+    /// 3. The max-age value is greater than 0
+    ///
+    /// # Cacheability Rules
+    /// - **Success Status Required**: Only 2xx status codes are cacheable
+    /// - **Valid Cache-Control**: Must have `max-age=` directive
+    /// - **Non-Zero Duration**: `max-age=0` indicates no caching
+    /// - **Header Presence**: Missing Cache-Control header = not cacheable
+    ///
+    /// # Returns
+    /// - `true`: Response should be cached by clients and intermediaries
+    /// - `false`: Response should not be cached (fetch fresh each time)
+    ///
+    /// # Examples
+    ///
+    /// ## Conditional Cache Storage
+    /// ```
+    /// use ignitia::Response;
+    ///
+    /// async fn handle_api_request() -> ignitia::Result<Response> {
+    ///     let response = Response::json(get_data().await)?
+    ///         .with_cache_control(1800);
+    ///
+    ///     if response.is_cacheable() {
+    ///         // Store in application cache
+    ///         cache_service.store(&response).await?;
+    ///         log::info!("Response cached for {} seconds", response.cache_max_age());
+    ///     } else {
+    ///         log::info!("Response not cacheable - serving fresh");
+    ///     }
+    ///
+    ///     Ok(response)
+    /// }
+    /// ```
+    ///
+    /// ## CDN Integration
+    /// ```
+    /// fn configure_cdn_headers(mut response: Response) -> Response {
+    ///     if response.is_cacheable() {
+    ///         // Add CDN-specific headers for cacheable responses
+    ///         response.headers.insert("x-cdn-cache", HeaderValue::from_static("HIT"));
+    ///         response.headers.insert("x-cache-duration",
+    ///             HeaderValue::from_str(&response.cache_max_age().to_string()).unwrap());
+    ///     } else {
+    ///         // Ensure CDN doesn't cache non-cacheable responses
+    ///         response.headers.insert("x-cdn-cache", HeaderValue::from_static("BYPASS"));
+    ///     }
+    ///     response
+    /// }
+    /// ```
+    ///
+    /// ## Performance Monitoring
+    /// ```
+    /// fn log_cache_metrics(response: &Response, endpoint: &str) {
+    ///     if response.is_cacheable() {
+    ///         metrics::increment_counter("cacheable_responses", &[("endpoint", endpoint)]);
+    ///         metrics::histogram("cache_duration_seconds", response.cache_max_age() as f64);
+    ///     } else {
+    ///         metrics::increment_counter("non_cacheable_responses", &[("endpoint", endpoint)]);
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// ## Error Response Handling
+    /// ```
+    /// fn create_error_response(error: &AppError) -> Response {
+    ///     let response = Response::json(error.to_json())
+    ///         .unwrap_or_else(|_| Response::server_error());
+    ///
+    ///     // Error responses are typically not cacheable
+    ///     assert!(!response.is_cacheable());
+    ///
+    ///     response
+    /// }
+    /// ```
+    pub fn is_cacheable(&self) -> bool {
+        self.status.is_success()
+            && self
+                .headers
+                .get("cache-control")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.contains("max-age=") && !v.contains("max-age=0"))
+                .unwrap_or(false)
     }
 }
 

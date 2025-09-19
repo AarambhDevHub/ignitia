@@ -2,7 +2,8 @@ use ignitia::{
     middleware::{RateLimitConfig, RateLimitingMiddleware},
     raw_handler,
     server::PerformanceConfig,
-    Json, Path, Query, Request, Response, Result, Router, Server, ServerConfig,
+    IgnitiaMethod, Json, LayeredHandler, Path, Query, Request, RequestIdMiddleware, Response,
+    Result, Router, SecurityMiddleware, Server, ServerConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, time::Duration};
@@ -45,12 +46,16 @@ async fn main() -> Result<()> {
     // Initialize rate limiting middleware
     let rate_limiting_middleware = RateLimitConfig::new(10, Duration::from_secs(60));
 
+    let layer_handler = LayeredHandler::new(hello).layer(RequestIdMiddleware::new());
+
     // Create router using the new handler system
-    let router = Router::new()
+    let app = Router::new()
         .middleware(RateLimitingMiddleware::new(rate_limiting_middleware))
+        .middleware(RequestIdMiddleware::new())
         .with_mode(ignitia::router::RouterMode::Radix)
         .get("/", home) // No extractors - works directly
-        .get("/hello/:name", hello) // Uses Path extractor
+        // .get("/hello/:name", hello) // Uses Path extractor
+        .route_with_layered("/hello/:name", http::Method::GET, layer_handler)
         .get("/users", list_users) // Uses Query extractor
         .get("/users/:id", get_user) // Uses Path extractor
         .post("/users", create_user) // Uses Json extractor
@@ -79,6 +84,12 @@ async fn main() -> Result<()> {
         ..Default::default()
     };
 
+    let router = Router::new()
+        .with_mode(ignitia::router::RouterMode::Radix)
+        .nest("/api1", app);
+
+    router.print_tree();
+
     // Create and run server
     let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
     let server = Server::new(router, addr)
@@ -105,12 +116,12 @@ async fn home() -> Result<Response> {
         <h1>🔥 Welcome to Mini Web Framework!</h1>
         <p>Try these endpoints:</p>
         <ul>
-            <li><a href="/hello/World">GET /hello/World</a></li>
-            <li><a href="/users">GET /users</a></li>
-            <li><a href="/users/1">GET /users/1</a></li>
-            <li><a href="/users?limit=5">GET /users?limit=5</a></li>
+            <li><a href="api1/hello/World">GET /hello/World</a></li>
+            <li><a href="api1/users">GET /users</a></li>
+            <li><a href="api1/users/1">GET /users/1</a></li>
+            <li><a href="api1/users?limit=5">GET /users?limit=5</a></li>
             <li>POST /users (send JSON body)</li>
-            <li><a href="/old-style">GET /old-style (old Request style)</a></li>
+            <li><a href="api1/old-style">GET /old-style (old Request style)</a></li>
         </ul>
     "#,
     ))

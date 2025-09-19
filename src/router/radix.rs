@@ -6,9 +6,9 @@ use std::fmt;
 /// A compressed trie (radix tree) node for efficient path routing
 #[derive(Clone)]
 struct RadixNode {
-    /// The path segment for this node (compressed)
+    /// The path segment for this node (compressed path)
     path: String,
-    /// Handler for this exact path (if any)
+    /// Handler for this exact path if any
     handlers: HashMap<Method, HandlerFn>,
     /// Child nodes
     children: Vec<RadixNode>,
@@ -64,7 +64,7 @@ impl RadixNode {
     }
 }
 
-/// High-performance radix tree router
+/// High-performance radix tree router with nested route support
 #[derive(Clone)]
 pub struct RadixRouter {
     root: RadixNode,
@@ -86,11 +86,11 @@ impl RadixRouter {
         }
     }
 
-    /// Insert a route into the radix tree
+    /// Insert a route into the radix tree with support for nested routes
     pub fn insert(&mut self, path: &str, method: Method, handler: HandlerFn) {
         let normalized_path = normalize_radix_path(path);
         tracing::debug!(
-            "Inserting route: {} {} into radix tree",
+            "Inserting route into radix tree: {} {}",
             method,
             normalized_path
         );
@@ -100,6 +100,7 @@ impl RadixRouter {
             .split('/')
             .filter(|s| !s.is_empty())
             .collect();
+
         Self::insert_segments(&mut self.root, &segments, method, handler);
     }
 
@@ -119,7 +120,11 @@ impl RadixRouter {
         let segment = segments[0];
         let remaining_segments = &segments[1..];
 
-        tracing::trace!("Processing segment: '{}'", segment);
+        tracing::trace!(
+            "Processing segment '{}' with {} remaining",
+            segment,
+            remaining_segments.len()
+        );
 
         // Check if this segment is a parameter or wildcard
         if segment.starts_with(':') {
@@ -139,8 +144,7 @@ impl RadixRouter {
             // Create new parameter node
             let mut param_node = RadixNode::new();
             param_node.param_name = Some(param_name.clone());
-            param_node.path = segment.to_string(); // Keep the original :param format for debugging
-
+            param_node.path = segment.to_string(); // Keep the original param format for debugging
             Self::insert_segments(&mut param_node, remaining_segments, method, handler);
 
             // Insert parameter node before wildcards but after static routes
@@ -169,7 +173,6 @@ impl RadixRouter {
             wildcard_node.param_name = Some(wildcard_name);
             wildcard_node.is_wildcard = true;
             wildcard_node.path = segment.to_string();
-
             Self::insert_segments(&mut wildcard_node, remaining_segments, method, handler);
 
             // Wildcards go at the end
@@ -195,14 +198,15 @@ impl RadixRouter {
                 .position(|child| child.param_name.is_some())
                 .unwrap_or(node.children.len());
             node.children.insert(insert_pos, static_node);
-
-            // Update indices for fast lookup
-            Self::update_indices(node);
         }
+
+        // Update indices for fast lookup
+        Self::update_indices(node);
     }
 
     fn update_indices(node: &mut RadixNode) {
         let mut indices = String::new();
+
         for child in &node.children {
             if child.param_name.is_none() && !child.is_wildcard {
                 if let Some(first_char) = child.path.chars().next() {
@@ -212,10 +216,11 @@ impl RadixRouter {
                 }
             }
         }
+
         node.indices = indices;
     }
 
-    /// Lookup a route in the radix tree
+    /// Lookup a route in the radix tree with full nested route support
     pub fn lookup(
         &self,
         method: &Method,
@@ -251,8 +256,8 @@ impl RadixRouter {
         params: &mut HashMap<String, String>,
     ) -> Option<HandlerFn> {
         tracing::trace!(
-            "lookup_segments: segments={:?}, node has {} children",
-            segments,
+            "lookup_segments: {} segments?, node has {} children",
+            segments.len(),
             node.children.len()
         );
 
@@ -271,15 +276,15 @@ impl RadixRouter {
         let remaining_segments = &segments[1..];
 
         tracing::trace!(
-            "Processing segment: '{}', remaining: {:?}",
+            "Processing segment '{}' (remaining: {})",
             segment,
-            remaining_segments
+            remaining_segments.len()
         );
 
         // First, try static routes (most specific)
         for child in &node.children {
             if child.param_name.is_none() && !child.is_wildcard && child.path == segment {
-                tracing::trace!("Matched static route: '{}'", child.path);
+                tracing::trace!("Matched static route: {}", child.path);
                 if let Some(handler) =
                     self.lookup_segments(child, remaining_segments, method, params)
                 {
@@ -293,9 +298,9 @@ impl RadixRouter {
             if let Some(param_name) = &child.param_name {
                 if !child.is_wildcard {
                     tracing::trace!(
-                        "Trying parameter route: param '{}' for segment '{}'",
-                        param_name,
-                        segment
+                        "Trying parameter route for segment '{}' (param: {})",
+                        segment,
+                        param_name
                     );
 
                     // Store the parameter value
@@ -314,7 +319,6 @@ impl RadixRouter {
                     } else {
                         params.remove(param_name);
                     }
-                    tracing::trace!("Parameter route backtracked");
                 }
             }
         }
@@ -323,25 +327,77 @@ impl RadixRouter {
         for child in &node.children {
             if let Some(param_name) = &child.param_name {
                 if child.is_wildcard {
-                    tracing::trace!("Trying wildcard route: param '{}'", param_name);
+                    tracing::trace!("Trying wildcard route: {}", param_name);
 
-                    // Wildcard captures everything remaining
-                    let wildcard_value = segments.join("/");
-                    params.insert(param_name.clone(), wildcard_value);
+                    // For wildcard, we need to handle nested routes properly
+                    if remaining_segments.is_empty() {
+                        // Single segment wildcard
+                        params.insert(param_name.clone(), segment.to_string());
+                        if let Some(handler) = child.handlers.get(method) {
+                            tracing::trace!("Single segment wildcard route matched!");
+                            return Some(handler.clone());
+                        }
+                        // Remove if no handler found
+                        params.remove(param_name);
+                    } else {
+                        // Multi-segment wildcard - capture everything remaining
+                        let mut wildcard_segments = vec![segment];
+                        wildcard_segments.extend_from_slice(remaining_segments);
+                        let wildcard_value = wildcard_segments.join("/");
+                        params.insert(param_name.clone(), wildcard_value);
 
-                    if let Some(handler) = child.handlers.get(method) {
-                        tracing::trace!("Wildcard route matched!");
-                        return Some(handler.clone());
+                        if let Some(handler) = child.handlers.get(method) {
+                            tracing::trace!("Multi-segment wildcard route matched!");
+                            return Some(handler.clone());
+                        }
+                        // Remove if no handler found
+                        params.remove(param_name);
                     }
-
-                    // Remove if no handler found
-                    params.remove(param_name);
                 }
             }
         }
 
-        tracing::trace!("No route matched for segment: '{}'", segment);
+        tracing::trace!("No route matched for segment '{}'", segment);
         None
+    }
+
+    /// Insert a nested router at the given prefix - FIXED VERSION
+    pub fn insert_nested(&mut self, prefix: &str, nested_router: &RadixRouter) {
+        let normalized_prefix = normalize_radix_path(prefix);
+        tracing::debug!("Inserting nested router at prefix: {}", normalized_prefix);
+
+        // Properly merge the nested router without creating duplicates
+        self.insert_nested_handlers(&normalized_prefix, &nested_router.root);
+    }
+
+    /// Fixed version of insert_handlers_with_prefix that doesn't create duplicates
+    fn insert_nested_handlers(&mut self, prefix: &str, node: &RadixNode) {
+        // If this node has handlers, insert them with the prefix
+        for (method, handler) in &node.handlers {
+            let full_path = if node.path.is_empty() {
+                prefix.to_string()
+            } else if prefix == "/" {
+                format!("/{}", node.path)
+            } else {
+                format!("{}/{}", prefix, node.path)
+            };
+
+            // Insert using the normal insert method to avoid duplication
+            self.insert(&full_path, method.clone(), handler.clone());
+        }
+
+        // Recursively process children with proper path construction
+        for child in &node.children {
+            let child_prefix = if node.path.is_empty() {
+                prefix.to_string()
+            } else if prefix == "/" {
+                format!("/{}", node.path)
+            } else {
+                format!("{}/{}", prefix, node.path)
+            };
+
+            self.insert_nested_handlers(&child_prefix, child);
+        }
     }
 
     /// Get statistics about the radix tree
@@ -391,6 +447,7 @@ impl RadixRouter {
     }
 }
 
+/// Statistics about the radix tree
 #[derive(Debug, Default)]
 pub struct RadixStats {
     pub node_count: usize,
@@ -400,8 +457,9 @@ pub struct RadixStats {
     pub max_depth: usize,
 }
 
+/// Normalize a path for radix tree operations
 fn normalize_radix_path(path: &str) -> String {
-    if path.is_empty() || path == "/" {
+    if path.is_empty() {
         return "/".to_string();
     }
 
@@ -413,7 +471,7 @@ fn normalize_radix_path(path: &str) -> String {
     }
 
     // Add the path, removing multiple consecutive slashes
-    let mut prev_char = '\0';
+    let mut prev_char = '/';
     for ch in path.chars() {
         if ch == '/' && prev_char == '/' {
             continue; // Skip multiple consecutive slashes

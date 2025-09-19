@@ -277,7 +277,23 @@ impl Router {
         {
             let mut inner = self.inner.write();
             inner.dirty = true;
-            inner.nested_routers.push((normalize_path(path), router));
+            let prefix = normalize_path(path);
+
+            match inner.mode {
+                RouterMode::Radix => {
+                    // For radix mode, extract the nested router's radix tree and merge it
+                    let nested_inner = router.inner.read();
+                    inner
+                        .radix_router
+                        .insert_nested(&prefix, &nested_inner.radix_router);
+                    tracing::debug!("Nested radix router at prefix: {}", prefix);
+                }
+                RouterMode::Base => {
+                    // For base mode, use the original nested router approach
+                    inner.nested_routers.push((prefix.clone(), router));
+                    tracing::debug!("Nested base router at prefix: {}", prefix);
+                }
+            }
         }
         self
     }
@@ -430,45 +446,43 @@ impl Router {
             RouterMode::Base => None,
         };
 
-        // Process nested routers
-        for (prefix, nested_router) in &inner.nested_routers {
-            let nested_compiled = nested_router.ensure_compiled();
+        // Process nested routers (only for base mode, radix handles nesting during insertion)
+        if matches!(inner.mode, RouterMode::Base) {
+            for (prefix, nested_router) in &inner.nested_routers {
+                let nested_compiled = nested_router.ensure_compiled();
 
-            match inner.mode {
-                RouterMode::Base => {
-                    // Merge routes with prefix (for base mode)
-                    for entry in nested_compiled.routes.iter() {
-                        let method = entry.key().clone();
-                        let nested_routes = entry.value();
-                        for route in nested_routes {
-                            let full_path = if route.path == "/" {
-                                prefix.clone()
-                            } else {
-                                format!("{}{}", prefix, route.path)
-                            };
-                            let mut new_route = route.clone();
-                            new_route.path = full_path.clone();
-                            new_route.regex = Route::compile_regex(&full_path);
-                            routes
-                                .entry(method.clone())
-                                .or_insert_with(Vec::new)
-                                .push(new_route);
-                        }
+                // Merge routes with prefix for base mode
+                for entry in nested_compiled.routes.iter() {
+                    let method = entry.key().clone();
+                    let nested_routes = entry.value();
+
+                    for route in nested_routes {
+                        let full_path = if route.path == "/" {
+                            prefix.clone()
+                        } else {
+                            format!("{}{}", prefix, route.path)
+                        };
+
+                        let mut new_route = route.clone();
+                        new_route.path = full_path.clone();
+                        new_route.regex = Route::compile_regex(&full_path);
+
+                        routes
+                            .entry(method.clone())
+                            .or_insert_with(Vec::new)
+                            .push(new_route);
                     }
                 }
-                RouterMode::Radix => {
-                    // For radix mode, nested routers are handled during insertion
+
+                // Merge middleware (nested first)
+                let mut combined = nested_compiled.middleware.clone();
+                combined.extend(middleware.drain(..));
+                middleware = combined;
+
+                // Use nested not found handler if we don't have one
+                if not_found_handler.is_none() {
+                    not_found_handler = nested_compiled.not_found_handler.clone();
                 }
-            }
-
-            // Merge middleware (nested first)
-            let mut combined = nested_compiled.middleware.clone();
-            combined.extend(middleware.drain(..));
-            middleware = combined;
-
-            // Use nested not found handler if we don't have one
-            if not_found_handler.is_none() {
-                not_found_handler = nested_compiled.not_found_handler.clone();
             }
         }
 
@@ -502,6 +516,8 @@ impl Router {
 
     pub async fn handle(&self, mut req: Request) -> Result<Response> {
         let compiled = self.ensure_compiled();
+
+        println!("middleware: {}", compiled.middleware.len());
 
         // Apply global middleware in order
         for mw in &compiled.middleware {
@@ -652,6 +668,31 @@ impl Router {
     pub fn clear_cache(&self) {
         let compiled = self.ensure_compiled();
         compiled.route_cache.clear();
+    }
+
+    /// Get router statistics (only available in radix mode)
+    pub fn stats(&self) -> Option<crate::router::radix::RadixStats> {
+        let compiled = self.ensure_compiled();
+        match compiled.mode {
+            RouterMode::Radix => {
+                if let Some(radix_router) = &compiled.radix_router {
+                    Some(radix_router.stats())
+                } else {
+                    None
+                }
+            }
+            RouterMode::Base => None,
+        }
+    }
+
+    /// Print router tree structure (debug only, radix mode)
+    pub fn print_tree(&self) {
+        let compiled = self.ensure_compiled();
+        if let Some(radix_router) = &compiled.radix_router {
+            radix_router.print_tree();
+        } else {
+            println!("Tree printing only available in radix mode");
+        }
     }
 }
 
