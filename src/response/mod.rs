@@ -773,7 +773,26 @@ impl Response {
         self
     }
 
-    // Zero-copy body sharing
+    /// Returns a shared reference to the response body.
+    ///
+    /// This method returns a shared reference to the response body, allowing
+    /// multiple parts of the application to access the body without cloning it.
+    ///
+    /// # Returns
+    /// A shared reference to the response body
+    ///
+    /// # Examples
+    /// ```
+    /// use ignitia::Response;
+    /// use bytes::Bytes;
+    ///
+    /// let response = Response::new(http::StatusCode::OK)
+    ///     .with_body("Hello, World!");
+    ///
+    /// let body = response.body_shared();
+    /// assert_eq!(body.as_ref(), b"Hello, World!");
+    /// ```
+    #[inline]
     pub fn body_shared(&self) -> Arc<Bytes> {
         Arc::clone(&self.body)
     }

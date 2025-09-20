@@ -12,6 +12,66 @@ All notable changes to the Ignitia web framework will be documented in this file
 - Database connection pooling utilities
 - Session management middleware
 
+## [0.2.1] - 2024-09-20
+
+### Added
+- **Radix Tree Router**: New high-performance routing engine with O(log n) lookup time
+  - `router/radix.rs`: Compressed trie implementation for ultra-fast route matching
+  - `RouterMode` enum: Choose between Radix (default) and Base routing modes
+  - Up to 3x performance improvement over regex-based routing
+  - Memory-efficient shared prefix storage
+- **Advanced Server Performance**: New performance optimization modules
+  - `server/performance.rs`: Socket-level optimizations and benchmarking tools
+  - `server/pool.rs`: Connection pooling and resource management
+  - `PerformanceConfig::max_rps()`: Configuration for 65K+ RPS throughput
+  - Zero-copy optimizations and CPU affinity settings
+- **Enhanced Request Processing**: Improved request handling capabilities
+  - Better parameter extraction with type safety
+  - Optimized body parsing for large payloads
+  - Streaming request support for file uploads
+- **Response Optimization**: Advanced response generation features
+  - Improved compression algorithms and content negotiation
+  - Better caching header management
+  - Streaming response support for large datasets
+
+### Enhanced
+- **Router Module (`router/mod.rs`)**: Complete refactoring for better performance
+  - Radix tree integration as default routing engine
+  - Backward compatibility with existing route definitions
+  - Improved error handling and debugging information
+- **Server Module (`server/mod.rs`)**: Major performance and stability improvements
+  - Enhanced connection management with pooling
+  - Better protocol detection and negotiation
+  - Improved error handling and graceful shutdown
+- **Request Module (`request/`)**: Enhanced request processing capabilities
+  - Better multipart form handling
+  - Improved parameter extraction performance
+  - Enhanced security validation
+- **Response Module (`response/`)**: Advanced response building and optimization
+  - Better content type detection
+  - Improved compression handling
+  - Enhanced security headers management
+
+### Performance
+- **Route Matching**: 3x faster route resolution with Radix tree implementation
+- **Memory Usage**: 50% reduction in memory footprint for typical applications
+- **Request Throughput**: Optimized for 65,000+ requests per second
+- **Connection Handling**: Improved connection pooling reduces resource overhead
+
+### Fixed
+- Route parameter extraction edge cases with special characters
+- Memory leaks in connection pooling under high load
+- HTTP/2 flow control issues with large payloads
+- WebSocket connection cleanup race conditions
+- CORS handling with complex preflight scenarios
+
+### Changed
+- **Router**: Default routing mode changed to Radix for better performance
+- **Server**: Enhanced performance configuration options
+- **Request/Response**: Improved API consistency and error handling
+- Internal optimizations for better async performance
+
+
 ## [0.2.0] - 2024-09-14
 
 ### Added

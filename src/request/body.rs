@@ -305,7 +305,7 @@
 
 use std::{borrow::Cow, sync::Arc};
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use bytes::Bytes;
 use serde::de::DeserializeOwned;
 

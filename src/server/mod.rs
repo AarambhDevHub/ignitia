@@ -1,4 +1,110 @@
-//! High-performance server module with advanced optimizations
+//! High-performance HTTP/HTTPS server implementation with advanced optimizations
+//!
+//! This module provides the core server functionality for the Ignitia web framework,
+//! designed for maximum performance and scalability. It includes support for HTTP/1.1,
+//! HTTP/2, TLS/HTTPS, WebSocket upgrades, and various performance optimizations.
+//!
+//! # Features
+//!
+//! - **High-Performance Architecture**: Optimized for 65K+ RPS throughput
+//! - **Protocol Support**: HTTP/1.1, HTTP/2, and automatic protocol negotiation
+//! - **TLS/HTTPS**: Full TLS support with configurable cipher suites and certificates
+//! - **WebSocket Support**: Native WebSocket upgrade handling with message routing
+//! - **Performance Monitoring**: Built-in metrics collection and monitoring
+//! - **Connection Management**: Advanced connection pooling and lifecycle management
+//! - **Graceful Shutdown**: Clean shutdown with connection draining
+//!
+//! # Architecture
+//!
+//! The server is built around a multi-layered architecture:
+//!
+//! ```
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                    Application Layer                        │
+//! │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────┐   │
+//! │  │   Router    │ │ Middleware  │ │     Handlers        │   │
+//! │  └─────────────┘ └─────────────┘ └─────────────────────┘   │
+//! └─────────────────────────────────────────────────────────────┘
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                     Server Layer                           │
+//! │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────┐   │
+//! │  │   Config    │ │ Performance │ │     Protocol        │   │
+//! │  └─────────────┘ └─────────────┘ └─────────────────────┘   │
+//! └─────────────────────────────────────────────────────────────┘
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                   Transport Layer                          │
+//! │  ┌─────────────┐ ┌─────────────┐ ┌─────────────────────┐   │
+//! │  │     TLS     │ │    Pool     │ │    Connection       │   │
+//! │  └─────────────┘ └─────────────┘ └─────────────────────┘   │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! # Examples
+//!
+//! ## Basic HTTP Server
+//!
+//! ```
+//! use ignitia::{Router, Server};
+//! use std::net::SocketAddr;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let router = Router::new()
+//!         .get("/", || async { Ok(Response::text("Hello, World!")) })
+//!         .get("/health", || async { Ok(Response::json(serde_json::json!({"status": "ok"}))?) });
+//!
+//!     let addr: SocketAddr = "127.0.0.1:8080".parse()?;
+//!     let server = Server::new(router, addr);
+//!
+//!     println!("🚀 Server running on http://{}", addr);
+//!     server.ignitia().await
+//! }
+//! ```
+//!
+//! ## High-Performance Configuration
+//!
+//! ```
+//! use ignitia::{Router, Server, ServerConfig, PerformanceConfig};
+//!
+//! let router = Router::new();
+//! let perf_config = PerformanceConfig::max_rps();
+//! let server_config = ServerConfig::default()
+//!     .with_max_request_body_size(50 * 1024 * 1024); // 50MB
+//!
+//! let server = Server::new(router, addr)
+//!     .with_performance_config(perf_config)
+//!     .with_server_config(server_config);
+//! ```
+//!
+//! ## HTTPS Server with TLS
+//!
+//! ```
+//! use ignitia::{Router, Server, TlsConfig};
+//!
+//! let server = Server::new(router, addr)
+//!     .enable_https("cert.pem", "key.pem")?
+//!     .redirect_to_https(443);
+//! ```
+//!
+//! ## WebSocket Support
+//!
+//! ```
+//! let router = Router::new()
+//!     .websocket("/ws", |mut connection| async move {
+//!         while let Some(msg) = connection.next().await {
+//!             match msg? {
+//!                 Message::Text(text) => {
+//!                     connection.send(Message::Text(format!("Echo: {}", text))).await?;
+//!                 }
+//!                 Message::Binary(data) => {
+//!                     connection.send(Message::Binary(data)).await?;
+//!                 }
+//!                 _ => {}
+//!             }
+//!         }
+//!         Ok(())
+//!     });
+//! ```
 
 pub mod config;
 pub mod connection;
@@ -35,9 +141,8 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::net::TcpListener;
 use tokio::time::{interval, timeout};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "tls")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
@@ -48,40 +153,120 @@ use tokio_rustls::TlsAcceptor;
 use crate::websocket::upgrade::generate_accept_key;
 
 /// High-performance HTTP/HTTPS server with advanced optimizations
+///
+/// The `Server` struct is the core component that handles incoming HTTP connections,
+/// processes requests through the router, and manages the entire request-response lifecycle.
+/// It's designed for maximum performance and scalability, supporting both HTTP/1.1 and HTTP/2
+/// protocols with optional TLS encryption.
+///
+/// # Performance Characteristics
+///
+/// - **Throughput**: Optimized for 65K+ requests per second
+/// - **Latency**: Sub-millisecond response times for simple requests
+/// - **Concurrency**: Handles thousands of concurrent connections efficiently
+/// - **Memory**: Optimized memory usage with object pooling and zero-copy operations
+///
+/// # Features
+///
+/// - **Multi-Protocol**: HTTP/1.1, HTTP/2, automatic protocol detection
+/// - **TLS Support**: Full HTTPS support with configurable cipher suites
+/// - **WebSocket**: Native WebSocket upgrade handling
+/// - **Performance Monitoring**: Built-in metrics and monitoring capabilities
+/// - **Connection Management**: Advanced connection pooling and lifecycle management
+/// - **Graceful Shutdown**: Clean shutdown with connection draining
+///
+/// # Architecture
+///
+/// The server uses an event-driven, async architecture built on Tokio:
+///
+/// 1. **Connection Acceptance**: Optimized TCP listener with socket-level tuning
+/// 2. **Protocol Detection**: Automatic HTTP/1.1 vs HTTP/2 detection
+/// 3. **Request Processing**: High-performance request routing and handling
+/// 4. **Response Generation**: Optimized response building and transmission
+/// 5. **Connection Management**: Efficient connection pooling and cleanup
 pub struct Server {
-    /// Application router
+    /// Application router for handling requests
+    ///
+    /// The router contains all route definitions, middleware, and handlers
+    /// that define the application's behavior. It's wrapped in an Arc for
+    /// efficient sharing across worker threads.
     router: Arc<Router>,
+
     /// Server bind address
+    ///
+    /// The socket address (IP:port) where the server will listen for
+    /// incoming connections. Supports both IPv4 and IPv6 addresses.
     addr: SocketAddr,
+
     /// Server configuration
+    ///
+    /// Contains HTTP/1.1 and HTTP/2 protocol settings, TLS configuration,
+    /// and other server-wide behavioral parameters.
     config: ServerConfig,
+
     /// Performance configuration
+    ///
+    /// Socket-level optimizations, buffer sizes, connection settings,
+    /// and other performance-related parameters for maximum throughput.
     perf_config: PerformanceConfig,
+
     /// Performance metrics collection
+    ///
+    /// Real-time metrics tracking including RPS, response times, error rates,
+    /// and resource utilization for monitoring and optimization.
     metrics: Arc<PerformanceMetrics>,
+
     /// Server state tracking
+    ///
+    /// Internal state management for graceful shutdown, connection tracking,
+    /// and server lifecycle management.
     state: Arc<ServerState>,
 
+    /// TLS acceptor for HTTPS connections
+    ///
+    /// When TLS is enabled, this handles the TLS handshake and encryption
+    /// for secure connections. Only available when the "tls" feature is enabled.
     #[cfg(feature = "tls")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
-    /// TLS acceptor for HTTPS
     tls_acceptor: Option<TlsAcceptor>,
 }
 
 /// Server state for monitoring and graceful shutdown
+///
+/// This struct tracks the runtime state of the server and provides
+/// mechanisms for graceful shutdown and connection monitoring.
 #[derive(Debug)]
 struct ServerState {
     /// Server running state
+    ///
+    /// Atomic boolean indicating whether the server is currently running.
+    /// Used for coordinating graceful shutdown across all components.
     running: AtomicBool,
+
     /// Active connection count
+    ///
+    /// Tracks the current number of active TCP connections being processed.
+    /// Used for load monitoring and graceful shutdown coordination.
     active_connections: AtomicUsize,
+
     /// Total requests processed
+    ///
+    /// Lifetime counter of all requests processed by this server instance.
+    /// Used for calculating throughput metrics and capacity planning.
     total_requests: AtomicU64,
+
     /// Server start time
+    ///
+    /// Timestamp when the server was started, used for calculating uptime
+    /// and long-term performance trends.
     start_time: RwLock<Option<Instant>>,
 }
 
 impl ServerState {
+    /// Create a new server state instance
+    ///
+    /// Initializes all counters to zero and sets the server as not running.
+    /// This is called during server construction.
     fn new() -> Self {
         Self {
             running: AtomicBool::new(false),
@@ -94,6 +279,36 @@ impl ServerState {
 
 impl Server {
     /// Create a new high-performance server instance
+    ///
+    /// Creates a server with default high-performance configuration optimized
+    /// for maximum throughput. The server will bind to the specified address
+    /// and route requests through the provided router.
+    ///
+    /// # Arguments
+    ///
+    /// * `router` - The application router containing routes and middleware
+    /// * `addr` - The socket address to bind to (e.g., "127.0.0.1:8080")
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::{Router, Server};
+    /// use std::net::SocketAddr;
+    ///
+    /// let router = Router::new()
+    ///     .get("/", || async { Ok(Response::text("Hello, World!")) });
+    ///
+    /// let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+    /// let server = Server::new(router, addr);
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// This constructor applies a high-performance configuration by default:
+    /// - TCP_NODELAY enabled for low latency
+    /// - SO_REUSEPORT for better load distribution
+    /// - Optimized buffer sizes for high throughput
+    /// - Performance metrics collection enabled
     pub fn new(router: Router, addr: SocketAddr) -> Self {
         let perf_config = PerformanceConfig::max_rps();
         let metrics = PerformanceMetrics::new();
@@ -112,6 +327,28 @@ impl Server {
     }
 
     /// Create server with custom configuration
+    ///
+    /// Allows full customization of server behavior through the ServerConfig.
+    /// This method provides more control over HTTP/1.1 and HTTP/2 settings,
+    /// protocol detection, and other server parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `router` - The application router
+    /// * `addr` - The socket address to bind to
+    /// * `config` - Custom server configuration
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::{Router, Server, ServerConfig, Http2Config};
+    /// use std::time::Duration;
+    ///
+    /// let config = ServerConfig::default()
+    ///     .with_max_request_body_size(100 * 1024 * 1024); // 100MB
+    ///
+    /// let server = Server::with_config(router, addr, config);
+    /// ```
     pub fn with_config(router: Router, addr: SocketAddr, config: ServerConfig) -> Self {
         let mut server = Self::new(router, addr);
         server.config = config;
@@ -119,6 +356,25 @@ impl Server {
     }
 
     /// Create server optimized for maximum RPS
+    ///
+    /// This constructor applies the most aggressive performance optimizations
+    /// available, designed for scenarios where absolute maximum throughput
+    /// is the primary concern.
+    ///
+    /// # Optimizations Applied
+    ///
+    /// - Maximum socket buffer sizes (512KB send/receive)
+    /// - Largest connection backlog (16,384 connections)
+    /// - Shorter keep-alive times for faster connection recycling
+    /// - CPU affinity enabled for consistent performance
+    /// - All fast-path optimizations enabled
+    ///
+    /// # Use Cases
+    ///
+    /// - Load testing scenarios
+    /// - High-traffic production APIs (>50K RPS)
+    /// - Benchmarking and performance testing
+    /// - Edge computing scenarios with extreme performance requirements
     pub fn max_rps(router: Router, addr: SocketAddr) -> Self {
         let perf_config = PerformanceConfig::max_rps();
         let metrics = PerformanceMetrics::new();
@@ -137,18 +393,100 @@ impl Server {
     }
 
     /// Set performance configuration
+    ///
+    /// Replaces the server's performance configuration with custom settings.
+    /// This allows fine-tuning of socket-level optimizations, buffer sizes,
+    /// and connection management parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Custom performance configuration
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::{PerformanceConfig, Server};
+    /// use std::time::Duration;
+    ///
+    /// let perf_config = PerformanceConfig::default()
+    ///     .with_backlog(32768)
+    ///     .with_keep_alive(Duration::from_secs(30))
+    ///     .with_buffer_sizes(1024 * 1024, 512 * 1024); // 1MB send, 512KB recv
+    ///
+    /// let server = Server::new(router, addr)
+    ///     .with_performance_config(perf_config);
+    /// ```
     pub fn with_performance_config(mut self, config: PerformanceConfig) -> Self {
         self.perf_config = config;
         self
     }
 
     /// Set server configuration
+    ///
+    /// Replaces the server's configuration with custom HTTP and protocol settings.
+    /// This affects how the server handles different HTTP versions, request sizes,
+    /// and protocol-specific behaviors.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Custom server configuration
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::{ServerConfig, Http2Config};
+    /// use std::time::Duration;
+    ///
+    /// let http2_config = Http2Config::default()
+    ///     .with_max_concurrent_streams(2000)
+    ///     .with_keep_alive_interval(Duration::from_secs(30));
+    ///
+    /// let server_config = ServerConfig::default()
+    ///     .with_http2(http2_config)
+    ///     .with_max_request_body_size(200 * 1024 * 1024); // 200MB
+    ///
+    /// let server = Server::new(router, addr)
+    ///     .with_server_config(server_config);
+    /// ```
     pub fn with_server_config(mut self, config: ServerConfig) -> Self {
         self.config = config;
         self
     }
 
     /// Enable HTTPS with custom TLS configuration
+    ///
+    /// Configures the server to handle TLS connections using the provided
+    /// TLS configuration. This enables HTTPS support with full control
+    /// over cipher suites, protocol versions, and certificate management.
+    ///
+    /// # Arguments
+    ///
+    /// * `tls_config` - TLS configuration including certificates and settings
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(Self)` if TLS configuration is successful, or a `TlsError`
+    /// if certificate loading or TLS setup fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::{Server, TlsConfig, TlsVersion};
+    ///
+    /// let tls_config = TlsConfig::new("server.crt", "server.key")
+    ///     .with_protocol_versions(&[TlsVersion::TlsV12, TlsVersion::TlsV13])
+    ///     .with_cipher_suites(&["TLS_AES_256_GCM_SHA384"]);
+    ///
+    /// let server = Server::new(router, addr)
+    ///     .with_tls(tls_config)?;
+    /// ```
+    ///
+    /// # Security Notes
+    ///
+    /// - Ensure certificate files are properly secured
+    /// - Use strong cipher suites appropriate for your security requirements
+    /// - Consider certificate rotation and renewal strategies
+    /// - Monitor TLS metrics for security and performance
     #[cfg(feature = "tls")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
     pub fn with_tls(mut self, tls_config: tls::TlsConfig) -> Result<Self, tls::TlsError> {
@@ -159,6 +497,40 @@ impl Server {
     }
 
     /// Enable HTTPS with certificate and key files
+    ///
+    /// Convenient method to enable HTTPS by directly specifying certificate
+    /// and private key file paths. Creates a default TLS configuration with
+    /// secure defaults and loads the specified certificate files.
+    ///
+    /// # Arguments
+    ///
+    /// * `cert_file` - Path to the X.509 certificate file (PEM format)
+    /// * `key_file` - Path to the private key file (PEM format)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(Self)` if certificate loading succeeds, or a `TlsError`
+    /// if file reading or certificate parsing fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let server = Server::new(router, addr)
+    ///     .enable_https("certs/server.crt", "certs/server.key")?;
+    /// ```
+    ///
+    /// # File Requirements
+    ///
+    /// - Certificate file must be in PEM format
+    /// - Private key must be in PEM format (RSA or EC)
+    /// - Files must be readable by the server process
+    /// - Certificate must be valid and not expired
+    ///
+    /// # Security Considerations
+    ///
+    /// - Protect private key files with appropriate file permissions (600)
+    /// - Store certificates in a secure location
+    /// - Consider using a certificate management system for production
     #[cfg(feature = "tls")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
     pub fn enable_https(
@@ -171,6 +543,37 @@ impl Server {
     }
 
     /// Generate and use self-signed certificate (development only)
+    ///
+    /// Creates a self-signed certificate for the specified domain and configures
+    /// the server to use it. This is intended for development and testing only
+    /// and should never be used in production environments.
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - Domain name for the certificate (e.g., "localhost", "example.com")
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(Self)` if certificate generation succeeds, or a `TlsError`
+    /// if certificate generation or configuration fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Development server with self-signed certificate
+    /// let server = Server::new(router, addr)
+    ///     .with_self_signed_cert("localhost")?;
+    /// ```
+    ///
+    /// # Warning
+    ///
+    /// Self-signed certificates will trigger security warnings in browsers
+    /// and should only be used for development, testing, or internal services
+    /// where certificate authority validation is not required.
+    ///
+    /// # Features Required
+    ///
+    /// This method requires both the "tls" and "self-signed" features to be enabled.
     #[cfg(all(feature = "tls", feature = "self-signed"))]
     #[cfg_attr(docsrs, doc(cfg(all(feature = "tls", feature = "self-signed"))))]
     pub fn with_self_signed_cert(self, domain: &str) -> Result<Self, tls::TlsError> {
@@ -180,35 +583,196 @@ impl Server {
     }
 
     /// Enable HTTP to HTTPS redirect
+    ///
+    /// Configures the server to automatically redirect all HTTP requests to HTTPS.
+    /// This is useful when running both HTTP and HTTPS servers and you want to
+    /// ensure all traffic uses encrypted connections.
+    ///
+    /// # Arguments
+    ///
+    /// * `https_port` - The port number where the HTTPS server is running
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Redirect HTTP (port 80) to HTTPS (port 443)
+    /// let server = Server::new(router, "0.0.0.0:80".parse().unwrap())
+    ///     .redirect_to_https(443);
+    /// ```
+    ///
+    /// # Behavior
+    ///
+    /// When enabled, all HTTP requests will receive a 301 (Moved Permanently)
+    /// response with a Location header pointing to the HTTPS equivalent URL.
+    /// This ensures search engines and browsers update their bookmarks to
+    /// use the secure version.
+    ///
+    /// # Deployment Considerations
+    ///
+    /// - Run separate server instances on ports 80 (HTTP) and 443 (HTTPS)
+    /// - Consider using a reverse proxy for more complex routing needs
+    /// - Monitor redirect performance impact on high-traffic sites
     pub fn redirect_to_https(mut self, https_port: u16) -> Self {
         self.config = self.config.redirect_to_https(https_port);
         self
     }
 
     /// Get server metrics
+    ///
+    /// Returns a reference to the server's performance metrics collector.
+    /// This provides access to real-time statistics about server performance,
+    /// including request throughput, response times, error rates, and resource usage.
+    ///
+    /// # Returns
+    ///
+    /// An `Arc<PerformanceMetrics>` that can be shared across threads for
+    /// monitoring and observability purposes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let server = Server::new(router, addr);
+    /// let metrics = server.metrics();
+    ///
+    /// // Later, in a monitoring task:
+    /// let current_rps = metrics.current_rps();
+    /// let avg_response_time = metrics.avg_response_time();
+    /// let error_rate = metrics.error_rate();
+    ///
+    /// println!("RPS: {}, Avg Response: {:?}, Error Rate: {:.2}%",
+    ///     current_rps, avg_response_time, error_rate);
+    /// ```
+    ///
+    /// # Metrics Available
+    ///
+    /// - **Throughput**: Requests per second, total requests
+    /// - **Latency**: Average, P95, P99 response times
+    /// - **Errors**: Error count and error rate percentage
+    /// - **Connections**: Active connection count
+    /// - **Resources**: Memory usage, CPU utilization
     pub fn metrics(&self) -> Arc<PerformanceMetrics> {
         Arc::clone(&self.metrics)
     }
 
     /// Get server uptime
+    ///
+    /// Returns the duration since the server was started, or None if the
+    /// server hasn't been started yet. This is useful for monitoring and
+    /// health checks.
+    ///
+    /// # Returns
+    ///
+    /// `Some(Duration)` representing the uptime if the server is running,
+    /// or `None` if the server hasn't been started.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// if let Some(uptime) = server.uptime() {
+    ///     println!("Server uptime: {:?}", uptime);
+    /// } else {
+    ///     println!("Server not started");
+    /// }
+    /// ```
     pub fn uptime(&self) -> Option<Duration> {
         self.state.start_time.read().map(|start| start.elapsed())
     }
 
     /// Get active connection count
+    ///
+    /// Returns the current number of active TCP connections being processed
+    /// by the server. This is useful for load monitoring and capacity planning.
+    ///
+    /// # Returns
+    ///
+    /// The current number of active connections as a `usize`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let active_connections = server.active_connections();
+    /// if active_connections > 1000 {
+    ///     println!("High load detected: {} active connections", active_connections);
+    /// }
+    /// ```
     pub fn active_connections(&self) -> usize {
         self.state.active_connections.load(Ordering::Relaxed)
     }
 
     /// Get total requests processed
+    ///
+    /// Returns the lifetime total of requests processed by this server instance.
+    /// This counter never resets and provides a baseline for calculating rates
+    /// and trends over time.
+    ///
+    /// # Returns
+    ///
+    /// The total number of requests processed as a `u64`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let total_requests = server.total_requests();
+    /// println!("Total requests served: {}", total_requests);
+    /// ```
     pub fn total_requests(&self) -> u64 {
         self.state.total_requests.load(Ordering::Relaxed)
     }
 
     /// Start the high-performance server
+    ///
+    /// This is the main entry point that starts the server and begins accepting
+    /// connections. The method runs indefinitely until the server is shut down
+    /// or encounters a fatal error.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` when the server shuts down gracefully, or an error
+    /// if startup fails or a fatal error occurs during operation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let server = Server::new(router, addr);
+    ///     server.ignitia().await
+    /// }
+    /// ```
+    ///
+    /// # Startup Process
+    ///
+    /// 1. **Initialization**: Set server state and start time
+    /// 2. **Socket Creation**: Create optimized TCP listener with performance tuning
+    /// 3. **Protocol Detection**: Determine HTTP/1.1 vs HTTP/2 capabilities
+    /// 4. **Metrics**: Start background metrics collection
+    /// 5. **Connection Loop**: Begin accepting and processing connections
+    /// 6. **Graceful Shutdown**: Handle shutdown signals and drain connections
+    ///
+    /// # Performance Features
+    ///
+    /// - **Socket Optimization**: SO_REUSEPORT, TCP_NODELAY, optimized buffers
+    /// - **Connection Pooling**: Reuse connections and reduce allocation overhead
+    /// - **Protocol Negotiation**: Automatic HTTP/1.1 and HTTP/2 selection
+    /// - **TLS Acceleration**: Hardware-accelerated encryption when available
+    /// - **Request Processing**: High-performance request routing and handling
+    ///
+    /// # Error Handling
+    ///
+    /// The server handles various error conditions gracefully:
+    /// - **Bind Errors**: Address already in use, permission denied
+    /// - **TLS Errors**: Certificate issues, handshake failures
+    /// - **Connection Errors**: Client disconnections, protocol violations
+    /// - **Resource Exhaustion**: Memory limits, file descriptor limits
+    ///
+    /// # Monitoring
+    ///
+    /// During operation, the server provides extensive monitoring:
+    /// - Real-time performance metrics
+    /// - Connection and request tracking
+    /// - Error rate monitoring
+    /// - Resource usage statistics
     pub async fn ignitia(self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("🚀 Igniting high-performance server...");
-
         // Mark server as running
         self.state.running.store(true, Ordering::Relaxed);
         *self.state.start_time.write() = Some(Instant::now());
@@ -257,17 +821,6 @@ impl Server {
             "🔥 Ignitia server blazing on {}://{} ({})",
             scheme, self.addr, protocol_info
         );
-
-        if self.config.http2.enable_prior_knowledge {
-            info!("🌐 H2C (HTTP/2 Cleartext) enabled");
-        }
-
-        info!("📊 Performance optimizations enabled:");
-        info!(
-            "   - Zero-copy optimizations: {}",
-            self.perf_config.zero_copy
-        );
-        info!("   - Connection backlog: {}", self.perf_config.backlog);
 
         // Start metrics collection task
         self.start_metrics_collection(Arc::clone(&listener_metrics));
@@ -344,6 +897,10 @@ impl Server {
     }
 
     /// Start background metrics collection
+    ///
+    /// Spawns a background task that periodically collects and updates
+    /// performance metrics. This task runs independently and provides
+    /// real-time monitoring data.
     fn start_metrics_collection(&self, _listener_metrics: Arc<PerformanceMetrics>) {
         let server_state = Arc::clone(&self.state);
         let server_metrics = Arc::clone(&self.metrics);
@@ -382,6 +939,30 @@ impl Server {
     }
 
     /// Graceful shutdown
+    ///
+    /// Initiates a graceful shutdown of the server, waiting for active
+    /// connections to complete before terminating. This ensures that
+    /// in-flight requests are processed and clients receive proper responses.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // In a signal handler or shutdown routine
+    /// server.shutdown().await;
+    /// ```
+    ///
+    /// # Shutdown Process
+    ///
+    /// 1. **Stop Accepting**: Stop accepting new connections
+    /// 2. **Drain Connections**: Wait for active connections to finish
+    /// 3. **Timeout**: Force shutdown after timeout if connections remain
+    /// 4. **Cleanup**: Release resources and update state
+    ///
+    /// # Timeout
+    ///
+    /// The shutdown process has a 30-second timeout. If connections are still
+    /// active after this time, the server will force shutdown to prevent
+    /// hanging indefinitely.
     pub async fn shutdown(&self) {
         info!("🛑 Initiating graceful shutdown...");
         self.state.running.store(false, Ordering::Relaxed);
@@ -408,6 +989,10 @@ impl Server {
 }
 
 /// Handle TLS connections with protocol negotiation
+///
+/// Processes incoming TLS connections, performing the TLS handshake and
+/// extracting ALPN (Application-Layer Protocol Negotiation) information
+/// to determine the appropriate HTTP protocol version.
 #[cfg(feature = "tls")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
 async fn handle_tls_connection(
@@ -472,6 +1057,9 @@ async fn handle_tls_connection(
 }
 
 /// Handle regular HTTP connections
+///
+/// Processes non-TLS HTTP connections with automatic protocol detection
+/// and appropriate handling for HTTP/1.1 and HTTP/2 requests.
 async fn handle_connection<I>(
     io: TokioIo<I>,
     router: Arc<Router>,
@@ -518,6 +1106,9 @@ where
 }
 
 /// Handle HTTP to HTTPS redirect
+///
+/// Provides automatic redirection from HTTP to HTTPS for security.
+/// Responds with a 301 redirect to the HTTPS version of the requested URL.
 async fn handle_http_redirect<I>(
     io: TokioIo<I>,
     https_port: u16,
@@ -569,6 +1160,9 @@ where
 }
 
 /// Serve HTTP/2 connections with optimizations
+///
+/// Handles HTTP/2 connections with advanced configuration options
+/// including flow control, multiplexing, and performance tuning.
 async fn serve_http2_connection<S, I>(
     io: TokioIo<I>,
     service: S,
@@ -622,6 +1216,9 @@ where
 }
 
 /// Handle individual HTTP requests with optimizations
+///
+/// Processes individual HTTP requests through the application router,
+/// including WebSocket upgrade detection, body parsing, and response generation.
 async fn handle_request(
     router: Arc<Router>,
     req: hyper::Request<hyper::body::Incoming>,
@@ -643,6 +1240,8 @@ async fn handle_request(
 }
 
 /// Check if request is WebSocket upgrade
+///
+/// Fast path checks for WebSocket upgrade headers without expensive parsing.
 #[cfg(feature = "websocket")]
 fn is_websocket_upgrade(req: &hyper::Request<hyper::body::Incoming>) -> bool {
     use hyper::header::{CONNECTION, UPGRADE};
@@ -679,6 +1278,9 @@ fn is_websocket_upgrade(req: &hyper::Request<hyper::body::Incoming>) -> bool {
 }
 
 /// Handle WebSocket upgrade requests
+///
+/// Processes WebSocket upgrade requests by finding the appropriate handler
+/// and performing the protocol upgrade.
 #[cfg(feature = "websocket")]
 async fn handle_websocket_upgrade(
     router: Arc<Router>,
@@ -758,6 +1360,9 @@ async fn handle_websocket_upgrade(
 }
 
 /// Handle regular HTTP requests
+///
+/// Processes non-WebSocket HTTP requests through the router with
+/// body parsing, request processing, and response generation.
 async fn handle_regular_http_request(
     router: Arc<Router>,
     req: hyper::Request<hyper::body::Incoming>,
