@@ -1,6 +1,9 @@
 use ignitia::{
     middleware::{RateLimitConfig, RateLimitingMiddleware},
-    raw_handler, Json, Path, Query, Request, Response, Result, Router, Server,
+    raw_handler,
+    server::PerformanceConfig,
+    Json, LayeredHandler, Path, Query, Request, RequestIdMiddleware, Response, Result, Router,
+    Server, ServerConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, time::Duration};
@@ -43,20 +46,49 @@ async fn main() -> Result<()> {
     // Initialize rate limiting middleware
     let rate_limiting_middleware = RateLimitConfig::new(10, Duration::from_secs(60));
 
+    let layer_handler = LayeredHandler::new(hello).layer(RequestIdMiddleware::new());
+
     // Create router using the new handler system
     let router = Router::new()
         .middleware(RateLimitingMiddleware::new(rate_limiting_middleware))
-        .get("/", home) // No extractors - works directly
-        .get("/hello/:name", hello) // Uses Path extractor
+        // .middleware(RequestIdMiddleware::new())
+        .with_mode(ignitia::router::RouterMode::Base)
+        .get("/", home)
+        // .get("/hello/:name", hello)
+        .route_with_layered("/hello/:name", http::Method::GET, layer_handler)
         .get("/users", list_users) // Uses Query extractor
         .get("/users/:id", get_user) // Uses Path extractor
         .post("/users", create_user) // Uses Json extractor
         .get("/old-style", raw_handler(old_style_handler)) // For Request access
         .not_found(not_found);
 
+    // 🚀 BEAST MODE: Maximum RPS Performance Configuration
+    let perf_config = PerformanceConfig {
+        reuse_port: true,                          // SO_REUSEPORT for load balancing
+        tcp_nodelay: true,                         // TCP_NODELAY for low latency
+        reuse_addr: true,                          // SO_REUSEADDR
+        keep_alive: Some(Duration::from_secs(30)), // Optimized keepalive
+        send_buffer_size: Some(2 * 1024 * 1024),   // 2MB send buffer
+        recv_buffer_size: Some(2 * 1024 * 1024),   // 2MB receive buffer
+        backlog: 65536,                            // Large connection backlog
+        cpu_affinity: true,                        // CPU affinity for threads
+        worker_threads: num_cpus::get() * 6,       // More worker threads
+        fast_path: true,                           // Enable fast path optimizations
+        zero_copy: true,                           // Zero-copy optimizations
+    };
+
+    // HTTP/1.1 Configuration for maximum wrk compatibility
+    let server_config = ServerConfig {
+        http1_enabled: true,                     // Enable HTTP/1.1 for wrk
+        max_request_body_size: 64 * 1024 * 1024, // 64MB body limit
+        ..Default::default()
+    };
+
     // Create and run server
     let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
-    let server = Server::new(router, addr);
+    let server = Server::new(router, addr)
+        .with_performance_config(perf_config)
+        .with_server_config(server_config);
 
     println!("🔥 Server running on http://{}", addr);
     println!("Try these endpoints:");

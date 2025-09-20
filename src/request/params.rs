@@ -376,6 +376,7 @@
 //! ```
 
 use crate::error::{Error, Result};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -433,7 +434,7 @@ use std::str::FromStr;
 /// # }
 /// ```
 pub struct Params {
-    inner: HashMap<String, String>,
+    inner: HashMap<Cow<'static, str>, Cow<'static, str>>,
 }
 
 impl Params {
@@ -493,8 +494,8 @@ impl Params {
     ///
     /// assert_eq!(params.len(), 3);
     /// ```
-    pub fn insert(&mut self, key: String, value: String) {
-        self.inner.insert(key, value);
+    pub fn insert(&mut self, key: &'static str, value: &'static str) {
+        self.inner.insert(Cow::Borrowed(key), Cow::Borrowed(value));
     }
 
     /// Gets a parameter value by key.
@@ -539,7 +540,7 @@ impl Params {
     ///
     /// println!("Page: {}, Limit: {}", page, limit);
     /// ```
-    pub fn get(&self, key: &str) -> Option<&String> {
+    pub fn get(&self, key: &'static str) -> Option<&Cow<str>> {
         self.inner.get(key)
     }
 
@@ -768,7 +769,7 @@ impl Params {
     ///     debug_info
     /// }
     /// ```
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Cow<str>, &Cow<str>)> {
         self.inner.iter()
     }
 
@@ -824,7 +825,7 @@ impl Params {
     }
 }
 
-impl From<HashMap<String, String>> for Params {
+impl From<HashMap<Cow<'static, str>, Cow<'static, str>>> for Params {
     /// Creates a Params instance from a HashMap.
     ///
     /// This conversion is commonly used when creating Params from parsed
@@ -850,7 +851,7 @@ impl From<HashMap<String, String>> for Params {
     /// assert_eq!(params.get("user_id"), Some(&"123".to_string()));
     /// assert_eq!(params.get("session"), Some(&"abc123".to_string()));
     /// ```
-    fn from(map: HashMap<String, String>) -> Self {
+    fn from(map: HashMap<Cow<'static, str>, Cow<'static, str>>) -> Self {
         Self { inner: map }
     }
 }

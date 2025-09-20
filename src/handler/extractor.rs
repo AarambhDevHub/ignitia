@@ -130,6 +130,7 @@ use crate::extension::Extension;
 use crate::{Error, Request, Result};
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Helper function to convert HashMap<String, String> to serde_json::Value with intelligent type conversion.
 ///
@@ -779,7 +780,7 @@ where
     T: DeserializeOwned,
 {
     fn from_request(req: &Request) -> Result<Self> {
-        let extracted = req.json()?;
+        let extracted = serde_json::from_slice(&req.body)?;
         Ok(Json(extracted))
     }
 }
@@ -1014,10 +1015,10 @@ impl FromRequest for Cookies {
 /// }
 /// ```
 #[derive(Debug)]
-pub struct Body(pub bytes::Bytes);
+pub struct Body(pub Arc<bytes::Bytes>);
 
 impl std::ops::Deref for Body {
-    type Target = bytes::Bytes;
+    type Target = Arc<bytes::Bytes>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -1025,7 +1026,7 @@ impl std::ops::Deref for Body {
 
 impl FromRequest for Body {
     fn from_request(req: &Request) -> Result<Self> {
-        Ok(Body(req.body.clone()))
+        Ok(Body(Arc::clone(&req.body)))
     }
 }
 

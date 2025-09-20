@@ -68,6 +68,8 @@
 //!     ]);
 //! ```
 
+use std::sync::Arc;
+
 use crate::middleware::Middleware;
 use crate::{Request, Response, Result};
 use async_compression::tokio::write::{BrotliEncoder, GzipEncoder};
@@ -672,7 +674,7 @@ impl Middleware for CompressionMiddleware {
 
         // Only use compressed version if it's actually smaller
         if compressed_size < original_size {
-            res.body = compressed_body;
+            res.body = Arc::new(compressed_body);
             res.headers.insert(
                 header::CONTENT_ENCODING,
                 HeaderValue::from_static(encoding.as_str()),

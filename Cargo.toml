@@ -21,7 +21,7 @@ include = [
 ]
 
 [features]
-default = []
+default = ["websocket", "tls"]
 websocket = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:sha1", "dep:base64", "dep:lazy_static"]
 tls = ["dep:tokio-rustls", "dep:rustls", "dep:rustls-pemfile"]
 self-signed = ["tls", "dep:rcgen"]
@@ -61,6 +61,15 @@ futures-util = "0.3"
 mime = "0.3"
 async-tempfile = "0.6"
 
+dashmap = "6.0"
+mimalloc = "0.1"
+num_cpus = "1.17"
+smallvec = "1.11"
+ahash = "0.8"
+memchr = "2.6"
+socket2 = { version = "0.5", features = ["all"] }
+libc = "0.2"
+
 # WebSocket dependencies (optional)
 tokio-tungstenite = { version = "0.23", optional = true }
 tungstenite = { version = "0.23", optional = true }
@@ -97,6 +106,7 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+opt-level = 3
 
 [profile.dev]
 debug = true

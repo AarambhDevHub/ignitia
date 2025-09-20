@@ -1,329 +1,416 @@
-//! # HTTP Response Builder Module
+//! Response builder module for creating HTTP responses with performance optimizations
 //!
-//! This module provides a flexible builder pattern for constructing HTTP responses in the Ignitia
-//! web framework. The ResponseBuilder allows for fluent, method-chained response construction with
-//! comprehensive header management, content type handling, and flexible body assignment.
+//! This module provides a flexible and high-performance response builder that supports
+//! zero-copy operations, pre-allocated common responses, and optimized header management.
+//! The builder pattern allows for fluent and readable response construction while maintaining
+//! excellent performance characteristics.
 //!
-//! ## Features
+//! # Key Features
 //!
-//! - **Fluent Builder Pattern**: Method chaining for readable response construction
-//! - **Multiple Content Types**: Support for JSON, HTML, text, and binary responses
-//! - **Header Management**: Easy header manipulation with type safety
-//! - **Status Code Handling**: Support for both enum and numeric status codes
-//! - **Error Handling**: Comprehensive error handling for serialization and header validation
+//! - **Zero-copy operations**: Efficient memory usage through Arc and Bytes
+//! - **Pre-allocated responses**: Common responses cached for instant access
+//! - **Static content support**: Zero-allocation serving of static content
+//! - **Flexible body types**: Support for various data sources
+//! - **Header optimization**: Pre-compiled headers for common content types
+//! - **Cache control**: Built-in support for HTTP caching headers
+//! - **CORS support**: Convenient methods for Cross-Origin Resource Sharing
 //!
-//! ## Usage Examples
+//! # Examples
 //!
-//! ### Basic Builder Usage
-//! ```
-//! use ignitia::ResponseBuilder;
-//! use http::StatusCode;
-//!
-//! // Simple text response
-//! let response = ResponseBuilder::new()
-//!     .status(StatusCode::OK)
-//!     .text("Hello, World!")
-//!     .build();
-//!
-//! // Custom status code with numeric value
-//! let response = ResponseBuilder::new()
-//!     .status_code(201)
-//!     .text("Resource created")
-//!     .build();
-//! ```
-//!
-//! ### JSON Response Building
-//! ```
-//! use ignitia::ResponseBuilder;
-//! use serde_json::json;
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let data = json!({
-//!     "success": true,
-//!     "data": {
-//!         "id": 123,
-//!         "name": "Example Item"
-//!     },
-//!     "timestamp": "2023-01-01T12:00:00Z"
-//! });
-//!
-//! let response = ResponseBuilder::new()
-//!     .status_code(200)
-//!     .json(&data)?
-//!     .build();
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ### Custom Headers and Advanced Building
-//! ```
-//! use ignitia::ResponseBuilder;
-//! use http::{HeaderName, HeaderValue, StatusCode};
-//!
-//! let response = ResponseBuilder::new()
-//!     .status(StatusCode::OK)
-//!     .header("X-Custom-Header", "custom-value")
-//!     .header("Cache-Control", "no-cache, no-store")
-//!     .header("X-RateLimit-Remaining", "99")
-//!     .html("<h1>Custom Response</h1>")
-//!     .build();
-//! ```
-//!
-//! ## Advanced Usage Patterns
-//!
-//! ### API Response Builder
-//! ```
-//! use ignitia::{ResponseBuilder, Result};
+//! ```rust
+//! use ignitia::{ResponseBuilder, Response, StatusCode};
 //! use serde::Serialize;
-//! use http::StatusCode;
 //!
 //! #[derive(Serialize)]
-//! struct ApiResponse<T> {
-//!     success: bool,
-//!     data: Option<T>,
-//!     message: String,
-//!     timestamp: String,
+//! struct User {
+//!     id: u64,
+//!     name: String,
 //! }
 //!
-//! fn build_api_response<T: Serialize>(
-//!     data: Option<T>,
-//!     message: impl Into<String>,
-//!     status: StatusCode,
-//! ) -> Result<ignitia::Response> {
-//!     let api_response = ApiResponse {
-//!         success: status.is_success(),
-//!         data,
-//!         message: message.into(),
-//!         timestamp: chrono::Utc::now().to_rfc3339(),
-//!     };
+//! // Basic JSON response
+//! let user = User { id: 1, name: "Alice".to_string() };
+//! let response = ResponseBuilder::new()
+//!     .status(StatusCode::OK)
+//!     .json(&user)
+//!     .unwrap()
+//!     .build();
 //!
-//!     ResponseBuilder::new()
-//!         .status(status)
-//!         .header("X-API-Version", "1.0")
-//!         .json(&api_response)
-//!         .map(|builder| builder.build())
-//! }
-//! ```
+//! // Static optimized response
+//! let health = ResponseBuilder::health();
 //!
-//! ### File Download Builder
-//! ```
-//! use ignitia::ResponseBuilder;
-//! use bytes::Bytes;
+//! // Zero-copy text response
+//! let text = Response::text_static("Hello, World!");
 //!
-//! fn build_file_download(
-//!     file_content: Bytes,
-//!     filename: &str,
-//!     content_type: &str,
-//! ) -> ignitia::Response {
-//!     ResponseBuilder::new()
-//!         .status_code(200)
-//!         .header("Content-Type", content_type)
-//!         .header("Content-Disposition",
-//!             format!("attachment; filename=\"{}\"", filename))
-//!         .header("Content-Length", file_content.len().to_string())
-//!         .header("Cache-Control", "no-cache")
-//!         .body(file_content)
-//!         .build()
-//! }
-//! ```
-//!
-//! ## Error Handling Patterns
-//!
-//! ### Safe JSON Building with Error Recovery
-//! ```
-//! use ignitia::{ResponseBuilder, Response};
-//! use serde::Serialize;
-//!
-//! fn safe_json_response<T: Serialize>(data: T) -> ignitia::Response {
-//!     match ResponseBuilder::new().json(&data) {
-//!         Ok(builder) => builder.build(),
-//!         Err(e) => {
-//!             // Fallback to error response if JSON serialization fails
-//!             ResponseBuilder::new()
-//!                 .status_code(500)
-//!                 .text(format!("JSON serialization failed: {}", e))
-//!                 .build()
-//!         }
-//!     }
-//! }
-//! ```
-//!
-//! ## Performance Considerations
-//!
-//! ### Efficient Header Management
-//! The builder uses HeaderMap internally for efficient header storage and manipulation:
-//! - Headers are validated during insertion
-//! - Invalid headers are silently ignored to prevent panics
-//! - Memory is pre-allocated for common response sizes
-//!
-//! ### Builder Reuse Pattern
-//! ```
-//! use ignitia::ResponseBuilder;
-//!
-//! // Create a base builder for common response patterns
-//! fn create_base_response() -> ResponseBuilder {
-//!     ResponseBuilder::new()
-//!         .header("X-API-Version", "1.0")
-//!         .header("X-Powered-By", "Ignitia")
-//! }
-//!
-//! // Use the base for specific responses
-//! fn success_response(message: &str) -> ignitia::Response {
-//!     create_base_response()
-//!         .status_code(200)
-//!         .text(message)
-//!         .build()
-//! }
-//!
-//! fn error_response(error: &str) -> ignitia::Response {
-//!     create_base_response()
-//!         .status_code(500)
-//!         .text(error)
-//!         .build()
-//! }
+//! // Response with caching
+//! let cached_response = ResponseBuilder::new()
+//!     .text("Cached content")
+//!     .cache_1_hour()
+//!     .build();
 //! ```
 
 use super::Response;
 use crate::error::Result;
+use ahash::AHashMap;
 use bytes::Bytes;
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+use once_cell::sync::Lazy;
 use serde::Serialize;
+use std::borrow::Cow;
+use std::sync::Arc;
 
-/// HTTP response builder providing fluent construction of responses.
+/// Pre-compiled common responses for ultra-fast serving
 ///
-/// The `ResponseBuilder` enables method chaining to construct responses with custom
-/// status codes, headers, and body content. It provides type-safe header management
-/// and supports multiple content formats including JSON, HTML, and plain text.
+/// These responses are pre-allocated at startup for zero-allocation serving
+/// of common API responses. The responses are stored as `Bytes` for efficient
+/// memory usage and can be shared across multiple responses using `Arc`.
 ///
-/// # Builder Pattern
-/// All methods consume `self` and return `Self`, enabling fluent method chaining.
-/// The builder must be finalized with the `build()` method to create a `Response`.
+/// # Available Responses
+///
+/// - `"health_ok"`: `{"status":"healthy"}`
+/// - `"not_found"`: `{"error":"Not Found"}`
+/// - `"server_error"`: `{"error":"Internal Server Error"}`
+/// - `"unauthorized"`: `{"error":"Unauthorized"}`
+/// - `"forbidden"`: `{"error":"Forbidden"}`
+/// - `"bad_request"`: `{"error":"Bad Request"}`
+/// - `"method_not_allowed"`: `{"error":"Method Not Allowed"}`
+/// - `"empty_json"`: `{}`
+/// - `"empty_array"`: `[]`
+/// - `"ok_message"`: `{"message":"OK"}`
+/// - `"success"`: `{"success":true}`
+/// - `"pong"`: `{"message":"pong"}`
+static COMMON_RESPONSES: Lazy<AHashMap<&'static str, Bytes>> = Lazy::new(|| {
+    let mut map = AHashMap::new();
+    map.insert("health_ok", Bytes::from_static(b"{\"status\":\"healthy\"}"));
+    map.insert(
+        "not_found",
+        Bytes::from_static(b"{\"error\":\"Not Found\"}"),
+    );
+    map.insert(
+        "server_error",
+        Bytes::from_static(b"{\"error\":\"Internal Server Error\"}"),
+    );
+    map.insert(
+        "unauthorized",
+        Bytes::from_static(b"{\"error\":\"Unauthorized\"}"),
+    );
+    map.insert(
+        "forbidden",
+        Bytes::from_static(b"{\"error\":\"Forbidden\"}"),
+    );
+    map.insert(
+        "bad_request",
+        Bytes::from_static(b"{\"error\":\"Bad Request\"}"),
+    );
+    map.insert(
+        "method_not_allowed",
+        Bytes::from_static(b"{\"error\":\"Method Not Allowed\"}"),
+    );
+    map.insert("empty_json", Bytes::from_static(b"{}"));
+    map.insert("empty_array", Bytes::from_static(b"[]"));
+    map.insert("ok_message", Bytes::from_static(b"{\"message\":\"OK\"}"));
+    map.insert("success", Bytes::from_static(b"{\"success\":true}"));
+    map.insert("pong", Bytes::from_static(b"{\"message\":\"pong\"}"));
+    map
+});
+
+/// Pre-allocated common header values for performance optimization
+///
+/// Using static header values avoids repeated allocations during response building.
+/// The values are stored as `HeaderValue` for direct use in header maps.
+///
+/// # Available Headers
+///
+/// - `"json"`: `application/json`
+/// - `"text"`: `text/plain; charset=utf-8`
+/// - `"html"`: `text/html; charset=utf-8`
+/// - `"xml"`: `application/xml`
+/// - `"css"`: `text/css`
+/// - `"js"`: `application/javascript`
+/// - `"png"`: `image/png`
+/// - `"jpg"`: `image/jpeg`
+/// - `"gif"`: `image/gif`
+/// - `"svg"`: `image/svg+xml`
+/// - `"pdf"`: `application/pdf`
+/// - `"octet"`: `application/octet-stream`
+/// - `"cors_any"`: `*` (for CORS)
+/// - `"cors_methods"`: `GET, POST, PUT, DELETE, OPTIONS` (for CORS)
+/// - `"cors_headers"`: `Content-Type, Authorization` (for CORS)
+static COMMON_HEADERS: Lazy<AHashMap<&'static str, HeaderValue>> = Lazy::new(|| {
+    let mut map = AHashMap::new();
+    map.insert("json", HeaderValue::from_static("application/json"));
+    map.insert(
+        "text",
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    map.insert("html", HeaderValue::from_static("text/html; charset=utf-8"));
+    map.insert("xml", HeaderValue::from_static("application/xml"));
+    map.insert("css", HeaderValue::from_static("text/css"));
+    map.insert("js", HeaderValue::from_static("application/javascript"));
+    map.insert("png", HeaderValue::from_static("image/png"));
+    map.insert("jpg", HeaderValue::from_static("image/jpeg"));
+    map.insert("gif", HeaderValue::from_static("image/gif"));
+    map.insert("svg", HeaderValue::from_static("image/svg+xml"));
+    map.insert("pdf", HeaderValue::from_static("application/pdf"));
+    map.insert(
+        "octet",
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    map.insert("cors_any", HeaderValue::from_static("*"));
+    map.insert(
+        "cors_methods",
+        HeaderValue::from_static("GET, POST, PUT, DELETE, OPTIONS"),
+    );
+    map.insert(
+        "cors_headers",
+        HeaderValue::from_static("Content-Type, Authorization"),
+    );
+    map
+});
+
+/// Pre-allocated common header names for performance optimization
+///
+/// Using static header names avoids repeated allocations during response building.
+/// These are commonly used HTTP header names that can be reused across responses.
+static CONTENT_TYPE: Lazy<HeaderName> = Lazy::new(|| HeaderName::from_static("content-type"));
+static CONTENT_LENGTH: Lazy<HeaderName> = Lazy::new(|| HeaderName::from_static("content-length"));
+static CACHE_CONTROL: Lazy<HeaderName> = Lazy::new(|| HeaderName::from_static("cache-control"));
+static ACCESS_CONTROL_ALLOW_ORIGIN: Lazy<HeaderName> =
+    Lazy::new(|| HeaderName::from_static("access-control-allow-origin"));
+static ACCESS_CONTROL_ALLOW_METHODS: Lazy<HeaderName> =
+    Lazy::new(|| HeaderName::from_static("access-control-allow-methods"));
+static ACCESS_CONTROL_ALLOW_HEADERS: Lazy<HeaderName> =
+    Lazy::new(|| HeaderName::from_static("access-control-allow-headers"));
+
+/// A high-performance HTTP response builder with zero-copy optimizations
+///
+/// The `ResponseBuilder` provides a fluent interface for constructing HTTP responses
+/// with various optimizations for common use cases. It supports different body types
+/// and provides methods for efficient header management.
+///
+/// # Performance Features
+///
+/// - **Zero-copy body sharing**: Through `Arc<Bytes>` for efficient memory usage
+/// - **Pre-allocated headers**: For common content types and CORS settings
+/// - **Static response caching**: For frequently used responses
+/// - **Efficient memory usage**: Through `Cow<str>` for string content
+/// - **Cache control**: Built-in methods for HTTP caching headers
 ///
 /// # Examples
 ///
-/// ## Basic Usage
-/// ```
-/// use ignitia::ResponseBuilder;
-/// use http::StatusCode;
+/// ```rust
+/// use ignitia::{ResponseBuilder, StatusCode};
+/// use serde::Serialize;
 ///
+/// #[derive(Serialize)]
+/// struct Data {
+///     value: String,
+/// }
+///
+/// // JSON response with custom status
+/// let data = Data { value: "test".to_string() };
+/// let response = ResponseBuilder::new()
+///     .status(StatusCode::CREATED)
+///     .json(&data)
+///     .unwrap()
+///     .build();
+///
+/// // Text response with caching
 /// let response = ResponseBuilder::new()
 ///     .status(StatusCode::OK)
 ///     .text("Hello, World!")
+///     .cache_1_hour()
 ///     .build();
-/// ```
 ///
-/// ## Method Chaining
-/// ```
-/// use ignitia::ResponseBuilder;
-///
+/// // Static content (zero-copy)
 /// let response = ResponseBuilder::new()
-///     .status_code(201)
-///     .header("Location", "/users/123")
-///     .header("X-Created-At", "2023-01-01T12:00:00Z")
-///     .text("User created successfully")
+///     .json_static("success")
+///     .build();
+///
+/// // CORS-enabled response
+/// let response = ResponseBuilder::new()
+///     .text("CORS enabled")
+///     .cors_any()
 ///     .build();
 /// ```
+#[derive(Debug, Clone)]
 pub struct ResponseBuilder {
+    /// HTTP status code for the response
     status: StatusCode,
+    /// HTTP headers map with pre-allocated capacity for common headers
     headers: HeaderMap,
-    body: Option<Bytes>,
+    /// Optional response body supporting multiple data sources
+    body: Option<ResponseBody>,
+}
+
+/// Zero-copy response body variants supporting different data sources
+///
+/// This enum provides efficient storage options for response bodies,
+/// allowing zero-copy operations where possible and minimizing allocations.
+///
+/// # Variants
+///
+/// - `Static`: References to static byte arrays (zero allocation)
+/// - `Shared`: Arc-wrapped bytes for sharing between responses
+/// - `Owned`: Owned bytes for dynamic content
+/// - `Cow`: Copy-on-write strings for flexible string handling
+#[derive(Debug, Clone)]
+enum ResponseBody {
+    /// Static bytes - zero-copy references to compile-time data
+    ///
+    /// Perfect for serving static assets or pre-defined responses.
+    /// No allocation required as it references static memory.
+    Static(&'static [u8]),
+
+    /// Pre-allocated bytes shared via Arc for efficient cloning
+    ///
+    /// Ideal for responses that may be sent to multiple clients
+    /// or cached responses that need to be shared.
+    Shared(Arc<Bytes>),
+
+    /// Owned bytes for dynamic content that needs exclusive ownership
+    ///
+    /// Used for dynamically generated content like JSON serialization
+    /// or content that can't be shared or is temporary.
+    Owned(Bytes),
+
+    /// Borrowed string data with potential zero-copy optimization
+    ///
+    /// Allows both static string references and owned strings.
+    /// Uses copy-on-write semantics for optimal memory usage.
+    Cow(Cow<'static, str>),
 }
 
 impl ResponseBuilder {
-    /// Creates a new ResponseBuilder with default values.
+    /// Creates a new response builder with default OK status
     ///
-    /// The builder starts with:
-    /// - Status: 200 OK
-    /// - Headers: Empty HeaderMap
-    /// - Body: None (will be empty when built)
-    ///
-    /// # Returns
-    /// A new ResponseBuilder instance ready for method chaining
+    /// Initializes a new `ResponseBuilder` with HTTP 200 OK status and
+    /// pre-allocates header map capacity for common headers to improve performance.
     ///
     /// # Examples
-    /// ```
+    ///
+    /// ```rust
     /// use ignitia::ResponseBuilder;
     /// use http::StatusCode;
     ///
     /// let builder = ResponseBuilder::new();
-    /// let response = builder.build();
-    ///
-    /// assert_eq!(response.status, StatusCode::OK);
-    /// assert!(response.body.is_empty());
+    /// assert_eq!(builder.status, StatusCode::OK);
     /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Pre-allocates HeaderMap with capacity for 8 headers
+    /// - Uses inline hint for better optimization
+    /// - Zero-cost initialization for common use cases
+    #[inline]
     pub fn new() -> Self {
         Self {
             status: StatusCode::OK,
-            headers: HeaderMap::new(),
+            headers: HeaderMap::with_capacity(8), // Pre-allocate for common headers
             body: None,
         }
     }
 
-    /// Sets the HTTP status code (builder pattern).
+    /// Creates a response builder with specific HTTP status code
     ///
-    /// This method consumes the builder and returns it with the updated status code,
-    /// enabling fluent method chaining.
+    /// This method provides a convenient way to create a response builder
+    /// with a specific status code while maintaining the same performance
+    /// optimizations as the default constructor.
     ///
-    /// # Parameters
-    /// - `status`: The HTTP status code to set
+    /// # Arguments
     ///
-    /// # Returns
-    /// The builder with the updated status code
+    /// * `status` - The HTTP status code for the response
     ///
     /// # Examples
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    /// use http::StatusCode;
     ///
+    /// ```rust
+    /// use ignitia::{ResponseBuilder, StatusCode};
+    ///
+    /// let builder = ResponseBuilder::with_status(StatusCode::CREATED);
+    /// let builder = ResponseBuilder::with_status(StatusCode::NOT_FOUND);
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Inline optimized for better performance
+    /// - Pre-allocates header capacity
+    /// - Maintains same memory characteristics as `new()`
+    #[inline]
+    pub fn with_status(status: StatusCode) -> Self {
+        Self {
+            status,
+            headers: HeaderMap::with_capacity(8),
+            body: None,
+        }
+    }
+
+    /// Sets the HTTP status code for the response
+    ///
+    /// This method allows changing the status code of an existing builder.
+    /// It consumes the builder and returns a new one with the updated status,
+    /// following the builder pattern for method chaining.
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - The new HTTP status code
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::{ResponseBuilder, StatusCode};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct Data {
+    ///     value: String,
+    /// }
+    ///
+    /// let data = Data { value: "created".to_string() };
     /// let response = ResponseBuilder::new()
     ///     .status(StatusCode::CREATED)
-    ///     .text("Resource created")
+    ///     .json(&data)
+    ///     .unwrap()
     ///     .build();
-    ///
-    /// assert_eq!(response.status, StatusCode::CREATED);
     /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Method is inlined for optimal performance
+    /// - Consumes and returns Self for zero-cost chaining
+    /// - No additional allocations required
+    #[inline]
     pub fn status(mut self, status: StatusCode) -> Self {
         self.status = status;
         self
     }
 
-    /// Sets the HTTP status code using a numeric value (builder pattern).
+    /// Sets the HTTP status code from a u16 value
     ///
-    /// This is a convenience method that accepts a u16 status code. Invalid
-    /// status codes are silently ignored to prevent panics.
+    /// Convenience method for setting status codes from numeric values.
+    /// If the provided status code is invalid, the status remains unchanged.
     ///
-    /// # Parameters
-    /// - `status_code`: The numeric HTTP status code (e.g., 200, 404, 500)
+    /// # Arguments
+    ///
+    /// * `status_code` - HTTP status code as u16
     ///
     /// # Returns
-    /// The builder with the updated status code (if valid)
+    ///
+    /// Returns `Self` to allow method chaining
     ///
     /// # Examples
-    /// ```
+    ///
+    /// ```rust
     /// use ignitia::ResponseBuilder;
     ///
     /// let response = ResponseBuilder::new()
-    ///     .status_code(404)
-    ///     .text("Not Found")
+    ///     .status_code(201) // Created
+    ///     .text("Resource created")
     ///     .build();
-    ///
-    /// assert_eq!(response.status.as_u16(), 404);
     /// ```
-    ///
-    /// ## Invalid Status Codes
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    /// use http::StatusCode;
-    ///
-    /// // Invalid status codes are ignored
-    /// let response = ResponseBuilder::new()
-    ///     .status_code(9999) // Invalid, ignored
-    ///     .text("Test")
-    ///     .build();
-    ///
-    /// // Status remains the default (200 OK)
-    /// assert_eq!(response.status, StatusCode::OK);
-    /// ```
+    #[inline]
     pub fn status_code(mut self, status_code: u16) -> Self {
         if let Ok(status) = StatusCode::from_u16(status_code) {
             self.status = status;
@@ -331,100 +418,236 @@ impl ResponseBuilder {
         self
     }
 
-    /// Sets the response body using raw bytes (builder pattern).
+    /// Sets a static byte array as the response body
     ///
-    /// This method accepts any type that can be converted to `Bytes` and sets
-    /// it as the response body. Note that this will overwrite any existing body.
+    /// Zero-copy method for setting response body from static byte arrays.
+    /// Ideal for serving pre-compiled content or static assets.
     ///
-    /// # Parameters
-    /// - `body`: The body content (String, &str, Vec<u8>, Bytes, etc.)
+    /// # Arguments
+    ///
+    /// * `body` - Static byte array for the response body
     ///
     /// # Returns
-    /// The builder with the updated body
+    ///
+    /// Returns `Self` to allow method chaining
     ///
     /// # Examples
-    /// ```
+    ///
+    /// ```rust
     /// use ignitia::ResponseBuilder;
-    /// use bytes::Bytes;
     ///
-    /// // From string
+    /// static CONTENT: &[u8] = b"Hello, World!";
     /// let response = ResponseBuilder::new()
-    ///     .with_body("Hello, World!")
-    ///     .build();
-    ///
-    /// // From bytes
-    /// let data = Bytes::from("Binary data");
-    /// let response = ResponseBuilder::new()
-    ///     .with_body(data)
-    ///     .build();
-    ///
-    /// // From vector
-    /// let data = vec![0x48, 0x65, 0x6c, 0x6c, 0x6f]; // "Hello"
-    /// let response = ResponseBuilder::new()
-    ///     .with_body(data)
+    ///     .body_static(CONTENT)
     ///     .build();
     /// ```
-    pub fn with_body(mut self, body: impl Into<Bytes>) -> Self {
-        self.body = Some(body.into());
+    ///
+    /// # Performance Notes
+    ///
+    /// - Zero allocation for body storage
+    /// - References static memory directly
+    #[inline]
+    pub fn body_static(mut self, body: &'static [u8]) -> Self {
+        self.body = Some(ResponseBody::Static(body));
         self
     }
 
-    /// Adds an HTTP header (builder pattern).
+    /// Sets a static string as the response body
     ///
-    /// This method attempts to convert the key and value into valid HTTP header
-    /// components. If the conversion fails (e.g., invalid characters), the header
-    /// is silently ignored to prevent panics.
+    /// Zero-copy method for setting response body from static strings.
+    /// Automatically converts the string to bytes for HTTP response.
     ///
-    /// # Type Parameters
-    /// - `K`: Header name type (must implement `TryInto<HeaderName>`)
-    /// - `V`: Header value type (must implement `TryInto<HeaderValue>`)
+    /// # Arguments
     ///
-    /// # Parameters
-    /// - `key`: The header name
-    /// - `value`: The header value
+    /// * `body` - Static string for the response body
     ///
     /// # Returns
-    /// The builder with the added header (if valid)
+    ///
+    /// Returns `Self` to allow method chaining
     ///
     /// # Examples
-    /// ```
+    ///
+    /// ```rust
     /// use ignitia::ResponseBuilder;
-    /// use http::{HeaderName, HeaderValue};
+    ///
+    /// static GREETING: &str = "Hello, World!";
+    /// let response = ResponseBuilder::new()
+    ///     .body_static_str(GREETING)
+    ///     .build();
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Zero allocation for body storage
+    /// - References static memory directly
+    #[inline]
+    pub fn body_static_str(mut self, body: &'static str) -> Self {
+        self.body = Some(ResponseBody::Static(body.as_bytes()));
+        self
+    }
+
+    /// Sets owned bytes as the response body
+    ///
+    /// For dynamic content that needs to be owned by the response.
+    /// Uses `Bytes` for efficient memory handling and potential sharing.
+    ///
+    /// # Arguments
+    ///
+    /// * `body` - Bytes object containing the response body
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    /// use bytes::Bytes;
+    ///
+    /// let content = Bytes::from("Dynamic content");
+    /// let response = ResponseBuilder::new()
+    ///     .body_bytes(content)
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn body_bytes(mut self, body: Bytes) -> Self {
+        self.body = Some(ResponseBody::Owned(body));
+        self
+    }
+
+    /// Sets shared bytes as the response body
+    ///
+    /// For content that may be shared between multiple responses.
+    /// Uses `Arc<Bytes>` for efficient memory sharing.
+    ///
+    /// # Arguments
+    ///
+    /// * `body` - Arc-wrapped Bytes for shared ownership
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    /// use bytes::Bytes;
+    /// use std::sync::Arc;
+    ///
+    /// let shared_content = Arc::new(Bytes::from("Shared content"));
+    /// let response = ResponseBuilder::new()
+    ///     .body_shared(shared_content)
+    ///     .build();
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Enables zero-copy cloning of response bodies
+    /// - Ideal for cached or frequently reused content
+    #[inline]
+    pub fn body_shared(mut self, body: Arc<Bytes>) -> Self {
+        self.body = Some(ResponseBody::Shared(body));
+        self
+    }
+
+    /// Sets a copy-on-write string as the response body
+    ///
+    /// Flexible method that can accept both static and owned strings
+    /// with optimal memory usage through copy-on-write semantics.
+    ///
+    /// # Arguments
+    ///
+    /// * `body` - Cow<'static, str> for flexible string handling
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    /// use std::borrow::Cow;
+    ///
+    /// // Static string (zero-copy)
+    /// let response1 = ResponseBuilder::new()
+    ///     .body_cow(Cow::Borrowed("Static content"))
+    ///     .build();
+    ///
+    /// // Owned string
+    /// let response2 = ResponseBuilder::new()
+    ///     .body_cow(Cow::Owned("Owned content".to_string()))
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn body_cow(mut self, body: Cow<'static, str>) -> Self {
+        self.body = Some(ResponseBody::Cow(body));
+        self
+    }
+
+    /// Sets a generic body that can be converted to Bytes
+    ///
+    /// Convenience method for types that implement `Into<Bytes>`.
+    /// Useful for various string and byte types.
+    ///
+    /// # Arguments
+    ///
+    /// * `body` - Any type that can be converted into Bytes
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
     ///
     /// let response = ResponseBuilder::new()
-    ///     .header("Content-Type", "application/json")
+    ///     .body("String content")
+    ///     .build();
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .body(vec![1, 2, 3, 4])
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn body<T: Into<Bytes>>(mut self, body: T) -> Self {
+        self.body = Some(ResponseBody::Owned(body.into()));
+        self
+    }
+
+    /// Adds a header to the response
+    ///
+    /// Generic method for adding any header to the response.
+    /// Supports any types that can be converted to `HeaderName` and `HeaderValue`.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Header name (convertible to HeaderName)
+    /// * `value` - Header value (convertible to HeaderValue)
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
     ///     .header("X-Custom-Header", "custom-value")
-    ///     .header("Cache-Control", "max-age=3600")
-    ///     .text("Hello")
+    ///     .text("Content with custom header")
     ///     .build();
     /// ```
     ///
-    /// ## Type-Safe Headers
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    /// use http::{HeaderName, HeaderValue};
+    /// # Panics
     ///
-    /// let header_name = HeaderName::from_static("x-request-id");
-    /// let header_value = HeaderValue::from_static("12345");
-    ///
-    /// let response = ResponseBuilder::new()
-    ///     .header(header_name, header_value)
-    ///     .text("Request processed")
-    ///     .build();
-    /// ```
-    ///
-    /// ## Dynamic Headers
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn build_response_with_id(request_id: u64) -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .header("X-Request-ID", request_id.to_string())
-    ///         .header("X-Timestamp", chrono::Utc::now().timestamp().to_string())
-    ///         .text("Response with metadata")
-    ///         .build()
-    /// }
-    /// ```
+    /// Debug assertions will panic if header name or value conversion fails.
+    /// In release builds, invalid headers are silently ignored.
     pub fn header<K, V>(mut self, key: K, value: V) -> Self
     where
         K: TryInto<HeaderName>,
@@ -438,707 +661,1425 @@ impl ResponseBuilder {
         self
     }
 
-    /// Sets JSON body with automatic serialization and content-type header.
+    /// Sets Content-Type header to application/json
     ///
-    /// This method serializes the provided data to JSON, sets the appropriate
-    /// content-type header, and stores the result as the response body. It returns
-    /// a Result because serialization can fail.
-    ///
-    /// # Type Parameters
-    /// - `T`: The type to serialize (must implement `Serialize`)
-    ///
-    /// # Parameters
-    /// - `data`: The data to serialize as JSON
+    /// Convenience method for JSON responses that uses pre-allocated
+    /// header values for optimal performance.
     ///
     /// # Returns
-    /// - `Ok(Self)`: Builder with JSON body and content-type header set
-    /// - `Err(Error)`: JSON serialization error
+    ///
+    /// Returns `Self` to allow method chaining
     ///
     /// # Examples
-    /// ```
+    ///
+    /// ```rust
     /// use ignitia::ResponseBuilder;
-    /// use serde::Serialize;
-    /// use serde_json::json;
-    ///
-    /// #[derive(Serialize)]
-    /// struct ApiResponse {
-    ///     success: bool,
-    ///     message: String,
-    ///     data: serde_json::Value,
-    /// }
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let api_response = ApiResponse {
-    ///     success: true,
-    ///     message: "Operation completed".to_string(),
-    ///     data: json!({"id": 123, "name": "Test"}),
-    /// };
     ///
     /// let response = ResponseBuilder::new()
-    ///     .status_code(200)
-    ///     .json(&api_response)?
+    ///     .content_type_json()
+    ///     .body(r#"{"status":"ok"}"#)
     ///     .build();
-    /// # Ok(())
-    /// # }
     /// ```
     ///
-    /// ## Error Handling
-    /// ```
+    /// # Performance Notes
+    ///
+    /// - Uses pre-allocated header value
+    /// - Zero allocation for header setting
+    #[inline]
+    pub fn content_type_json(mut self) -> Self {
+        self.headers
+            .insert(CONTENT_TYPE.clone(), COMMON_HEADERS["json"].clone());
+        self
+    }
+
+    /// Sets Content-Type header to text/plain
+    ///
+    /// Convenience method for plain text responses that uses pre-allocated
+    /// header values for optimal performance.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
     /// use ignitia::ResponseBuilder;
-    /// use serde_json::json;
-    ///
-    /// fn safe_json_builder(data: serde_json::Value) -> ignitia::Response {
-    ///     match ResponseBuilder::new().json(&data) {
-    ///         Ok(builder) => builder.build(),
-    ///         Err(e) => {
-    ///             ResponseBuilder::new()
-    ///                 .status_code(500)
-    ///                 .text(format!("Serialization error: {}", e))
-    ///                 .build()
-    ///         }
-    ///     }
-    /// }
-    /// ```
-    ///
-    /// ## Complex Data Structures
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    /// use serde::Serialize;
-    /// use std::collections::HashMap;
-    ///
-    /// #[derive(Serialize)]
-    /// struct PaginatedResponse<T> {
-    ///     data: Vec<T>,
-    ///     pagination: PaginationInfo,
-    /// }
-    ///
-    /// #[derive(Serialize)]
-    /// struct PaginationInfo {
-    ///     page: u32,
-    ///     per_page: u32,
-    ///     total: u32,
-    ///     pages: u32,
-    /// }
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let users = vec!["Alice", "Bob", "Charlie"];
-    /// let response_data = PaginatedResponse {
-    ///     data: users,
-    ///     pagination: PaginationInfo {
-    ///         page: 1,
-    ///         per_page: 10,
-    ///         total: 3,
-    ///         pages: 1,
-    ///     },
-    /// };
     ///
     /// let response = ResponseBuilder::new()
-    ///     .header("X-Total-Count", "3")
-    ///     .json(&response_data)?
+    ///     .content_type_text()
+    ///     .body("Plain text content")
     ///     .build();
-    /// # Ok(())
-    /// # }
     /// ```
+    #[inline]
+    pub fn content_type_text(mut self) -> Self {
+        self.headers
+            .insert(CONTENT_TYPE.clone(), COMMON_HEADERS["text"].clone());
+        self
+    }
+
+    /// Sets Content-Type header to text/html
+    ///
+    /// Convenience method for HTML responses that uses pre-allocated
+    /// header values for optimal performance.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .content_type_html()
+    ///     .body("<html><body>Hello</body></html>")
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn content_type_html(mut self) -> Self {
+        self.headers
+            .insert(CONTENT_TYPE.clone(), COMMON_HEADERS["html"].clone());
+        self
+    }
+
+    /// Sets a JSON body from copy-on-write string with proper content type
+    ///
+    /// Convenience method for JSON responses that accepts flexible string types
+    /// and automatically sets the correct Content-Type header.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - JSON content as Cow<'static, str> or convertible type
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    /// use std::borrow::Cow;
+    ///
+    /// // Static JSON
+    /// let response1 = ResponseBuilder::new()
+    ///     .json_cow(Cow::Borrowed(r#"{"status":"ok"}"#))
+    ///     .build();
+    ///
+    /// // Owned JSON
+    /// let response2 = ResponseBuilder::new()
+    ///     .json_cow(Cow::Owned(r#"{"message":"hello"}"#.to_string()))
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn json_cow<T: Into<Cow<'static, str>>>(mut self, text: T) -> Self {
+        self.headers
+            .insert(CONTENT_TYPE.clone(), COMMON_HEADERS["json"].clone());
+        self.body = Some(ResponseBody::Cow(text.into()));
+        self
+    }
+
+    /// Sets a plain text body with proper content type
+    ///
+    /// Convenience method for text responses that accepts flexible string types
+    /// and automatically sets the correct Content-Type header.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - Text content as Cow<'static, str> or convertible type
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .text("Hello, World!")
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn text<T: Into<Cow<'static, str>>>(mut self, text: T) -> Self {
+        self.headers
+            .insert(CONTENT_TYPE.clone(), COMMON_HEADERS["text"].clone());
+        self.body = Some(ResponseBody::Cow(text.into()));
+        self
+    }
+
+    /// Sets an HTML body with proper content type
+    ///
+    /// Convenience method for HTML responses that accepts flexible string types
+    /// and automatically sets the correct Content-Type header.
+    ///
+    /// # Arguments
+    ///
+    /// * `html` - HTML content as Cow<'static, str> or convertible type
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .html("<h1>Hello</h1>")
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn html<T: Into<Cow<'static, str>>>(mut self, html: T) -> Self {
+        self.headers
+            .insert(CONTENT_TYPE.clone(), COMMON_HEADERS["html"].clone());
+        self.body = Some(ResponseBody::Cow(html.into()));
+        self
+    }
+
+    /// Sets a JSON body using a pre-defined static key
+    ///
+    /// This method provides ultra-fast JSON responses by using pre-compiled
+    /// JSON strings stored in a static HashMap. It's ideal for common responses
+    /// like success messages, health checks, or error responses.
+    ///
+    /// # Arguments
+    ///
+    /// * `json_key` - Static string key for pre-compiled JSON responses
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` for method chaining
+    ///
+    /// # Available Keys
+    ///
+    /// - `"health_ok"` - `{"status":"healthy"}`
+    /// - `"not_found"` - `{"error":"Not Found"}`
+    /// - `"server_error"` - `{"error":"Internal Server Error"}`
+    /// - `"unauthorized"` - `{"error":"Unauthorized"}`
+    /// - `"forbidden"` - `{"error":"Forbidden"}`
+    /// - `"bad_request"` - `{"error":"Bad Request"}`
+    /// - `"method_not_allowed"` - `{"error":"Method Not Allowed"}`
+    /// - `"empty_json"` - `{}`
+    /// - `"empty_array"` - `[]`
+    /// - `"ok_message"` - `{"message":"OK"}`
+    /// - `"success"` - `{"success":true}`
+    /// - `"pong"` - `{"message":"pong"}`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .json_static("success")
+    ///     .build();
+    /// ```
+    ///
+    /// # Performance Benefits
+    ///
+    /// - Zero serialization overhead
+    /// - Pre-compiled JSON strings
+    /// - Shared Arc<Bytes> for memory efficiency
+    /// - O(1) lookup time
+    /// - Automatic Content-Type header setting
+    pub fn json_static(mut self, json_key: &'static str) -> Self {
+        if let Some(body) = COMMON_RESPONSES.get(json_key) {
+            self.headers
+                .insert(CONTENT_TYPE.clone(), COMMON_HEADERS["json"].clone());
+            self.body = Some(ResponseBody::Shared(Arc::new(body.clone())));
+        } else {
+            // Fallback for unknown keys
+            self.headers
+                .insert(CONTENT_TYPE.clone(), COMMON_HEADERS["json"].clone());
+            self.body = Some(ResponseBody::Static(b"{}"));
+        }
+        self
+    }
+
+    /// Serializes data to JSON and sets it as the response body
+    ///
+    /// Convenience method for serializing Rust data structures to JSON
+    /// and setting the appropriate headers. Uses a pre-allocated buffer
+    /// for better performance.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Serializable data structure
+    ///
+    /// # Returns
+    ///
+    /// Returns `Result<Self>` to allow error handling and method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct User {
+    ///     id: u64,
+    ///     name: String,
+    /// }
+    ///
+    /// let user = User { id: 1, name: "Alice".to_string() };
+    /// let response = ResponseBuilder::new()
+    ///     .json(&user)
+    ///     .unwrap()
+    ///     .build();
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if JSON serialization fails
+    ///
+    /// # Performance Notes
+    ///
+    /// - Uses pre-allocated buffer (1KB initial capacity)
+    /// - Sets Content-Length header for HTTP/1.1 performance
+    /// - Automatic Content-Type header setting
     pub fn json<T: Serialize>(mut self, data: &T) -> Result<Self> {
-        let body = serde_json::to_vec(data)?;
-        self.headers.insert(
-            http::header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
-        );
-        self.body = Some(Bytes::from(body));
+        // Use a pre-allocated buffer for better performance
+        let mut buf = Vec::with_capacity(1024); // Start with 1KB buffer
+        serde_json::to_writer(&mut buf, data)?;
+
+        self.headers
+            .insert(CONTENT_TYPE.clone(), COMMON_HEADERS["json"].clone());
+
+        // Set Content-Length for HTTP/1.1 performance
+        if let Ok(len_str) = buf.len().to_string().parse::<HeaderValue>() {
+            self.headers.insert(CONTENT_LENGTH.clone(), len_str);
+        }
+
+        self.body = Some(ResponseBody::Owned(Bytes::from(buf)));
         Ok(self)
     }
 
-    /// Sets plain text body with appropriate content-type header.
+    /// Serializes data to JSON with custom buffer capacity
     ///
-    /// This method sets the response body to UTF-8 encoded text and adds the
-    /// appropriate content-type header with charset specification.
+    /// Similar to `json()` but allows specifying the initial buffer capacity
+    /// for potentially better performance with known data sizes.
     ///
-    /// # Type Parameters
-    /// - `T`: Text type (must implement `Into<String>`)
+    /// # Arguments
     ///
-    /// # Parameters
-    /// - `text`: The text content to set as the body
+    /// * `data` - Serializable data structure
+    /// * `capacity` - Initial buffer capacity in bytes
     ///
     /// # Returns
-    /// The builder with text body and content-type header set
+    ///
+    /// Returns `Result<Self>` to allow error handling and method chaining
     ///
     /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct LargeData {
+    ///     items: Vec<String>,
+    /// }
+    ///
+    /// let data = LargeData { items: vec!["item".to_string(); 1000] };
+    /// let response = ResponseBuilder::new()
+    ///     .json_with_capacity(&data, 16384) // 16KB initial buffer
+    ///     .unwrap()
+    ///     .build();
     /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Can reduce reallocations for large responses
+    /// - Useful when approximate response size is known
+    pub fn json_with_capacity<T: Serialize>(mut self, data: &T, capacity: usize) -> Result<Self> {
+        let mut buf = Vec::with_capacity(capacity);
+        serde_json::to_writer(&mut buf, data)?;
+
+        self.headers
+            .insert(CONTENT_TYPE.clone(), COMMON_HEADERS["json"].clone());
+
+        if let Ok(len_str) = buf.len().to_string().parse::<HeaderValue>() {
+            self.headers.insert(CONTENT_LENGTH.clone(), len_str);
+        }
+
+        self.body = Some(ResponseBody::Owned(Bytes::from(buf)));
+        Ok(self)
+    }
+
+    /// Sets Cache-Control header for 1 hour caching
+    ///
+    /// Convenience method for setting appropriate caching headers
+    /// for content that can be cached for 1 hour.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
     /// use ignitia::ResponseBuilder;
     ///
     /// let response = ResponseBuilder::new()
-    ///     .status_code(200)
+    ///     .text("Cacheable content")
+    ///     .cache_1_hour()
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn cache_1_hour(mut self) -> Self {
+        self.headers.insert(
+            CACHE_CONTROL.clone(),
+            HeaderValue::from_static("public, max-age=3600"),
+        );
+        self
+    }
+
+    /// Sets Cache-Control header for 1 day caching
+    ///
+    /// Convenience method for setting appropriate caching headers
+    /// for content that can be cached for 1 day.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .text("Long-term cacheable content")
+    ///     .cache_1_day()
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn cache_1_day(mut self) -> Self {
+        self.headers.insert(
+            CACHE_CONTROL.clone(),
+            HeaderValue::from_static("public, max-age=86400"),
+        );
+        self
+    }
+
+    /// Sets Cache-Control header for 1 week caching
+    ///
+    /// Convenience method for setting appropriate caching headers
+    /// for content that can be cached for 1 week.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .text("Very cacheable content")
+    ///     .cache_1_week()
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn cache_1_week(mut self) -> Self {
+        self.headers.insert(
+            CACHE_CONTROL.clone(),
+            HeaderValue::from_static("public, max-age=604800"),
+        );
+        self
+    }
+
+    /// Sets Cache-Control header for no caching
+    ///
+    /// Convenience method for setting appropriate caching headers
+    /// for content that should not be cached.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .text("Non-cacheable content")
+    ///     .cache_no_store()
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn cache_no_store(mut self) -> Self {
+        self.headers.insert(
+            CACHE_CONTROL.clone(),
+            HeaderValue::from_static("no-store, no-cache, must-revalidate"),
+        );
+        self
+    }
+
+    /// Sets CORS headers to allow any origin
+    ///
+    /// Convenience method for setting CORS headers that allow requests
+    /// from any origin. Uses pre-allocated header values for performance.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .text("CORS enabled for any origin")
+    ///     .cors_any()
+    ///     .build();
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Uses pre-allocated header values
+    /// - Sets all required CORS headers
+    #[inline]
+    pub fn cors_any(mut self) -> Self {
+        self.headers.insert(
+            ACCESS_CONTROL_ALLOW_ORIGIN.clone(),
+            COMMON_HEADERS["cors_any"].clone(),
+        );
+        self.headers.insert(
+            ACCESS_CONTROL_ALLOW_METHODS.clone(),
+            COMMON_HEADERS["cors_methods"].clone(),
+        );
+        self.headers.insert(
+            ACCESS_CONTROL_ALLOW_HEADERS.clone(),
+            COMMON_HEADERS["cors_headers"].clone(),
+        );
+        self
+    }
+
+    /// Sets CORS headers with specific allowed origin
+    ///
+    /// Convenience method for setting CORS headers with a specific
+    /// allowed origin. Uses pre-allocated values for methods and headers.
+    ///
+    /// # Arguments
+    ///
+    /// * `origin` - Allowed origin as string
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` to allow method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
+    ///     .text("CORS enabled for specific origin")
+    ///     .cors_origin("https://example.com")
+    ///     .build();
+    /// ```
+    #[inline]
+    pub fn cors_origin(mut self, origin: &str) -> Self {
+        if let Ok(origin_val) = HeaderValue::from_str(origin) {
+            self.headers
+                .insert(ACCESS_CONTROL_ALLOW_ORIGIN.clone(), origin_val);
+        }
+        self.headers.insert(
+            ACCESS_CONTROL_ALLOW_METHODS.clone(),
+            COMMON_HEADERS["cors_methods"].clone(),
+        );
+        self.headers.insert(
+            ACCESS_CONTROL_ALLOW_HEADERS.clone(),
+            COMMON_HEADERS["cors_headers"].clone(),
+        );
+        self
+    }
+
+    /// Builds the final Response object
+    ///
+    /// Consumes the builder and returns a fully constructed `Response`.
+    /// This method performs the final conversion from builder state to
+    /// the actual HTTP response.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` object ready for serving
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let response = ResponseBuilder::new()
     ///     .text("Hello, World!")
     ///     .build();
-    ///
-    /// // Dynamic text generation
-    /// let user_name = "Alice";
-    /// let response = ResponseBuilder::new()
-    ///     .text(format!("Welcome, {}!", user_name))
-    ///     .build();
     /// ```
     ///
-    /// ## Multi-line Text
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// let report = r#"
-    /// System Status Report
-    /// ===================
-    ///
-    /// CPU Usage: 45%
-    /// Memory Usage: 78%
-    /// Disk Usage: 23%
-    ///
-    /// All systems operational.
-    /// "#;
-    ///
-    /// let response = ResponseBuilder::new()
-    ///     .header("Content-Disposition", "attachment; filename=\"report.txt\"")
-    ///     .text(report)
-    ///     .build();
-    /// ```
-    pub fn text<T: Into<String>>(mut self, text: T) -> Self {
-        let text = text.into();
-        self.headers.insert(
-            http::header::CONTENT_TYPE,
-            HeaderValue::from_static("text/plain; charset=utf-8"),
-        );
-        self.body = Some(Bytes::from(text));
-        self
-    }
-
-    /// Sets HTML body with appropriate content-type header.
-    ///
-    /// This method sets the response body to HTML content and adds the appropriate
-    /// content-type header with UTF-8 charset specification.
-    ///
-    /// # Type Parameters
-    /// - `T`: HTML type (must implement `Into<String>`)
-    ///
-    /// # Parameters
-    /// - `html`: The HTML content to set as the body
-    ///
-    /// # Returns
-    /// The builder with HTML body and content-type header set
-    ///
-    /// # Examples
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// let html = r#"
-    /// <!DOCTYPE html>
-    /// <html>
-    /// <head>
-    ///     <title>Welcome</title>
-    ///     <meta charset="UTF-8">
-    /// </head>
-    /// <body>
-    ///     <h1>Welcome to Our Site</h1>
-    ///     <p>This is a sample HTML response.</p>
-    /// </body>
-    /// </html>
-    /// "#;
-    ///
-    /// let response = ResponseBuilder::new()
-    ///     .html(html)
-    ///     .build();
-    /// ```
-    ///
-    /// ## Dynamic HTML Generation
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn generate_user_profile(name: &str, email: &str) -> ignitia::Response {
-    ///     let html = format!(r#"
-    ///     <!DOCTYPE html>
-    ///     <html>
-    ///     <head>
-    ///         <title>User Profile - {}</title>
-    ///         <style>
-    ///             body {{ font-family: Arial, sans-serif; margin: 40px; }}
-    ///             .profile {{ border: 1px solid #ccc; padding: 20px; }}
-    ///         </style>
-    ///     </head>
-    ///     <body>
-    ///         <div class="profile">
-    ///             <h1>User Profile</h1>
-    ///             <p><strong>Name:</strong> {}</p>
-    ///             <p><strong>Email:</strong> {}</p>
-    ///         </div>
-    ///     </body>
-    ///     </html>
-    ///     "#, name, name, email);
-    ///
-    ///     ResponseBuilder::new()
-    ///         .header("Cache-Control", "no-cache")
-    ///         .html(html)
-    ///         .build()
-    /// }
-    /// ```
-    ///
-    /// ## Template Integration
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// // Example with a simple template system
-    /// fn render_template(template: &str, variables: &[(&str, &str)]) -> String {
-    ///     let mut result = template.to_string();
-    ///     for (key, value) in variables {
-    ///         result = result.replace(&format!("{{{{{}}}}}", key), value);
-    ///     }
-    ///     result
-    /// }
-    ///
-    /// fn template_response() -> ignitia::Response {
-    ///     let template = r#"
-    ///     <html>
-    ///     <body>
-    ///         <h1>Hello, {{name}}!</h1>
-    ///         <p>Today is {{date}}.</p>
-    ///     </body>
-    ///     </html>
-    ///     "#;
-    ///
-    ///     let variables = [
-    ///         ("name", "Alice"),
-    ///         ("date", "2023-01-01"),
-    ///     ];
-    ///
-    ///     let rendered_html = render_template(template, &variables);
-    ///
-    ///     ResponseBuilder::new()
-    ///         .html(rendered_html)
-    ///         .build()
-    /// }
-    /// ```
-    pub fn html<T: Into<String>>(mut self, html: T) -> Self {
-        let html = html.into();
-        self.headers.insert(
-            http::header::CONTENT_TYPE,
-            HeaderValue::from_static("text/html; charset=utf-8"),
-        );
-        self.body = Some(Bytes::from(html));
-        self
-    }
-
-    /// Sets the response body (builder pattern).
-    ///
-    /// This method sets the raw body content without modifying headers.
-    /// Use this for binary content or when you need full control over the body.
-    ///
-    /// # Type Parameters
-    /// - `T`: Body type (must implement `Into<Bytes>`)
-    ///
-    /// # Parameters
-    /// - `body`: The body content
-    ///
-    /// # Returns
-    /// The builder with the updated body
-    ///
-    /// # Examples
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    /// use bytes::Bytes;
-    ///
-    /// // Binary data
-    /// let image_data = vec![0xFF, 0xD8, 0xFF, 0xE0]; // JPEG header
-    /// let response = ResponseBuilder::new()
-    ///     .header("Content-Type", "image/jpeg")
-    ///     .body(image_data)
-    ///     .build();
-    ///
-    /// // From Bytes
-    /// let data = Bytes::from("Custom content");
-    /// let response = ResponseBuilder::new()
-    ///     .header("Content-Type", "application/octet-stream")
-    ///     .body(data)
-    ///     .build();
-    /// ```
-    pub fn body<T: Into<Bytes>>(mut self, body: T) -> Self {
-        self.body = Some(body.into());
-        self
-    }
-
-    /// Sets redirect location and status code for the response.
-    ///
-    /// This method configures the response to redirect clients to a different URL
-    /// with the specified HTTP status code. It sets the `Location` header and
-    /// the appropriate status code.
-    ///
-    /// # Arguments
-    ///
-    /// * `status` - The HTTP status code for the redirect (typically 3xx series)
-    /// * `location` - The URL to redirect to
-    ///
-    /// # Examples
-    ///
-    /// ## Custom Status Redirect
-    /// ```
-    /// use ignitia::{ResponseBuilder, StatusCode};
-    ///
-    /// let response = ResponseBuilder::new()
-    ///     .redirect(StatusCode::FOUND, "/dashboard")
-    ///     .build();
-    ///
-    /// assert_eq!(response.status, StatusCode::FOUND);
-    /// ```
-    ///
-    /// ## API Endpoint Redirect
-    /// ```
-    /// use ignitia::{ResponseBuilder, StatusCode};
-    ///
-    /// fn api_redirect_response() -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .redirect(StatusCode::MOVED_PERMANENTLY, "/api/v2/users")
-    ///         .header("x-api-version", "2.0")
-    ///         .build()
-    /// }
-    /// ```
-    ///
-    /// ## Conditional Redirect with Headers
-    /// ```
-    /// use ignitia::{ResponseBuilder, StatusCode};
-    ///
-    /// fn redirect_with_tracking(destination: &str, user_id: u32) -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .redirect(StatusCode::FOUND, destination)
-    ///         .header("x-user-id", user_id.to_string())
-    ///         .header("x-redirect-reason", "user-preference")
-    ///         .build()
-    /// }
-    /// ```
-    pub fn redirect(mut self, status: StatusCode, location: impl Into<String>) -> Self {
-        self.status = status;
-        self.headers.insert(
-            http::header::LOCATION,
-            http::HeaderValue::from_str(&location.into())
-                .unwrap_or_else(|_| http::HeaderValue::from_static("/")),
-        );
-        self
-    }
-
-    /// Creates a temporary redirect response (HTTP 302 Found).
-    ///
-    /// This is the most commonly used redirect method in web applications.
-    /// The client will make a new request to the provided location, but should
-    /// continue to use the original URL for future requests. The HTTP method
-    /// may change to GET for the redirected request.
-    ///
-    /// # Arguments
-    ///
-    /// * `location` - The URL to redirect to
-    ///
-    /// # Examples
-    ///
-    /// ## Simple Login Redirect
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// let response = ResponseBuilder::new()
-    ///     .temporary_redirect("/login")
-    ///     .build();
-    ///
-    /// assert_eq!(response.status, ignitia::StatusCode::FOUND);
-    /// ```
-    ///
-    /// ## Redirect with Additional Headers
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn login_redirect_with_message() -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .temporary_redirect("/login")
-    ///         .header("x-login-required", "true")
-    ///         .header("x-original-url", "/protected-resource")
-    ///         .build()
-    /// }
-    /// ```
-    ///
-    /// ## Conditional User Redirect
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn redirect_by_user_type(user_type: &str) -> ignitia::Response {
-    ///     let destination = match user_type {
-    ///         "admin" => "/admin/dashboard",
-    ///         "premium" => "/premium/dashboard",
-    ///         _ => "/dashboard",
-    ///     };
-    ///
-    ///     ResponseBuilder::new()
-    ///         .temporary_redirect(destination)
-    ///         .header("x-user-type", user_type)
-    ///         .build()
-    /// }
-    /// ```
-    pub fn temporary_redirect(self, location: impl Into<String>) -> Self {
-        self.redirect(StatusCode::FOUND, location)
-    }
-
-    /// Creates a permanent redirect response (HTTP 301 Moved Permanently).
-    ///
-    /// Use this when a resource has permanently moved to a new location.
-    /// Search engines and browsers will update their records to use the new URL.
-    /// The HTTP method may change to GET for the redirected request.
-    ///
-    /// # Arguments
-    ///
-    /// * `location` - The new permanent URL location
-    ///
-    /// # Examples
-    ///
-    /// ## SEO-Friendly URL Migration
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// let response = ResponseBuilder::new()
-    ///     .permanent_redirect("/articles/new-blog-structure")
-    ///     .build();
-    ///
-    /// assert_eq!(response.status, ignitia::StatusCode::MOVED_PERMANENTLY);
-    /// ```
-    ///
-    /// ## Domain Migration with Cache Headers
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn migrate_to_new_domain() -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .permanent_redirect("https://newdomain.com/same-path")
-    ///         .header("cache-control", "public, max-age=31536000")
-    ///         .header("x-migration-date", "2025-09-10")
-    ///         .build()
-    /// }
-    /// ```
-    ///
-    /// ## Product URL Restructuring
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn redirect_old_product_url(product_slug: &str) -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .permanent_redirect(&format!("/products/{}", product_slug))
-    ///         .header("x-url-migration", "v2-structure")
-    ///         .build()
-    /// }
-    /// ```
-    pub fn permanent_redirect(self, location: impl Into<String>) -> Self {
-        self.redirect(StatusCode::MOVED_PERMANENTLY, location)
-    }
-
-    /// Creates a "See Other" redirect response (HTTP 303 See Other).
-    ///
-    /// This redirect is ideal for the POST-redirect-GET pattern. After processing
-    /// a POST request, redirect the client to a GET endpoint to prevent duplicate
-    /// form submissions when the user refreshes the page.
-    ///
-    /// # Arguments
-    ///
-    /// * `location` - The URL to redirect to (typically a GET endpoint)
-    ///
-    /// # Examples
-    ///
-    /// ## Form Submission Success
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// let response = ResponseBuilder::new()
-    ///     .see_other("/form-success")
-    ///     .build();
-    ///
-    /// assert_eq!(response.status, ignitia::StatusCode::SEE_OTHER);
-    /// ```
-    ///
-    /// ## E-commerce Checkout Flow
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn checkout_success_redirect(order_id: u32) -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .see_other(&format!("/orders/{}/confirmation", order_id))
-    ///         .header("x-order-id", order_id.to_string())
-    ///         .header("x-checkout-completed", "true")
-    ///         .build()
-    /// }
-    /// ```
-    ///
-    /// ## User Registration Flow
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn registration_complete(user_id: u32) -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .see_other("/welcome")
-    ///         .header("set-cookie", &format!("user_id={}; Path=/; HttpOnly", user_id))
-    ///         .header("x-registration-success", "true")
-    ///         .build()
-    /// }
-    /// ```
-    pub fn see_other(self, location: impl Into<String>) -> Self {
-        self.redirect(StatusCode::SEE_OTHER, location)
-    }
-
-    /// Creates a temporary redirect that preserves the HTTP method (HTTP 307 Temporary Redirect).
-    ///
-    /// Unlike 302 redirects, this guarantees that the client will use the same HTTP method
-    /// when making the redirected request. Use this when method preservation is important.
-    ///
-    /// # Arguments
-    ///
-    /// * `location` - The temporary URL to redirect to
-    ///
-    /// # Examples
-    ///
-    /// ## API Load Balancing
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// let response = ResponseBuilder::new()
-    ///     .temporary_redirect_307("/api/v1/backup-server")
-    ///     .build();
-    ///
-    /// assert_eq!(response.status, ignitia::StatusCode::TEMPORARY_REDIRECT);
-    /// ```
-    ///
-    /// ## Maintenance Mode Redirect
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn maintenance_redirect() -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .temporary_redirect_307("/maintenance")
-    ///         .header("retry-after", "3600")
-    ///         .header("x-maintenance-reason", "database-upgrade")
-    ///         .build()
-    /// }
-    /// ```
-    ///
-    /// ## Server Migration with Method Preservation
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn preserve_method_redirect(backup_server: &str) -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .temporary_redirect_307(&format!("https://{}/api/endpoint", backup_server))
-    ///         .header("x-server-status", "primary-unavailable")
-    ///         .build()
-    /// }
-    /// ```
-    pub fn temporary_redirect_307(self, location: impl Into<String>) -> Self {
-        self.redirect(StatusCode::TEMPORARY_REDIRECT, location)
-    }
-
-    /// Creates a permanent redirect that preserves the HTTP method (HTTP 308 Permanent Redirect).
-    ///
-    /// This is like 301 but guarantees the client will use the same HTTP method for the redirect.
-    /// Use this for permanent moves where preserving the original HTTP method is crucial.
-    ///
-    /// # Arguments
-    ///
-    /// * `location` - The new permanent URL
-    ///
-    /// # Examples
-    ///
-    /// ## API Endpoint Migration
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// let response = ResponseBuilder::new()
-    ///     .permanent_redirect_308("/api/v2/users")
-    ///     .build();
-    ///
-    /// assert_eq!(response.status, ignitia::StatusCode::PERMANENT_REDIRECT);
-    /// ```
-    ///
-    /// ## RESTful API Versioning
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn api_version_migration() -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .permanent_redirect_308("/api/v3/resources")
-    ///         .header("x-api-version", "3.0")
-    ///         .header("x-deprecated-version", "2.0")
-    ///         .header("cache-control", "public, max-age=86400")
-    ///         .build()
-    /// }
-    /// ```
-    ///
-    /// ## Webhook Endpoint Migration
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// fn webhook_migration(new_endpoint: &str) -> ignitia::Response {
-    ///     ResponseBuilder::new()
-    ///         .permanent_redirect_308(new_endpoint)
-    ///         .header("x-webhook-migration", "v2")
-    ///         .header("x-migration-date", "2025-09-10")
-    ///         .build()
-    /// }
-    /// ```
-    pub fn permanent_redirect_308(self, location: impl Into<String>) -> Self {
-        self.redirect(StatusCode::PERMANENT_REDIRECT, location)
-    }
-
-    /// Builds and returns the final Response.
-    ///
-    /// This method consumes the builder and creates a `Response` instance with
-    /// all the configured properties. If no body was set, the response will
-    /// have an empty body.
-    ///
-    /// # Returns
-    /// A complete `Response` instance
-    ///
-    /// # Examples
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    /// use http::StatusCode;
-    ///
-    /// let response = ResponseBuilder::new()
-    ///     .status(StatusCode::CREATED)
-    ///     .header("Location", "/users/123")
-    ///     .text("User created successfully")
-    ///     .build();
-    ///
-    /// assert_eq!(response.status, StatusCode::CREATED);
-    /// assert!(response.headers.contains_key("location"));
-    /// ```
-    ///
-    /// ## Empty Body Handling
-    /// ```
-    /// use ignitia::ResponseBuilder;
-    ///
-    /// // Response without explicit body
-    /// let response = ResponseBuilder::new()
-    ///     .status_code(204) // No Content
-    ///     .build();
-    ///
-    /// assert!(response.body.is_empty());
-    /// ```
+    /// # Performance Notes
+    ///
+    /// - Finalizes header map with optimal capacity
+    /// - Converts body to appropriate Bytes representation
+    /// - Zero-copy operations where possible
     pub fn build(self) -> Response {
+        let body_bytes = match self.body {
+            Some(ResponseBody::Static(bytes)) => Arc::new(Bytes::from_static(bytes)),
+            Some(ResponseBody::Shared(arc_bytes)) => arc_bytes,
+            Some(ResponseBody::Owned(bytes)) => Arc::new(bytes),
+            Some(ResponseBody::Cow(cow)) => match cow {
+                Cow::Borrowed(s) => Arc::new(Bytes::from_static(s.as_bytes())),
+                Cow::Owned(s) => Arc::new(Bytes::from(s)),
+            },
+            None => Arc::new(Bytes::new()),
+        };
+
         Response {
             status: self.status,
             headers: self.headers,
-            body: self.body.unwrap_or_else(|| Bytes::new()),
+            body: body_bytes,
+            cache_control: None, // You can extend this to extract from headers if needed
         }
+    }
+
+    /// Creates a pre-built health check response
+    ///
+    /// Returns a pre-compiled health check response with status 200 OK
+    /// and JSON body `{"status":"healthy"}`. Uses zero-copy operations.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for health checks
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let health_response = ResponseBuilder::health();
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Zero allocation response building
+    /// - Pre-compiled JSON body
+    /// - Pre-set Content-Type header
+    #[inline]
+    pub fn health() -> Response {
+        ResponseBuilder::new().json_static("health_ok").build()
+    }
+
+    /// Creates a pre-built "Not Found" response
+    ///
+    /// Returns a pre-compiled 404 response with JSON body `{"error":"Not Found"}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for 404 errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let not_found = ResponseBuilder::not_found();
+    /// ```
+    #[inline]
+    pub fn not_found() -> Response {
+        ResponseBuilder::with_status(StatusCode::NOT_FOUND)
+            .json_static("not_found")
+            .build()
+    }
+
+    /// Creates a pre-built "Internal Server Error" response
+    ///
+    /// Returns a pre-compiled 500 response with JSON body
+    /// `{"error":"Internal Server Error"}`. Uses zero-copy operations.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for 500 errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let server_error = ResponseBuilder::server_error();
+    /// ```
+    #[inline]
+    pub fn server_error() -> Response {
+        ResponseBuilder::with_status(StatusCode::INTERNAL_SERVER_ERROR)
+            .json_static("server_error")
+            .build()
+    }
+
+    /// Creates a pre-built "Unauthorized" response
+    ///
+    /// Returns a pre-compiled 401 response with JSON body `{"error":"Unauthorized"}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for 401 errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let unauthorized = ResponseBuilder::unauthorized();
+    /// ```
+    #[inline]
+    pub fn unauthorized() -> Response {
+        ResponseBuilder::with_status(StatusCode::UNAUTHORIZED)
+            .json_static("unauthorized")
+            .build()
+    }
+
+    /// Creates a pre-built "Forbidden" response
+    ///
+    /// Returns a pre-compiled 403 response with JSON body `{"error":"Forbidden"}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for 403 errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let forbidden = ResponseBuilder::forbidden();
+    /// ```
+    #[inline]
+    pub fn forbidden() -> Response {
+        ResponseBuilder::with_status(StatusCode::FORBIDDEN)
+            .json_static("forbidden")
+            .build()
+    }
+
+    /// Creates a pre-built "Bad Request" response
+    ///
+    /// Returns a pre-compiled 400 response with JSON body `{"error":"Bad Request"}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for 400 errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let bad_request = ResponseBuilder::bad_request();
+    /// ```
+    #[inline]
+    pub fn bad_request() -> Response {
+        ResponseBuilder::with_status(StatusCode::BAD_REQUEST)
+            .json_static("bad_request")
+            .build()
+    }
+
+    /// Creates a pre-built "Method Not Allowed" response
+    ///
+    /// Returns a pre-compiled 405 response with JSON body
+    /// `{"error":"Method Not Allowed"}`. Uses zero-copy operations.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for 405 errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let method_not_allowed = ResponseBuilder::method_not_allowed();
+    /// ```
+    #[inline]
+    pub fn method_not_allowed() -> Response {
+        ResponseBuilder::with_status(StatusCode::METHOD_NOT_ALLOWED)
+            .json_static("method_not_allowed")
+            .build()
+    }
+
+    /// Creates a pre-built "OK" response
+    ///
+    /// Returns a pre-compiled 200 response with JSON body `{"message":"OK"}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for success responses
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let ok_response = ResponseBuilder::ok();
+    /// ```
+    #[inline]
+    pub fn ok() -> Response {
+        ResponseBuilder::new().json_static("ok_message").build()
+    }
+
+    /// Creates a pre-built success response
+    ///
+    /// Returns a pre-compiled 200 response with JSON body `{"success":true}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for success responses
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let success_response = ResponseBuilder::success();
+    /// ```
+    #[inline]
+    pub fn success() -> Response {
+        ResponseBuilder::new().json_static("success").build()
+    }
+
+    /// Creates a pre-built "pong" response
+    ///
+    /// Returns a pre-compiled 200 response with JSON body `{"message":"pong"}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for ping/pong endpoints
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let pong_response = ResponseBuilder::pong();
+    /// ```
+    #[inline]
+    pub fn pong() -> Response {
+        ResponseBuilder::new().json_static("pong").build()
+    }
+
+    /// Creates a pre-built empty JSON response
+    ///
+    /// Returns a pre-compiled 200 response with empty JSON body `{}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for empty responses
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let empty_response = ResponseBuilder::empty_json();
+    /// ```
+    #[inline]
+    pub fn empty_json() -> Response {
+        ResponseBuilder::new().json_static("empty_json").build()
+    }
+
+    /// Creates a pre-built empty array response
+    ///
+    /// Returns a pre-compiled 200 response with empty array body `[]`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a pre-built `Response` for empty array responses
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::ResponseBuilder;
+    ///
+    /// let empty_array = ResponseBuilder::empty_array();
+    /// ```
+    #[inline]
+    pub fn empty_array() -> Response {
+        ResponseBuilder::new().json_static("empty_array").build()
     }
 }
 
 impl Default for ResponseBuilder {
-    /// Creates a default ResponseBuilder.
+    /// Creates a default response builder with OK status
     ///
-    /// This is equivalent to calling `ResponseBuilder::new()`.
+    /// This implementation allows using `ResponseBuilder::default()` for
+    /// convenience and consistency with Rust conventions.
     ///
     /// # Examples
-    /// ```
+    ///
+    /// ```rust
     /// use ignitia::ResponseBuilder;
     ///
     /// let builder = ResponseBuilder::default();
-    /// let response = builder.text("Hello").build();
     /// ```
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Response {
+    /// Creates a response with pre-compiled static JSON content
+    ///
+    /// This method provides ultra-fast response creation by looking up pre-compiled
+    /// JSON responses from the static common responses map. Ideal for frequently
+    /// used API responses like health checks, errors, or standard success messages.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Static string key for pre-compiled JSON responses
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` with the pre-compiled content and appropriate headers
+    ///
+    /// # Available Keys
+    ///
+    /// - `"health_ok"` - `{"status":"healthy"}`
+    /// - `"not_found"` - `{"error":"Not Found"}`
+    /// - `"server_error"` - `{"error":"Internal Server Error"}`
+    /// - `"unauthorized"` - `{"error":"Unauthorized"}`
+    /// - `"forbidden"` - `{"error":"Forbidden"}`
+    /// - `"bad_request"` - `{"error":"Bad Request"}`
+    /// - `"method_not_allowed"` - `{"error":"Method Not Allowed"}`
+    /// - `"empty_json"` - `{}`
+    /// - `"empty_array"` - `[]`
+    /// - `"ok_message"` - `{"message":"OK"}`
+    /// - `"success"` - `{"success":true}`
+    /// - `"pong"` - `{"message":"pong"}`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let health_response = Response::static_json("health_ok");
+    /// let not_found_response = Response::static_json("not_found");
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - O(1) lookup time in static HashMap
+    /// - Zero allocation for body content
+    /// - Pre-set Content-Type header
+    /// - Uses shared Arc<Bytes> for memory efficiency
+    pub fn static_json(key: &'static str) -> Self {
+        if let Some(body) = COMMON_RESPONSES.get(key) {
+            Self {
+                status: StatusCode::OK,
+                headers: {
+                    let mut headers = HeaderMap::with_capacity(1);
+                    headers.insert(CONTENT_TYPE.clone(), COMMON_HEADERS["json"].clone());
+                    headers
+                },
+                body: Arc::new(body.clone()),
+                cache_control: None,
+            }
+        } else {
+            // Fallback to empty JSON for unknown keys
+            ResponseBuilder::empty_json()
+        }
+    }
+
+    /// Creates a zero-copy JSON response from a static string
+    ///
+    /// This method creates a response with a static JSON string without any
+    /// serialization overhead. The string must be valid JSON and is referenced
+    /// directly from static memory.
+    ///
+    /// # Arguments
+    ///
+    /// * `json_str` - Static string containing valid JSON
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` with the static JSON content
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let response = Response::json_static(r#"{"status":"ok","data":null}"#);
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Zero allocation for body content
+    /// - References static memory directly
+    /// - No serialization overhead
+    /// - Pre-set Content-Type header
+    pub fn json_static(json_str: &'static str) -> Self {
+        Self {
+            status: StatusCode::OK,
+            headers: {
+                let mut headers = HeaderMap::with_capacity(1);
+                headers.insert(CONTENT_TYPE.clone(), COMMON_HEADERS["json"].clone());
+                headers
+            },
+            body: Arc::new(Bytes::from_static(json_str.as_bytes())),
+            cache_control: None,
+        }
+    }
+
+    /// Creates a zero-copy text response from a static string
+    ///
+    /// This method creates a plain text response with a static string without
+    /// any allocation. The string is referenced directly from static memory.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - Static string for the response body
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` with the static text content
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let response = Response::text_static("Hello, World!");
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Zero allocation for body content
+    /// - References static memory directly
+    /// - Pre-set Content-Type header with proper charset
+    pub fn text_static(text: &'static str) -> Self {
+        Self {
+            status: StatusCode::OK,
+            headers: {
+                let mut headers = HeaderMap::with_capacity(1);
+                headers.insert(CONTENT_TYPE.clone(), COMMON_HEADERS["text"].clone());
+                headers
+            },
+            body: Arc::new(Bytes::from_static(text.as_bytes())),
+            cache_control: None,
+        }
+    }
+
+    /// Creates a zero-copy HTML response from a static string
+    ///
+    /// This method creates an HTML response with a static string without
+    /// any allocation. The string is referenced directly from static memory.
+    ///
+    /// # Arguments
+    ///
+    /// * `html` - Static string containing HTML content
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` with the static HTML content
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let response = Response::html_static("<h1>Welcome</h1><p>Hello World</p>");
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Zero allocation for body content
+    /// - References static memory directly
+    /// - Pre-set Content-Type header with proper charset
+    pub fn html_static(html: &'static str) -> Self {
+        Self {
+            status: StatusCode::OK,
+            headers: {
+                let mut headers = HeaderMap::with_capacity(1);
+                headers.insert(CONTENT_TYPE.clone(), COMMON_HEADERS["html"].clone());
+                headers
+            },
+            body: Arc::new(Bytes::from_static(html.as_bytes())),
+            cache_control: None,
+        }
+    }
+
+    /// Creates a shared clone of the response body
+    ///
+    /// This method creates a new `Arc<Bytes>` reference to the response body,
+    /// allowing the same body content to be shared across multiple responses
+    /// without copying the actual bytes.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Arc<Bytes>` reference to the response body
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let response = Response::text_static("Hello");
+    /// let body_clone = response.clone_body();
+    ///
+    /// // Use the cloned body in another response
+    /// let another_response = Response::new(
+    ///     response.status().clone(),
+    ///     response.headers().clone(),
+    ///     body_clone.as_ref().clone()
+    /// );
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Zero-copy operation (only increments Arc reference count)
+    /// - Allows efficient body sharing between responses
+    /// - Useful for response caching or middleware
+    pub fn clone_body(&self) -> Arc<Bytes> {
+        Arc::clone(&self.body)
+    }
+
+    /// Creates an empty JSON response
+    ///
+    /// Returns a response with empty JSON object `{}` and status 200 OK.
+    /// Uses pre-compiled content for optimal performance.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` with empty JSON content
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let empty_response = Response::empty_json();
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Zero allocation response
+    /// - Uses pre-compiled static content
+    /// - Pre-set Content-Type header
+    pub fn empty_json() -> Self {
+        ResponseBuilder::empty_json()
+    }
+
+    /// Creates a health check response
+    ///
+    /// Returns a pre-compiled health check response with status 200 OK
+    /// and JSON body `{"status":"healthy"}`. Uses zero-copy operations.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` for health check endpoints
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let health_response = Response::health_check();
+    /// ```
+    ///
+    /// # Performance Notes
+    ///
+    /// - Zero allocation response
+    /// - Uses pre-compiled static content
+    /// - Pre-set Content-Type header
+    pub fn health_check() -> Self {
+        ResponseBuilder::health()
+    }
+
+    /// Creates an "Internal Server Error" response
+    ///
+    /// Returns a pre-compiled 500 response with JSON body
+    /// `{"error":"Internal Server Error"}`. Uses zero-copy operations.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` for 500 errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let server_error = Response::server_error();
+    /// ```
+    pub fn server_error() -> Self {
+        ResponseBuilder::server_error()
+    }
+
+    /// Creates an "Unauthorized" response
+    ///
+    /// Returns a pre-compiled 401 response with JSON body `{"error":"Unauthorized"}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` for 401 errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let unauthorized = Response::unauthorized();
+    /// ```
+    pub fn unauthorized() -> Self {
+        ResponseBuilder::unauthorized()
+    }
+
+    /// Creates a "Forbidden" response
+    ///
+    /// Returns a pre-compiled 403 response with JSON body `{"error":"Forbidden"}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` for 403 errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let forbidden = Response::forbidden();
+    /// ```
+    pub fn forbidden() -> Self {
+        ResponseBuilder::forbidden()
+    }
+
+    /// Creates a "Bad Request" response
+    ///
+    /// Returns a pre-compiled 400 response with JSON body `{"error":"Bad Request"}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` for 400 errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let bad_request = Response::bad_request();
+    /// ```
+    pub fn bad_request() -> Self {
+        ResponseBuilder::bad_request()
+    }
+
+    /// Creates a "Method Not Allowed" response
+    ///
+    /// Returns a pre-compiled 405 response with JSON body
+    /// `{"error":"Method Not Allowed"}`. Uses zero-copy operations.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` for 405 errors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let method_not_allowed = Response::method_not_allowed();
+    /// ```
+    pub fn method_not_allowed() -> Self {
+        ResponseBuilder::method_not_allowed()
+    }
+
+    /// Creates a success response
+    ///
+    /// Returns a pre-compiled 200 response with JSON body `{"success":true}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` for success responses
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let success_response = Response::success();
+    /// ```
+    pub fn success() -> Self {
+        ResponseBuilder::success()
+    }
+
+    /// Creates a "pong" response
+    ///
+    /// Returns a pre-compiled 200 response with JSON body `{"message":"pong"}`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` for ping/pong endpoints
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let pong_response = Response::pong();
+    /// ```
+    pub fn pong() -> Self {
+        ResponseBuilder::pong()
+    }
+
+    /// Creates an empty array response
+    ///
+    /// Returns a pre-compiled 200 response with empty array body `[]`.
+    /// Uses zero-copy operations and pre-allocated content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Response` for empty array responses
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let empty_array = Response::empty_array();
+    /// ```
+    pub fn empty_array() -> Self {
+        ResponseBuilder::empty_array()
+    }
+
+    /// Checks if the response has a cache control header
+    ///
+    /// This method checks if the response contains a Cache-Control header,
+    /// which can be useful for middleware or response processing.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if Cache-Control header is present, `false` otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let response = Response::text_static("test");
+    /// assert!(!response.has_cache_control());
+    ///
+    /// let cached_response = Response::text_static("test").with_cache_control("max-age=3600");
+    /// assert!(cached_response.has_cache_control());
+    /// ```
+    pub fn has_cache_control(&self) -> bool {
+        self.headers.contains_key(CACHE_CONTROL.as_str())
+    }
+
+    /// Gets the cache control header value if present
+    ///
+    /// This method returns the value of the Cache-Control header if it exists,
+    /// or `None` if the header is not present.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(HeaderValue)` if Cache-Control header exists, `None` otherwise
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let response = Response::text_static("test");
+    /// assert_eq!(response.get_cache_control(), None);
+    ///
+    /// let cached_response = Response::text_static("test").with_cache_control("max-age=3600");
+    /// assert!(cached_response.get_cache_control().is_some());
+    /// ```
+    pub fn get_cache_control(&self) -> Option<&HeaderValue> {
+        self.headers.get(CACHE_CONTROL.as_str())
+    }
+
+    /// Sets CORS headers to allow any origin
+    ///
+    /// This method adds CORS headers to allow requests from any origin.
+    /// The response is consumed and returned for method chaining.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` with CORS headers added
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let response = Response::text_static("test")
+    ///     .with_cors_any();
+    /// ```
+    pub fn with_cors_any(mut self) -> Self {
+        self.headers.insert(
+            ACCESS_CONTROL_ALLOW_ORIGIN.clone(),
+            COMMON_HEADERS["cors_any"].clone(),
+        );
+        self.headers.insert(
+            ACCESS_CONTROL_ALLOW_METHODS.clone(),
+            COMMON_HEADERS["cors_methods"].clone(),
+        );
+        self.headers.insert(
+            ACCESS_CONTROL_ALLOW_HEADERS.clone(),
+            COMMON_HEADERS["cors_headers"].clone(),
+        );
+        self
+    }
+
+    /// Adds a header to the response
+    ///
+    /// This method adds a header to an existing response.
+    /// The response is consumed and returned for method chaining.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Header name
+    /// * `value` - Header value
+    ///
+    /// # Returns
+    ///
+    /// Returns `Self` with the added header
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ignitia::Response;
+    ///
+    /// let response = Response::text_static("test")
+    ///     .with_header("X-Custom", "value");
+    /// ```
+    pub fn with_header<K, V>(mut self, key: K, value: V) -> Self
+    where
+        K: TryInto<HeaderName>,
+        V: TryInto<HeaderValue>,
+        K::Error: std::fmt::Debug,
+        V::Error: std::fmt::Debug,
+    {
+        if let (Ok(name), Ok(val)) = (key.try_into(), value.try_into()) {
+            self.headers.insert(name, val);
+        }
+        self
     }
 }

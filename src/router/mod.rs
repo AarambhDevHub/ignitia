@@ -1,301 +1,210 @@
-//! # HTTP Router Module
+//! # Router Module
 //!
-//! This module provides the core routing functionality for the Ignitia web framework. It includes
-//! a high-performance router with route compilation, middleware support, nested routing capabilities,
-//! and optional WebSocket integration. The router is designed for maximum performance with features
-//! like route pre-compilation, atomic updates, and efficient path matching.
+//! This module provides a high-performance, flexible routing system for the Ignitia web framework.
+//! It supports both simple base routing and advanced radix tree routing with mixed mode nesting capabilities.
 //!
 //! ## Features
 //!
-//! - **High-Performance Routing**: Pre-compiled routes with regex optimization and fast path matching
-//! - **Middleware Support**: Chain middleware with before/after execution hooks
-//! - **Nested Routing**: Hierarchical route organization with path prefixing
-//! - **WebSocket Integration**: Optional WebSocket support with dedicated handlers
-//! - **Thread-Safe Operations**: Lock-free reads with atomic route compilation updates
-//! - **Flexible Handler Types**: Support for various handler signatures with automatic extraction
-//! - **Route Parameters**: Named parameters (`:id`) and wildcards (`*path`) with type-safe extraction
+//! - **Dual Routing Modes**: Base (simple linear matching) and Radix (compressed trie) modes
+//! - **Mixed Mode Nesting**: Nest routers of different modes (Base->Radix, Radix->Base, etc.)
+//! - **Parameter Extraction**: Support for path parameters (`:id`) and wildcards (`*path`)
+//! - **Middleware Support**: Per-route and global middleware with proper ordering
+//! - **High Performance**: Optimized compilation, caching, and lookup algorithms
+//! - **WebSocket Support**: Built-in WebSocket routing when the feature is enabled
+//! - **Thread Safety**: Lock-free operations with atomic updates
+//! - **State Management**: Built-in application state management with type safety
 //!
-//! ## Architecture
+//! ## Quick Start
 //!
-//! ### Router Design
-//! The router uses a two-stage architecture:
-//! 1. **Build Stage**: Routes are added using a builder pattern
-//! 2. **Compilation Stage**: Routes are compiled into an optimized structure for fast matching
-//!
-//! ### Performance Features
-//! - **Atomic Compilation**: Routes are compiled atomically using `ArcSwap` for lock-free reads
-//! - **Route Sorting**: Routes are sorted by specificity for optimal matching order
-//! - **Method-Based Grouping**: Routes are grouped by HTTP method for faster lookup
-//! - **Regex Caching**: Pre-compiled regex patterns with size limits
-//!
-//! ## Usage Examples
-//!
-//! ### Basic Router Setup
 //! ```
-//! use ignitia::{Router, Response, Result};
-//! use http::Method;
+//! use ignitia::{Router, RouterMode, Response};
 //!
-//! let router = Router::new()
-//!     .get("/", || async {
-//!         Ok(Response::text("Hello, World!"))
-//!     })
-//!     .post("/users", |body: String| async move {
-//!         Ok(Response::json(serde_json::json!({
-//!             "message": "User created",
-//!             "body": body
-//!         }))?)
-//!     })
-//!     .get("/users/:id", |path: ignitia::Path<u32>| async move {
-//!         Ok(Response::json(serde_json::json!({
-//!             "user_id": path.0
-//!         }))?)
-//!     });
-//! ```
-//!
-//! ### Advanced Route Patterns
-//! ```
-//! use ignitia::{Router, Response, Result, Path, Query};
-//! use serde::Deserialize;
-//!
-//! #[derive(Deserialize)]
-//! struct UserParams {
-//!     id: u32,
+//! async fn hello() -> Result<Response, ignitia::Error> {
+//!     Ok(Response::text("Hello, World!"))
 //! }
 //!
-//! #[derive(Deserialize)]
-//! struct QueryParams {
-//!     page: Option<u32>,
-//!     limit: Option<u32>,
+//! async fn user_profile(id: String) -> Result<Response, ignitia::Error> {
+//!     Ok(Response::text(format!("User ID: {}", id)))
 //! }
 //!
-//! let router = Router::new()
-//!     // Named parameters
-//!     .get("/users/:id", |path: Path<UserParams>| async move {
-//!         Ok(Response::json(serde_json::json!({
-//!             "user_id": path.id
-//!         }))?)
-//!     })
-//!     // Multiple parameters
-//!     .get("/users/:user_id/posts/:post_id",
-//!         |path: Path<serde_json::Value>| async move {
-//!             Ok(Response::json(path.into_inner())?)
-//!         })
-//!     // Wildcard parameters
-//!     .get("/files/*path", |path: Path<String>| async move {
-//!         Ok(Response::text(format!("File path: {}", path.0)))
-//!     })
-//!     // Query parameters
-//!     .get("/search", |query: Query<QueryParams>| async move {
-//!         let page = query.page.unwrap_or(1);
-//!         let limit = query.limit.unwrap_or(10);
-//!         Ok(Response::json(serde_json::json!({
-//!             "page": page,
-//!             "limit": limit
-//!         }))?)
-//!     });
+//! let app = Router::new()
+//!     .with_mode(RouterMode::Radix)
+//!     .get("/", hello)
+//!     .get("/users/:id", user_profile);
 //! ```
 //!
-//! ### Middleware Integration
+//! ## Router Modes
+//!
+//! ### Base Mode
+//! - **Best for**: Small to medium applications (< 100 routes)
+//! - **Algorithm**: Linear search through routes with regex matching
+//! - **Memory**: Lower memory usage
+//! - **Compilation**: Faster route compilation
+//!
+//! ### Radix Mode (Default)
+//! - **Best for**: Large applications with many routes
+//! - **Algorithm**: Compressed trie (radix tree) for O(k) lookup where k is path length
+//! - **Memory**: Higher memory usage but better for large route sets
+//! - **Compilation**: Slower compilation but much faster lookup
+//!
+//! ## Mixed Mode Nesting
+//!
+//! The router supports nesting routers with different modes:
+//!
 //! ```
-//! use ignitia::{Router, Response, Result, LoggerMiddleware, CorsMiddleware, AuthMiddleware};
+//! # use ignitia::{Router, RouterMode, Response};
+//! # async fn api_handler() -> Result<Response, ignitia::Error> { Ok(Response::text("API")) }
+//! # async fn web_handler() -> Result<Response, ignitia::Error> { Ok(Response::text("Web")) }
 //!
-//! let router = Router::new()
-//!     // Global middleware
-//!     .middleware(LoggerMiddleware)
-//!     .middleware(CorsMiddleware::new().allow_origin("https://example.com"))
-//!     .middleware(AuthMiddleware::new("secret-token")
-//!         .protect_path("/admin")
-//!         .protect_path("/api/private"))
-//!     // Routes
-//!     .get("/public", || async { Ok(Response::text("Public endpoint")) })
-//!     .get("/admin", || async { Ok(Response::text("Admin endpoint")) })
-//!     .get("/api/private", || async { Ok(Response::text("Private API")) });
-//! ```
+//! // High-performance API routes using Radix mode
+//! let api_router = Router::new()
+//!     .with_mode(RouterMode::Radix)
+//!     .get("/users/:id", api_handler);
 //!
-//! ### Nested Routing
-//! ```
-//! use ignitia::{Router, Response, Result};
+//! // Simple static routes using Base mode
+//! let web_router = Router::new()
+//!     .with_mode(RouterMode::Base)
+//!     .get("/about", web_handler);
 //!
-//! // API v1 routes
-//! let api_v1 = Router::new()
-//!     .get("/users", || async { Ok(Response::text("API v1 users")) })
-//!     .get("/posts", || async { Ok(Response::text("API v1 posts")) });
-//!
-//! // API v2 routes
-//! let api_v2 = Router::new()
-//!     .get("/users", || async { Ok(Response::text("API v2 users")) })
-//!     .get("/posts", || async { Ok(Response::text("API v2 posts")) })
-//!     .get("/comments", || async { Ok(Response::text("API v2 comments")) });
-//!
-//! // Main router with nested routes
-//! let router = Router::new()
-//!     .get("/", || async { Ok(Response::text("Home")) })
-//!     .nest("/api/v1", api_v1)
-//!     .nest("/api/v2", api_v2);
-//!
-//! // This creates routes:
-//! // GET /
-//! // GET /api/v1/users
-//! // GET /api/v1/posts
-//! // GET /api/v2/users
-//! // GET /api/v2/posts
-//! // GET /api/v2/comments
+//! // Mix them together
+//! let app = Router::new()
+//!     .with_mode(RouterMode::Radix)
+//!     .nest("/api", api_router)
+//!     .nest("/web", web_router);
 //! ```
 //!
-//! ### WebSocket Support
-//! ```
-//! #[cfg(feature = "websocket")]
-//! use ignitia::{Router, websocket::WebSocketConnection, Result};
+//! ## Middleware
 //!
-//! #[cfg(feature = "websocket")]
-//! let router = Router::new()
-//!     .get("/", || async { Ok(ignitia::Response::text("WebSocket Demo")) })
-//!     .websocket("/ws", |mut ws: WebSocketConnection| async move {
-//!         while let Some(msg) = ws.recv().await {
-//!             match msg {
-//!                 ignitia::websocket::Message::Text(text) => {
-//!                     ws.send_text(format!("Echo: {}", text)).await?;
-//!                 }
-//!                 ignitia::websocket::Message::Close(_) => break,
-//!                 _ => {}
-//!             }
-//!         }
-//!         Ok(())
-//!     })
-//!     .websocket_fn("/chat", |ws| async move {
-//!         // Handle chat WebSocket connection
-//!         Ok(())
-//!     });
+//! Middleware can be applied at both router and route levels:
+//!
+//! ```
+//! # use ignitia::{Router, Response, middleware::LoggerMiddleware};
+//! # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
+//!
+//! let app = Router::new()
+//!     .middleware(LoggerMiddleware)  // Global middleware
+//!     .get("/", handler);
 //! ```
 //!
-//! ## Advanced Features
+//! ## State Management
 //!
-//! ### Custom Error Handling
+//! The router provides type-safe state management:
+//!
 //! ```
-//! use ignitia::{Router, Response, Result, Error};
+//! # use ignitia::{Router, Response};
+//! # use std::sync::Arc;
+//! # struct Database;
+//! # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
 //!
-//! let router = Router::new()
-//!     .get("/users/:id", |path: ignitia::Path<String>| async move {
-//!         let id = path.0.parse::<u32>()
-//!             .map_err(|_| Error::BadRequest("Invalid user ID".into()))?;
-//!
-//!         if id == 0 {
-//!             return Err(Error::NotFound("User not found".into()));
-//!         }
-//!
-//!         Ok(Response::json(serde_json::json!({
-//!             "user_id": id
-//!         }))?)
-//!     })
-//!     .not_found(|| async {
-//!         Ok(Response::json(serde_json::json!({
-//!             "error": "Endpoint not found",
-//!             "suggestion": "Check the API documentation"
-//!         }))?.with_status_code(404))
-//!     });
-//! ```
-//!
-//! ### Route Groups and Organization
-//! ```
-//! use ignitia::{Router, Response, Result};
-//!
-//! fn create_user_routes() -> Router {
-//!     Router::new()
-//!         .get("/", || async { Ok(Response::text("List users")) })
-//!         .post("/", || async { Ok(Response::text("Create user")) })
-//!         .get("/:id", || async { Ok(Response::text("Get user")) })
-//!         .put("/:id", || async { Ok(Response::text("Update user")) })
-//!         .delete("/:id", || async { Ok(Response::text("Delete user")) })
-//! }
-//!
-//! fn create_post_routes() -> Router {
-//!     Router::new()
-//!         .get("/", || async { Ok(Response::text("List posts")) })
-//!         .post("/", || async { Ok(Response::text("Create post")) })
-//!         .get("/:id", || async { Ok(Response::text("Get post")) })
-//!         .put("/:id", || async { Ok(Response::text("Update post")) })
-//!         .delete("/:id", || async { Ok(Response::text("Delete post")) })
-//! }
-//!
-//! let router = Router::new()
-//!     .nest("/users", create_user_routes())
-//!     .nest("/posts", create_post_routes());
-//! ```
-//!
-//! ## Performance Considerations
-//!
-//! ### Route Compilation
-//! Routes are compiled automatically when first accessed and cached for subsequent requests:
-//! - **Lazy Compilation**: Routes are compiled only when needed
-//! - **Atomic Updates**: Compilation is atomic and doesn't block request handling
-//! - **Memory Efficiency**: Compiled routes are shared across all requests
-//!
-//! ### Route Ordering
-//! Routes are automatically sorted by specificity for optimal matching:
-//! ```
-//! let router = Router::new()
-//!     // These routes will be automatically ordered for best performance:
-//!     .get("/*path", || async { Ok(Response::text("Catch all")) })        // Last
-//!     .get("/users/:id", || async { Ok(Response::text("User by ID")) })   // Second
-//!     .get("/users/me", || async { Ok(Response::text("Current user")) }); // First
-//! ```
-//!
-//! ### Memory Usage
-//! - Routes are stored efficiently with minimal memory overhead
-//! - Regex patterns have size limits to prevent memory exhaustion
-//! - Middleware is shared across routes to minimize duplication
-//!
-//! ## Testing and Debugging
-//!
-//! ### Route Testing
-//! ```
-//! use ignitia::{Router, Method};
-//!
-//! #[tokio::test]
-//! async fn test_router() {
-//!     let router = Router::new()
-//!         .get("/users/:id", || async { Ok(ignitia::Response::text("User")) });
-//!
-//!     // Test route matching
-//!     assert!(router.matches(&Method::GET, "/users/123"));
-//!     assert!(!router.matches(&Method::GET, "/users"));
-//!     assert!(!router.matches(&Method::POST, "/users/123"));
-//! }
-//! ```
-//!
-//! ### Debug Information
-//! ```
-//! use ignitia::Router;
-//!
-//! let router = Router::new()
-//!     .get("/users/:id", || async { Ok(ignitia::Response::text("User")) })
-//!     .post("/users", || async { Ok(ignitia::Response::text("Create")) });
-//!
-//! // In debug mode, router provides introspection capabilities
-//! #[cfg(debug_assertions)]
-//! {
-//!     println!("Router has routes for GET and POST methods");
-//!     // Additional debug information available in debug builds
-//! }
+//! let db = Arc::new(Database);
+//! let app = Router::new()
+//!     .state_arc(db)
+//!     .get("/", handler);
 //! ```
 
 pub mod method;
+pub mod radix;
 pub mod route;
 
 use crate::handler::{into_handler, IntoHandler};
 use crate::middleware::Middleware;
 use crate::{Error, Extensions, Handler, HandlerFn, Request, Response, Result};
 use arc_swap::ArcSwap;
+use dashmap::DashMap;
 use http::Method;
 use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
 
+pub use radix::{RadixNode, RadixRouter};
 pub use route::Route;
 
+/// Router mode configuration that determines the routing algorithm used.
+///
+/// # Router Mode Comparison
+///
+/// | Feature | Base Mode | Radix Mode |
+/// |---------|-----------|------------|
+/// | Algorithm | Linear regex matching | Compressed trie |
+/// | Best for | Small apps (< 100 routes) | Large apps (100+ routes) |
+/// | Memory Usage | Lower | Higher |
+/// | Lookup Speed | O(n) where n = routes | O(k) where k = path length |
+/// | Compilation | Faster | Slower |
+/// | Parameter Support | Full regex support | Optimized parameters |
+///
+/// # Examples
+///
+/// ```
+/// use ignitia::{Router, RouterMode};
+///
+/// // For small applications
+/// let simple_router = Router::new()
+///     .with_mode(RouterMode::Base);
+///
+/// // For high-performance applications (default)
+/// let fast_router = Router::new()
+///     .with_mode(RouterMode::Radix);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouterMode {
+    /// Simple linear search through routes using regex matching.
+    ///
+    /// **Advantages:**
+    /// - Lower memory usage
+    /// - Faster compilation time
+    /// - Full regex support for complex patterns
+    /// - Better for small route sets (< 100 routes)
+    ///
+    /// **Disadvantages:**
+    /// - O(n) lookup time where n is the number of routes
+    /// - Performance degrades with more routes
+    Base,
+
+    /// Compressed trie (radix tree) routing for optimal performance.
+    ///
+    /// **Advantages:**
+    /// - O(k) lookup time where k is path length
+    /// - Excellent performance with many routes
+    /// - Memory-efficient path compression
+    /// - Optimal for large applications
+    ///
+    /// **Disadvantages:**
+    /// - Higher memory usage
+    /// - Longer compilation time
+    /// - Limited regex support (parameters only)
+    Radix, // New radix tree router
+}
+
+impl Default for RouterMode {
+    /// Default router mode is Radix for optimal performance.
+    fn default() -> Self {
+        RouterMode::Radix
+    }
+}
+
+/// HTTP method helper macro for generating route methods.
+///
+/// This macro generates methods like `get()`, `post()`, etc. for the Router.
 macro_rules! define_http_method {
     ($name:ident, $method:expr, $doc:expr) => {
         #[doc = $doc]
+        ///
+        /// # Arguments
+        ///
+        /// * `path` - The route path, can include parameters (`:id`) and wildcards (`*path`)
+        /// * `handler` - The handler function to execute for this route
+        ///
+        /// # Returns
+        ///
+        /// Returns `Self` for method chaining.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// # use ignitia::{Router, Response};
+        /// # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
+        /// let router = Router::new()
+        ///     .get("/users/:id", handler);
+        /// ```
         pub fn $name<H, T>(self, path: &str, handler: H) -> Self
         where
             H: IntoHandler<T>,
@@ -305,20 +214,24 @@ macro_rules! define_http_method {
     };
 }
 
-/// A handler with associated middleware layers.
+/// A layered handler that combines a handler function with middleware stack.
 ///
-/// `LayeredHandler` allows you to attach middleware specifically to individual
-/// handlers before they're registered with the router. This provides fine-grained
-/// control over which middleware applies to which routes.
+/// This allows for per-route middleware that executes independently of global middleware.
+/// Middleware execution order: route middleware (in order) -> handler -> route middleware (reverse).
 ///
 /// # Examples
 ///
 /// ```
-/// use ignitia::{LayeredHandler, Response, AuthMiddleware, RateLimitMiddleware};
+/// # use ignitia::{Router, Response, middleware::LoggerMiddleware};
+/// # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
 ///
-/// let handler = LayeredHandler::new(|| async { Ok(Response::text("Protected")) })
-///     .layer(AuthMiddleware::new("secret"))
-///     .layer(RateLimitMiddleware::new(100));
+/// use ignitia::router::LayeredHandler;
+///
+/// let layered = LayeredHandler::new(handler)
+///     .layer(LoggerMiddleware);
+///
+/// let router = Router::new()
+///     .route_with_layered("/api/data", http::Method::GET, layered);
 /// ```
 #[derive(Clone)]
 pub struct LayeredHandler {
@@ -329,24 +242,18 @@ pub struct LayeredHandler {
 }
 
 impl LayeredHandler {
-    /// Creates a new layered handler from a handler that implements `IntoHandler`.
+    /// Create a new layered handler from a handler function.
     ///
-    /// # Type Parameters
-    /// - `H`: Handler type that implements `IntoHandler`
+    /// # Arguments
     ///
-    /// # Parameters
-    /// - `handler`: The handler to wrap
-    ///
-    /// # Returns
-    /// A new `LayeredHandler` with no middleware layers
+    /// * `handler` - The handler that implements `IntoHandler<T>`
     ///
     /// # Examples
-    /// ```
-    /// use ignitia::{LayeredHandler, Response};
     ///
-    /// let handler = LayeredHandler::new(|| async {
-    ///     Ok(Response::text("Hello, World!"))
-    /// });
+    /// ```
+    /// # use ignitia::{Response, router::LayeredHandler};
+    /// # async fn my_handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
+    /// let layered = LayeredHandler::new(my_handler);
     /// ```
     pub fn new<H, T>(handler: H) -> Self
     where
@@ -358,56 +265,30 @@ impl LayeredHandler {
         }
     }
 
-    /// Adds a middleware layer to this handler.
+    /// Add a middleware layer to this handler.
     ///
-    /// Middleware is applied in the order it's added. The first middleware added
-    /// will be the outermost layer (executed first for `before` hooks and last
-    /// for `after` hooks).
+    /// Middleware is executed in the order it's added (FIFO for before, LIFO for after).
     ///
-    /// # Type Parameters
-    /// - `M`: Middleware type that implements the `Middleware` trait
+    /// # Arguments
     ///
-    /// # Parameters
-    /// - `mw`: The middleware to add
-    ///
-    /// # Returns
-    /// The layered handler for method chaining
+    /// * `mw` - The middleware to add
     ///
     /// # Examples
-    /// ```
-    /// use ignitia::{LayeredHandler, Response, LoggerMiddleware, AuthMiddleware};
     ///
-    /// let handler = LayeredHandler::new(|| async { Ok(Response::text("Data")) })
-    ///     .layer(LoggerMiddleware)
-    ///     .layer(AuthMiddleware::new("secret"));
+    /// ```
+    /// # use ignitia::{Response, router::LayeredHandler, middleware::LoggerMiddleware};
+    /// # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
+    /// let layered = LayeredHandler::new(handler)
+    ///     .layer(LoggerMiddleware);
     /// ```
     pub fn layer<M: Middleware + 'static>(mut self, mw: M) -> Self {
         self.middleware.push(Arc::new(mw));
         self
     }
 
-    /// Converts the layered handler into a `HandlerFn` that can be registered with the router.
+    /// Convert this layered handler into a regular handler function.
     ///
-    /// This method creates a new handler function that wraps the original handler
-    /// with all the configured middleware layers. The middleware is executed in
-    /// the correct order (FIFO for `before` hooks, LIFO for `after` hooks).
-    ///
-    /// # Returns
-    /// A `HandlerFn` that executes the handler with its middleware stack
-    ///
-    /// # Middleware Execution Order
-    /// - `before` hooks: Execute in the order middleware was added
-    /// - `after` hooks: Execute in reverse order (LIFO)
-    ///
-    /// # Examples
-    /// ```
-    /// use ignitia::{LayeredHandler, Router, Response};
-    ///
-    /// let layered = LayeredHandler::new(|| async { Ok(Response::text("Test")) });
-    /// let handler_fn = layered.into_handler();
-    ///
-    /// let router = Router::new().route("/test", http::Method::GET, handler_fn);
-    /// ```
+    /// This is used internally by the router to create executable handlers.
     pub fn into_handler(self) -> HandlerFn {
         let handler = self.handler;
         let middleware = self.middleware;
@@ -415,204 +296,388 @@ impl LayeredHandler {
         Arc::new(move |mut req: Request| {
             let middleware = middleware.clone();
             let handler = handler.clone();
-
             Box::pin(async move {
-                // Run middleware.before() in order
                 for mw in &middleware {
                     mw.before(&mut req).await?;
                 }
 
                 let mut res = handler.handle(req.clone()).await?;
 
-                // Run middleware.after() in reverse order
                 for mw in middleware.iter().rev() {
                     mw.after(&req, &mut res).await?;
                 }
-
                 Ok(res)
             })
         })
     }
 }
 
-/// Compiled router state for efficient request handling.
+/// Compiled router for optimized request handling.
 ///
-/// This structure contains the optimized representation of all routes,
-/// middleware, and handlers after compilation. It's designed for fast
-/// read access during request processing.
+/// This is an internal structure created during router compilation that provides
+/// optimized route lookup and caching for high-performance request processing.
 #[derive(Clone)]
 struct CompiledRouter {
-    /// Routes organized by HTTP method for fast lookup
-    routes: HashMap<Method, Vec<Route>>,
-    /// Middleware stack to apply to requests
+    /// The routing mode used by this compiled router
+    mode: RouterMode,
+    /// Routes organized by HTTP method (used in Base mode)
+    routes: DashMap<Method, Vec<Route>>,
+    /// Radix tree router (used in Radix mode)
+    radix_router: Option<RadixRouter>,
+    /// Global middleware stack
     middleware: Vec<Arc<dyn Middleware>>,
-    /// Optional custom 404 handler
+    /// Handler for 404 Not Found responses
     not_found_handler: Option<HandlerFn>,
+    /// Route lookup cache for improved performance
+    route_cache: DashMap<String, Option<Arc<Route>>>,
 }
 
-/// High-performance HTTP router with middleware support and route compilation.
+/// High-performance HTTP router with dual-mode support and advanced features.
 ///
-/// The `Router` provides a builder-pattern API for defining routes and middleware.
-/// It uses lazy compilation to optimize route matching performance and supports
-/// advanced features like nested routing and WebSocket integration.
+/// The Router is the core of the Ignitia web framework's routing system. It provides:
+///
+/// - **Dual Mode Support**: Choose between Base and Radix routing algorithms
+/// - **Mixed Nesting**: Nest routers with different modes seamlessly
+/// - **Middleware Integration**: Global and per-route middleware support
+/// - **Parameter Extraction**: Automatic path parameter and wildcard handling
+/// - **State Management**: Type-safe application state sharing
+/// - **WebSocket Support**: Built-in WebSocket routing (with feature flag)
+/// - **Performance Optimization**: Compilation caching and optimized lookups
 ///
 /// # Thread Safety
-/// The router is thread-safe and can be shared across multiple threads. Route
-/// compilation is performed atomically using `ArcSwap` to ensure consistent
-/// state without blocking request handling.
+///
+/// The Router is designed for high-concurrency scenarios:
+/// - Uses `RwLock` for construction-time mutations
+/// - Uses `ArcSwap` for atomic compiled router updates
+/// - Lock-free reads during request handling
+/// - DashMap for concurrent route caching
 ///
 /// # Examples
 ///
 /// ## Basic Usage
-/// ```
-/// use ignitia::{Router, Response};
 ///
-/// let router = Router::new()
-///     .get("/", || async { Ok(Response::text("Home")) })
-///     .get("/about", || async { Ok(Response::text("About")) })
-///     .post("/users", || async { Ok(Response::text("Create User")) });
+/// ```
+/// # use ignitia::{Router, Response};
+/// # async fn home() -> Result<Response, ignitia::Error> { Ok(Response::text("Home")) }
+/// # async fn user_profile(id: String) -> Result<Response, ignitia::Error> { Ok(Response::text(format!("User: {}", id))) }
+///
+/// let app = Router::new()
+///     .get("/", home)
+///     .get("/users/:id", user_profile);
 /// ```
 ///
 /// ## With Middleware
-/// ```
-/// use ignitia::{Router, Response, LoggerMiddleware};
 ///
-/// let router = Router::new()
+/// ```
+/// # use ignitia::{Router, Response, middleware::LoggerMiddleware};
+/// # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
+///
+/// let app = Router::new()
 ///     .middleware(LoggerMiddleware)
-///     .get("/api/health", || async { Ok(Response::text("OK")) });
+///     .get("/api/data", handler);
+/// ```
+///
+/// ## Nested Routing
+///
+/// ```
+/// # use ignitia::{Router, Response};
+/// # async fn api_v1() -> Result<Response, ignitia::Error> { Ok(Response::text("API v1")) }
+/// # async fn api_v2() -> Result<Response, ignitia::Error> { Ok(Response::text("API v2")) }
+///
+/// let v1_routes = Router::new().get("/users", api_v1);
+/// let v2_routes = Router::new().get("/users", api_v2);
+///
+/// let app = Router::new()
+///     .nest("/api/v1", v1_routes)
+///     .nest("/api/v2", v2_routes);
 /// ```
 pub struct Router {
-    /// Internal router state protected by RwLock
+    /// Internal mutable state protected by RwLock
     inner: Arc<RwLock<RouterInner>>,
-    /// Atomically updated compiled router for fast read access
+    /// Atomically swappable compiled router for zero-downtime updates
     compiled: ArcSwap<CompiledRouter>,
 }
 
-/// Internal router state that can be modified during route building.
+/// Internal router state that gets compiled into a CompiledRouter.
+///
+/// This structure holds the mutable state during router construction and
+/// gets compiled into an optimized read-only structure for request handling.
 struct RouterInner {
-    /// Routes organized by HTTP method
-    routes: HashMap<Method, Vec<Route>>,
-    /// Middleware stack
+    /// Current routing mode
+    mode: RouterMode,
+    /// Routes organized by HTTP method (Base mode)
+    routes: DashMap<Method, Vec<Route>>,
+    /// Radix tree for fast routing (Radix mode)
+    radix_router: RadixRouter,
+    /// Global middleware stack
     middleware: Vec<Arc<dyn Middleware>>,
-    /// Custom 404 handler
+    /// Optional 404 handler
     not_found_handler: Option<HandlerFn>,
-    /// Nested routers with their path prefixes
+    /// Nested routers for modular applications
     nested_routers: Vec<(String, Router)>,
-    /// Flag indicating if router needs recompilation
+    /// Dirty flag to trigger recompilation
     dirty: bool,
-    /// Extensions for state management
+    /// Application state and extensions
     extensions: Extensions,
-    /// WebSocket route handlers (when feature is enabled)
+
+    /// WebSocket route handlers (when websocket feature is enabled)
     #[cfg(feature = "websocket")]
     #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
-    websocket_routes: HashMap<String, Arc<dyn crate::websocket::WebSocketHandler>>,
+    websocket_routes: DashMap<String, Arc<dyn crate::websocket::WebSocketHandler>>,
 }
 
 impl Router {
-    /// Creates a new empty router.
+    /// Create a new empty router with default configuration.
     ///
-    /// # Returns
-    /// A new `Router` instance ready for route configuration
+    /// The router starts with:
+    /// - Radix mode enabled (optimal performance)
+    /// - No routes or middleware
+    /// - Empty extensions/state
     ///
     /// # Examples
+    ///
     /// ```
     /// use ignitia::Router;
     ///
     /// let router = Router::new();
+    /// assert_eq!(router.mode(), ignitia::router::RouterMode::Radix);
     /// ```
     pub fn new() -> Self {
         let inner = RouterInner {
-            routes: HashMap::new(),
+            mode: RouterMode::default(),
+            routes: DashMap::new(),
+            radix_router: RadixRouter::new(),
             middleware: Vec::new(),
             not_found_handler: None,
             nested_routers: Vec::new(),
             extensions: Extensions::new(),
             dirty: true,
             #[cfg(feature = "websocket")]
-            #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
-            websocket_routes: HashMap::new(),
+            websocket_routes: DashMap::new(),
         };
 
         Self {
             inner: Arc::new(RwLock::new(inner)),
             compiled: ArcSwap::new(Arc::new(CompiledRouter {
-                routes: HashMap::new(),
+                mode: RouterMode::default(),
+                routes: DashMap::new(),
+                radix_router: None,
                 middleware: Vec::new(),
                 not_found_handler: None,
+                route_cache: DashMap::new(),
             })),
         }
     }
 
-    /// Adds a route with a specific HTTP method and handler.
+    /// Set the routing mode for this router.
     ///
-    /// This is the low-level route registration method. Most users should prefer
-    /// the convenience methods like `get()`, `post()`, etc.
+    /// This determines which algorithm will be used for route matching:
+    /// - `RouterMode::Base`: Linear search with regex matching
+    /// - `RouterMode::Radix`: Compressed trie for O(k) lookup
     ///
-    /// # Parameters
-    /// - `path`: The route path pattern (e.g., "/users/:id")
-    /// - `method`: The HTTP method for this route
-    /// - `handler`: The handler function to execute for matching requests
+    /// **Note**: Changing the mode after adding routes will trigger recompilation.
     ///
-    /// # Returns
-    /// The router instance for method chaining
+    /// # Arguments
     ///
-    /// # Path Patterns
-    /// - Static paths: `/users`, `/api/health`
-    /// - Named parameters: `/users/:id`, `/posts/:slug`
-    /// - Wildcards: `/files/*path`
+    /// * `mode` - The RouterMode to use
     ///
     /// # Examples
-    /// ```
-    /// use ignitia::{Router, Response, Method, handler_fn};
     ///
-    /// let handler = handler_fn(|req| async move {
-    ///     Ok(Response::text("Custom handler"))
-    /// });
-    ///
-    /// let router = Router::new()
-    ///     .route("/custom", Method::GET, handler);
     /// ```
-    pub fn route(self, path: &str, method: Method, handler: HandlerFn) -> Self {
+    /// use ignitia::{Router, RouterMode};
+    ///
+    /// // Use Base mode for small applications
+    /// let simple_router = Router::new()
+    ///     .with_mode(RouterMode::Base);
+    ///
+    /// // Use Radix mode for high-performance applications
+    /// let fast_router = Router::new()
+    ///     .with_mode(RouterMode::Radix);
+    /// ```
+    pub fn with_mode(self, mode: RouterMode) -> Self {
         {
             let mut inner = self.inner.write();
+            inner.mode = mode;
             inner.dirty = true;
-
-            let full_path = normalize_path(path);
-            let routes = inner.routes.entry(method.clone()).or_insert_with(Vec::new);
-
-            // Pre-compile the route for better performance
-            let route = Route::new(&full_path, method, handler);
-            routes.push(route);
+            drop(inner);
         }
 
         self
     }
 
-    /// Adds a route with automatic handler conversion.
+    /// Extract routes from a radix router for mixed mode conversion.
     ///
-    /// This method automatically converts handlers that implement `IntoHandler`
-    /// into the appropriate handler function format.
+    /// This method is used internally when nesting a Radix mode router into
+    /// a Base mode router, requiring conversion of the radix tree back to
+    /// individual routes.
     ///
-    /// # Type Parameters
-    /// - `H`: Handler type that implements `IntoHandler<T>`
-    /// - `T`: Handler signature marker type
+    /// # Arguments
     ///
-    /// # Parameters
-    /// - `path`: The route path pattern
-    /// - `method`: The HTTP method for this route
-    /// - `handler`: The handler to convert and register
+    /// * `radix_router` - The RadixRouter to extract routes from
     ///
     /// # Returns
-    /// The router instance for method chaining
+    ///
+    /// A DashMap containing routes organized by HTTP method.
+    fn extract_radix_routes(radix_router: &RadixRouter) -> DashMap<Method, Vec<Route>> {
+        let routes = DashMap::new();
+        Self::extract_node_routes(&radix_router.root, "", &routes);
+        routes
+    }
+
+    /// Recursively extract routes from radix tree nodes.
+    ///
+    /// This helper method traverses the radix tree and converts nodes back
+    /// into Route objects, preserving parameter syntax (`:param` and `*wildcard`).
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The current RadixNode being processed
+    /// * `path_prefix` - The accumulated path prefix from parent nodes
+    /// * `routes` - The DashMap to store extracted routes
+    fn extract_node_routes(
+        node: &RadixNode,
+        path_prefix: &str,
+        routes: &DashMap<Method, Vec<Route>>,
+    ) {
+        let current_path = if path_prefix.is_empty() {
+            if let Some(param_name) = &node.param_name {
+                if node.is_wildcard {
+                    format!("/*{}", param_name)
+                } else {
+                    format!("/:{}", param_name)
+                }
+            } else {
+                node.path.clone()
+            }
+        } else {
+            if let Some(param_name) = &node.param_name {
+                let param_syntax = if node.is_wildcard {
+                    format!("/*{}", param_name)
+                } else {
+                    format!("/:{}", param_name)
+                };
+                format!("{}{}", path_prefix.trim_end_matches('/'), param_syntax)
+            } else if node.path.is_empty() {
+                path_prefix.to_string()
+            } else {
+                if node.path.starts_with('/') {
+                    format!("{}{}", path_prefix.trim_end_matches('/'), node.path)
+                } else {
+                    format!("{}/{}", path_prefix.trim_end_matches('/'), node.path)
+                }
+            }
+        };
+
+        for entry in &node.handlers {
+            let method = entry.key();
+            let handler = entry.value();
+            let route_path = if current_path.is_empty() {
+                "/".to_string()
+            } else if !current_path.starts_with('/') {
+                format!("/{}", current_path)
+            } else {
+                current_path.clone()
+            };
+
+            let route = Route::new(&route_path, method.clone(), handler.clone());
+            routes
+                .entry(method.clone())
+                .or_insert_with(Vec::new)
+                .push(route);
+        }
+
+        for child in &node.children {
+            Self::extract_node_routes(child, &current_path, routes);
+        }
+    }
+
+    /// Get the current routing mode of this router.
+    ///
+    /// # Returns
+    ///
+    /// The current `RouterMode` (Base or Radix).
     ///
     /// # Examples
+    ///
     /// ```
-    /// use ignitia::{Router, Response, Method, Path};
+    /// use ignitia::{Router, RouterMode};
+    ///
+    /// let router = Router::new().with_mode(RouterMode::Base);
+    /// assert_eq!(router.mode(), RouterMode::Base);
+    /// ```
+    pub fn mode(&self) -> RouterMode {
+        self.inner.read().mode
+    }
+
+    /// Add a route with a specific HTTP method and handler.
+    ///
+    /// This is the core method for adding routes. All HTTP method helpers
+    /// (get, post, etc.) eventually call this method.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The route path (e.g., "/users/:id", "/files/*path")
+    /// * `method` - The HTTP method for this route
+    /// * `handler` - The handler function to execute
+    ///
+    /// # Path Syntax
+    ///
+    /// - Static: `/users`, `/api/v1/health`
+    /// - Parameters: `/users/:id`, `/posts/:slug/comments/:comment_id`
+    /// - Wildcards: `/files/*path`, `/static/*filepath`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use ignitia::{Router, Response};
+    /// # use http::Method;
+    /// # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
     ///
     /// let router = Router::new()
-    ///     .route_with("/users/:id", Method::GET, |path: Path<u32>| async move {
-    ///         Ok(Response::text(format!("User ID: {}", path.0)))
-    ///     });
+    ///     .route("/users/:id", Method::GET, handler);
+    /// ```
+    pub fn route(self, path: &str, method: Method, handler: HandlerFn) -> Self {
+        {
+            let mut inner = self.inner.write();
+            inner.dirty = true;
+            let full_path = normalize_path(path);
+
+            match inner.mode {
+                RouterMode::Base => {
+                    let mut routes = inner.routes.entry(method.clone()).or_insert_with(Vec::new);
+                    let route = Route::new(&full_path, method, handler);
+                    routes.push(route);
+                }
+                RouterMode::Radix => {
+                    inner.radix_router.insert(&full_path, method, handler);
+                }
+            }
+        }
+        self
+    }
+
+    /// Add a route using the IntoHandler trait for automatic parameter extraction.
+    ///
+    /// This method allows handlers to automatically extract parameters from
+    /// requests based on their function signature.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The route path
+    /// * `method` - The HTTP method
+    /// * `handler` - A handler implementing IntoHandler<T>
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use ignitia::{Router, Response};
+    /// # use http::Method;
+    /// # async fn user_handler(id: String) -> Result<Response, ignitia::Error> {
+    /// #   Ok(Response::text(format!("User ID: {}", id)))
+    /// # }
+    ///
+    /// let router = Router::new()
+    ///     .route_with("/users/:id", Method::GET, user_handler);
     /// ```
     pub fn route_with<H, T>(self, path: &str, method: Method, handler: H) -> Self
     where
@@ -621,148 +686,74 @@ impl Router {
         self.route(path, method, into_handler(handler))
     }
 
-    /// Adds a route with a pre-layered handler.
+    /// Add a route with a layered handler (handler + middleware).
     ///
-    /// This method allows you to register a `LayeredHandler` that already has
-    /// middleware attached. The layered handler will be converted to a regular
-    /// handler function that includes the middleware execution.
+    /// This allows adding per-route middleware that executes independently
+    /// of global router middleware.
     ///
-    /// # Parameters
-    /// - `path`: The route path pattern
-    /// - `method`: The HTTP method for this route
-    /// - `lh`: The layered handler with its middleware stack
+    /// # Arguments
     ///
-    /// # Returns
-    /// The router instance for method chaining
+    /// * `path` - The route path
+    /// * `method` - The HTTP method
+    /// * `lh` - A LayeredHandler containing handler + middleware
     ///
     /// # Examples
-    /// ```
-    /// use ignitia::{Router, Response, LayeredHandler, AuthMiddleware};
     ///
-    /// let layered = LayeredHandler::new(|| async { Ok(Response::text("Protected")) })
-    ///     .layer(AuthMiddleware::new("secret"));
+    /// ```
+    /// # use ignitia::{Router, Response, router::LayeredHandler, middleware::LoggerMiddleware};
+    /// # use http::Method;
+    /// # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
+    ///
+    /// let layered = LayeredHandler::new(handler)
+    ///     .layer(LoggerMiddleware);
     ///
     /// let router = Router::new()
-    ///     .route_with_layered("/admin", http::Method::GET, layered);
+    ///     .route_with_layered("/api/data", Method::GET, layered);
     /// ```
-    pub fn route_with_layered(self, path: &str, method: http::Method, lh: LayeredHandler) -> Self {
+    pub fn route_with_layered(self, path: &str, method: Method, lh: LayeredHandler) -> Self {
         self.route(path, method, lh.into_handler())
     }
 
-    // HTTP method convenience functions
+    define_http_method!(get, Method::GET, "Adds a GET route");
 
-    define_http_method!(
-        get,
-        Method::GET,
-        "Adds a GET route.\n\n\
-             # Parameters\n\
-             - `path`: The route path pattern\n\
-             - `handler`: The handler function for GET requests\n\n\
-             # Examples\n\
-             ```\n\
-             use ignitia::{Router, Response};\n\n\
-             let router = Router::new()\n\
-                 .get(\"/\", || async { Ok(Response::text(\"Home\")) })\n\
-                 .get(\"/users/:id\", |path: ignitia::Path<u32>| async move {\n\
-                     Ok(Response::text(format!(\"User {}\", path.0)))\n\
-                 });\n\
-             ```"
-    );
+    define_http_method!(post, Method::POST, "Adds a POST route");
 
-    define_http_method!(
-        post,
-        Method::POST,
-        "Adds a POST route.\n\n\
-             # Parameters\n\
-             - `path`: The route path pattern\n\
-             - `handler`: The handler function for POST requests\n\n\
-             # Examples\n\
-             ```\n\
-             use ignitia::{Router, Response, Json};\n\
-             use serde::Deserialize;\n\n\
-             #[derive(Deserialize)]\n\
-             struct CreateUser {\n\
-                 name: String,\n\
-                 email: String,\n\
-             }\n\n\
-             let router = Router::new()\n\
-                 .post(\"/users\", |Json(user): Json<CreateUser>| async move {\n\
-                     Ok(Response::json(serde_json::json!({\n\
-                         \"message\": \"User created\",\n\
-                         \"name\": user.name\n\
-                     }))?)\n\
-                 });\n\
-             ```"
-    );
+    define_http_method!(put, Method::PUT, "Adds a PUT route");
 
-    define_http_method!(
-        put,
-        Method::PUT,
-        "Adds a PUT route.\n\n\
-             # Parameters\n\
-             - `path`: The route path pattern\n\
-             - `handler`: The handler function for PUT requests"
-    );
+    define_http_method!(delete, Method::DELETE, "Adds a DELETE route");
 
-    define_http_method!(
-        delete,
-        Method::DELETE,
-        "Adds a DELETE route.\n\n\
-             # Parameters\n\
-             - `path`: The route path pattern\n\
-             - `handler`: The handler function for DELETE requests"
-    );
+    define_http_method!(patch, Method::PATCH, "Adds a PATCH route");
 
-    define_http_method!(
-        patch,
-        Method::PATCH,
-        "Adds a PATCH route.\n\n\
-             # Parameters\n\
-             - `path`: The route path pattern\n\
-             - `handler`: The handler function for PATCH requests"
-    );
+    define_http_method!(head, Method::HEAD, "Adds a HEAD route");
 
-    define_http_method!(
-        head,
-        Method::HEAD,
-        "Adds a HEAD route.\n\n\
-             # Parameters\n\
-             - `path`: The route path pattern\n\
-             - `handler`: The handler function for HEAD requests"
-    );
+    define_http_method!(options, Method::OPTIONS, "Adds an OPTIONS route");
 
-    define_http_method!(
-        options,
-        Method::OPTIONS,
-        "Adds an OPTIONS route.\n\n\
-             # Parameters\n\
-             - `path`: The route path pattern\n\
-             - `handler`: The handler function for OPTIONS requests"
-    );
-
-    /// Adds middleware to the router.
+    /// Add global middleware to this router.
     ///
-    /// Middleware is executed in the order it's added. Each middleware can
-    /// process requests before they reach handlers and responses after
-    /// handlers return.
+    /// Global middleware executes for all routes in this router and any nested routers.
+    /// Middleware executes in the order it's added (FIFO for before, LIFO for after).
     ///
-    /// # Type Parameters
-    /// - `M`: Middleware type that implements the `Middleware` trait
+    /// # Arguments
     ///
-    /// # Parameters
-    /// - `middleware`: The middleware instance to add
+    /// * `middleware` - The middleware to add
     ///
-    /// # Returns
-    /// The router instance for method chaining
+    /// # Execution Order
+    ///
+    /// 1. Global middleware (before) - in order added
+    /// 2. Route-specific middleware (before) - in order added
+    /// 3. Handler execution
+    /// 4. Route-specific middleware (after) - reverse order
+    /// 5. Global middleware (after) - reverse order
     ///
     /// # Examples
+    ///
     /// ```
-    /// use ignitia::{Router, Response, LoggerMiddleware, CorsMiddleware};
+    /// # use ignitia::{Router, Response, middleware::LoggerMiddleware};
+    /// # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
     ///
     /// let router = Router::new()
     ///     .middleware(LoggerMiddleware)
-    ///     .middleware(CorsMiddleware::new().allow_origin("*"))
-    ///     .get("/api/data", || async { Ok(Response::text("Data")) });
+    ///     .get("/", handler);
     /// ```
     pub fn middleware<M: Middleware + 'static>(self, middleware: M) -> Self {
         {
@@ -773,33 +764,26 @@ impl Router {
         self
     }
 
-    /// Sets a custom 404 (Not Found) handler.
+    /// Set a custom handler for 404 Not Found responses.
     ///
-    /// This handler will be called when no routes match the incoming request.
-    /// If not set, the router will return a default 404 error.
+    /// By default, the router returns a simple 404 error. This method allows
+    /// customizing the 404 response with your own handler.
     ///
-    /// # Type Parameters
-    /// - `H`: Handler type that implements `IntoHandler<T>`
-    /// - `T`: Handler signature marker type
+    /// # Arguments
     ///
-    /// # Parameters
-    /// - `handler`: The handler to execute for unmatched requests
-    ///
-    /// # Returns
-    /// The router instance for method chaining
+    /// * `handler` - The handler to execute for 404 responses
     ///
     /// # Examples
+    ///
     /// ```
-    /// use ignitia::{Router, Response};
+    /// # use ignitia::{Router, Response};
+    /// # async fn custom_404() -> Result<Response, ignitia::Error> {
+    /// #   Ok(Response::new(http::StatusCode::NOT_FOUND)
+    /// #      .with_body("Page not found"))
+    /// # }
     ///
     /// let router = Router::new()
-    ///     .get("/", || async { Ok(Response::text("Home")) })
-    ///     .not_found(|| async {
-    ///         Ok(Response::html(r#"
-    ///             <h1>Page Not Found</h1>
-    ///             <p>The requested page could not be found.</p>
-    ///         "#).with_status_code(404))
-    ///     });
+    ///     .not_found(custom_404);
     /// ```
     pub fn not_found<H, T>(self, handler: H) -> Self
     where
@@ -813,95 +797,248 @@ impl Router {
         self
     }
 
-    /// Nests another router under a path prefix.
+    /// Nest another router at the specified path prefix with full mixed-mode support.
     ///
-    /// This allows for modular route organization by grouping related routes
-    /// under a common prefix. The nested router's routes will be prefixed
-    /// with the specified path.
+    /// This enables modular application architecture by mounting sub-routers at specific paths.
+    /// The router supports all combinations of mixed modes:
     ///
-    /// # Parameters
-    /// - `path`: The path prefix for the nested router
-    /// - `router`: The router to nest under the prefix
+    /// - **Base -> Base**: Simple nested routing
+    /// - **Base -> Radix**: Converts radix routes to base routes
+    /// - **Radix -> Base**: Converts base routes to radix entries
+    /// - **Radix -> Radix**: Direct radix tree merging
     ///
-    /// # Returns
-    /// The router instance for method chaining
+    /// # Arguments
+    ///
+    /// * `path` - The path prefix for the nested router
+    /// * `router` - The router to nest
+    ///
+    /// # Route Merging
+    ///
+    /// - Routes are prefixed with the nesting path
+    /// - Middleware stacks are merged (nested first, then parent)
+    /// - WebSocket routes are merged (when feature enabled)
+    /// - 404 handlers cascade from nested to parent
     ///
     /// # Examples
+    ///
+    /// ## Basic Nesting
+    ///
     /// ```
-    /// use ignitia::{Router, Response};
+    /// # use ignitia::{Router, Response};
+    /// # async fn api_handler() -> Result<Response, ignitia::Error> { Ok(Response::text("API")) }
+    /// # async fn web_handler() -> Result<Response, ignitia::Error> { Ok(Response::text("Web")) }
     ///
-    /// // Create API v1 routes
-    /// let api_v1 = Router::new()
-    ///     .get("/users", || async { Ok(Response::text("API v1 users")) })
-    ///     .get("/posts", || async { Ok(Response::text("API v1 posts")) });
+    /// let api_router = Router::new()
+    ///     .get("/users", api_handler);
     ///
-    /// // Create API v2 routes
-    /// let api_v2 = Router::new()
-    ///     .get("/users", || async { Ok(Response::text("API v2 users")) })
-    ///     .get("/posts", || async { Ok(Response::text("API v2 posts")) });
+    /// let app = Router::new()
+    ///     .nest("/api/v1", api_router)
+    ///     .get("/", web_handler);
+    /// // Results in routes: "/api/v1/users" and "/"
+    /// ```
     ///
-    /// // Nest both API versions
-    /// let router = Router::new()
-    ///     .get("/", || async { Ok(Response::text("Home")) })
-    ///     .nest("/api/v1", api_v1)
-    ///     .nest("/api/v2", api_v2);
+    /// ## Mixed Mode Nesting
+    ///
+    /// ```
+    /// # use ignitia::{Router, RouterMode, Response};
+    /// # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
+    ///
+    /// // High-performance radix router for API
+    /// let api = Router::new()
+    ///     .with_mode(RouterMode::Radix)
+    ///     .get("/users/:id", handler);
+    ///
+    /// // Simple base router for web pages
+    /// let web = Router::new()
+    ///     .with_mode(RouterMode::Base)
+    ///     .get("/about", handler);
+    ///
+    /// // Combine with different modes
+    /// let app = Router::new()
+    ///     .with_mode(RouterMode::Radix)
+    ///     .nest("/api", api)
+    ///     .nest("/web", web);
     /// ```
     pub fn nest(self, path: &str, router: Router) -> Self {
         {
             let mut inner = self.inner.write();
             inner.dirty = true;
-            inner.nested_routers.push((normalize_path(path), router));
+            let prefix = normalize_path(path);
+
+            let nested_inner = router.inner.read();
+            let parent_mode = inner.mode;
+            let nested_mode = nested_inner.mode;
+
+            tracing::debug!(
+                "Nesting {:?} router into {:?} parent at prefix '{}'",
+                nested_mode,
+                parent_mode,
+                prefix
+            );
+
+            match (parent_mode, nested_mode) {
+                (RouterMode::Base, RouterMode::Base) => {
+                    inner.nested_routers.push((prefix.clone(), router.clone()));
+                    tracing::debug!("Base -> Base nesting at prefix '{}'", prefix);
+                }
+                (RouterMode::Base, RouterMode::Radix) => {
+                    let extracted_routes = Self::extract_radix_routes(&nested_inner.radix_router);
+                    for entry in extracted_routes.iter() {
+                        let method = entry.key().clone();
+                        let nested_routes = entry.value();
+
+                        for route in nested_routes {
+                            let full_path = if route.path == "/" {
+                                prefix.clone()
+                            } else {
+                                format!("{}{}", prefix.trim_end_matches('/'), route.path)
+                            };
+
+                            let new_route =
+                                Route::new(&full_path, method.clone(), route.handler.clone());
+                            tracing::debug!(
+                                "Converting Radix->Base route: {} -> {}",
+                                route.path,
+                                full_path
+                            );
+                            inner
+                                .routes
+                                .entry(method.clone())
+                                .or_insert_with(Vec::new)
+                                .push(new_route);
+                        }
+                    }
+
+                    let mut combined = nested_inner.middleware.clone();
+                    combined.extend(inner.middleware.iter().cloned());
+                    inner.middleware = combined;
+                    tracing::debug!("Base -> Radix nesting completed at prefix '{}'", prefix);
+                }
+                (RouterMode::Radix, RouterMode::Base) => {
+                    for entry in nested_inner.routes.iter() {
+                        let method = entry.key().clone();
+                        let routes = entry.value();
+
+                        for route in routes {
+                            let full_path = if route.path == "/" {
+                                prefix.clone()
+                            } else {
+                                format!("{}{}", prefix.trim_end_matches('/'), route.path)
+                            };
+                            tracing::debug!(
+                                "Converting Base->Radix route: {} -> {}",
+                                route.path,
+                                full_path
+                            );
+                            inner.radix_router.insert(
+                                &full_path,
+                                method.clone(),
+                                route.handler.clone(),
+                            );
+                        }
+                    }
+
+                    for (nested_prefix, nested_router) in nested_inner.nested_routers.iter() {
+                        let combined_prefix =
+                            format!("{}{}", prefix.trim_end_matches('/'), nested_prefix);
+                        let nested_compiled = nested_router.ensure_compiled();
+                        for entry in nested_compiled.routes.iter() {
+                            let method = entry.key().clone();
+                            let routes = entry.value();
+
+                            for route in routes {
+                                let full_path = if route.path == "/" {
+                                    combined_prefix.clone()
+                                } else {
+                                    format!(
+                                        "{}{}",
+                                        combined_prefix.trim_end_matches('/'),
+                                        route.path
+                                    )
+                                };
+
+                                inner.radix_router.insert(
+                                    &full_path,
+                                    method.clone(),
+                                    route.handler.clone(),
+                                );
+                            }
+                        }
+                    }
+
+                    let mut combined = inner.middleware.clone();
+                    combined.extend(nested_inner.middleware.iter().cloned());
+                    inner.middleware = combined;
+                    tracing::debug!("Radix -> Base nesting completed at prefix '{}'", prefix);
+                }
+                (RouterMode::Radix, RouterMode::Radix) => {
+                    inner
+                        .radix_router
+                        .insert_nested(&prefix, &nested_inner.radix_router);
+
+                    let mut combined = inner.middleware.clone();
+                    combined.extend(nested_inner.middleware.iter().cloned());
+                    inner.middleware = combined;
+                    tracing::debug!("Radix -> Radix nesting completed at prefix '{}'", prefix);
+                }
+            }
+
+            #[cfg(feature = "websocket")]
+            {
+                for entry in nested_inner.websocket_routes.iter() {
+                    let path = entry.key();
+                    let handler = entry.value();
+                    let full_path = if path == "/" {
+                        prefix.clone()
+                    } else {
+                        format!("{}{}", prefix.trim_end_matches('/'), path)
+                    };
+                    inner.websocket_routes.insert(full_path, handler.clone());
+                }
+            }
+
+            if inner.not_found_handler.is_none() {
+                inner.not_found_handler = nested_inner.not_found_handler.clone();
+            }
         }
+
         self
     }
 
-    /// Adds a WebSocket route (requires "websocket" feature).
+    /// Add WebSocket support to a route (requires 'websocket' feature).
     ///
-    /// This method registers a WebSocket handler for the specified path.
-    /// When a WebSocket upgrade request is received for this path, the
-    /// handler will be invoked to manage the WebSocket connection.
+    /// This method creates a WebSocket endpoint that handles the upgrade handshake
+    /// and delegates message handling to the provided WebSocket handler.
     ///
-    /// # Type Parameters
-    /// - `H`: WebSocket handler type that implements `WebSocketHandler`
+    /// # Arguments
     ///
-    /// # Parameters
-    /// - `path`: The route path for the WebSocket endpoint
-    /// - `handler`: The WebSocket handler instance
-    ///
-    /// # Returns
-    /// The router instance for method chaining
+    /// * `path` - The WebSocket endpoint path
+    /// * `handler` - The WebSocket handler for this endpoint
     ///
     /// # Examples
-    /// ```
-    /// #[cfg(feature = "websocket")]
-    /// use ignitia::{Router, websocket::WebSocketConnection};
     ///
-    /// #[cfg(feature = "websocket")]
-    /// let router = Router::new()
-    ///     .websocket("/ws", |mut ws: WebSocketConnection| async move {
-    ///         while let Some(msg) = ws.recv().await {
-    ///             match msg {
-    ///                 ignitia::websocket::Message::Text(text) => {
-    ///                     ws.send_text(format!("Echo: {}", text)).await?;
-    ///                 }
-    ///                 ignitia::websocket::Message::Close(_) => break,
-    ///                 _ => {}
-    ///             }
-    ///         }
-    ///         Ok(())
-    ///     });
     /// ```
+    /// # #[cfg(feature = "websocket")]
+    /// # use ignitia::{Router, websocket::WebSocketConnection};
+    /// # #[cfg(feature = "websocket")]
+    /// # async fn websocket_handler(mut conn: WebSocketConnection) -> ignitia::Result<()> {
+    /// #     // Handle WebSocket messages
+    /// #     Ok(())
+    /// # }
+    /// # #[cfg(feature = "websocket")]
+    /// let router = Router::new()
+    ///     .websocket_fn("/ws", websocket_handler);
+    /// ```
+    ///
+    /// **Note**: This method is only available when the `websocket` feature is enabled.
     #[cfg(feature = "websocket")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
     pub fn websocket<H>(self, path: &str, handler: H) -> Self
     where
         H: crate::websocket::WebSocketHandler + 'static,
     {
         let normalized_path = normalize_path(path);
-        tracing::debug!("Storing WebSocket handler for path: {}", normalized_path);
         let ws_handler: Arc<dyn crate::websocket::WebSocketHandler> = Arc::new(handler);
 
-        // Store the WebSocket handler
         {
             let mut inner = self.inner.write();
             inner.dirty = true;
@@ -910,7 +1047,6 @@ impl Router {
                 .insert(normalized_path.clone(), Arc::clone(&ws_handler));
         }
 
-        // Create a regular HTTP handler that handles WebSocket upgrades
         let http_handler = Arc::new(move |req: Request| {
             Box::pin(async move {
                 if crate::websocket::is_websocket_request(&req) {
@@ -926,36 +1062,29 @@ impl Router {
         self.route(&normalized_path, Method::GET, http_handler)
     }
 
-    /// Adds a WebSocket route with a closure handler (requires "websocket" feature).
+    /// Add WebSocket support using a closure (requires 'websocket' feature).
     ///
-    /// This is a convenience method for adding WebSocket routes using closures
-    /// instead of implementing the `WebSocketHandler` trait.
+    /// This is a convenience method for creating WebSocket handlers from closures
+    /// without implementing the WebSocketHandler trait manually.
     ///
-    /// # Type Parameters
-    /// - `F`: Closure type that takes a WebSocketConnection
-    /// - `Fut`: Future type returned by the closure
+    /// # Arguments
     ///
-    /// # Parameters
-    /// - `path`: The route path for the WebSocket endpoint
-    /// - `f`: The closure to handle WebSocket connections
-    ///
-    /// # Returns
-    /// The router instance for method chaining
+    /// * `path` - The WebSocket endpoint path
+    /// * `f` - A closure that handles WebSocket connections
     ///
     /// # Examples
-    /// ```
-    /// #[cfg(feature = "websocket")]
-    /// use ignitia::Router;
     ///
-    /// #[cfg(feature = "websocket")]
+    /// ```
+    /// # #[cfg(feature = "websocket")]
+    /// # use ignitia::{Router, websocket::WebSocketConnection};
+    /// # #[cfg(feature = "websocket")]
     /// let router = Router::new()
-    ///     .websocket_fn("/echo", |ws| async move {
-    ///         // Handle WebSocket connection
+    ///     .websocket_fn("/chat", |mut conn: WebSocketConnection| async move {
+    ///         // Handle WebSocket messages here
     ///         Ok(())
     ///     });
     /// ```
     #[cfg(feature = "websocket")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
     pub fn websocket_fn<F, Fut>(self, path: &str, f: F) -> Self
     where
         F: Fn(crate::websocket::WebSocketConnection) -> Fut + Send + Sync + 'static,
@@ -965,76 +1094,52 @@ impl Router {
         self.websocket(path, websocket_handler(f))
     }
 
-    /// Gets all registered WebSocket handlers (requires "websocket" feature).
+    /// Get all WebSocket handlers registered with this router.
     ///
-    /// This method returns a map of path patterns to their corresponding
-    /// WebSocket handlers. It's primarily used internally by the server
-    /// for WebSocket upgrade handling.
+    /// This method is primarily used internally by the server for WebSocket upgrade handling.
     ///
     /// # Returns
-    /// A HashMap mapping paths to WebSocket handlers
+    ///
+    /// A DashMap containing all registered WebSocket handlers keyed by path.
     #[cfg(feature = "websocket")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
     pub fn get_websocket_handlers(
         &self,
-    ) -> HashMap<String, Arc<dyn crate::websocket::WebSocketHandler>> {
-        let inner = self.inner.read();
-        inner.websocket_routes.clone()
+    ) -> DashMap<String, Arc<dyn crate::websocket::WebSocketHandler>> {
+        self.inner.read().websocket_routes.clone()
     }
 
-    /// WebSocket route method when WebSocket feature is disabled.
+    /// Add shared state to the router that can be accessed by handlers.
     ///
-    /// This method will panic if called when the "websocket" feature is not enabled.
-    #[cfg(not(feature = "websocket"))]
-    pub fn websocket<H>(self, _path: &str, _handler: H) -> Self {
-        panic!("WebSocket support is not enabled. Add 'websocket' feature to your Cargo.toml");
-    }
-
-    /// WebSocket function route method when WebSocket feature is disabled.
+    /// State is stored per-type and can be retrieved in handlers using the State extractor.
+    /// The state must implement Clone for efficient sharing across handlers.
     ///
-    /// This method will panic if called when the "websocket" feature is not enabled.
-    #[cfg(not(feature = "websocket"))]
-    pub fn websocket_fn<F>(self, _path: &str, _f: F) -> Self {
-        panic!("WebSocket support is not enabled. Add 'websocket' feature to your Cargo.toml");
-    }
-
-    /// Add application state that will be available to all handlers in this router.
+    /// # Arguments
     ///
-    /// The state can be extracted in handlers using the `State<T>` extractor.
-    /// State is shared efficiently using `Arc<T>` internally.
+    /// * `state` - The state object to store (must implement Clone + Send + Sync)
     ///
-    /// # Requirements
-    ///
-    /// The state type must implement `Clone + Send + Sync + 'static`.
-    ///
-    /// # Example
+    /// # Examples
     ///
     /// ```
+    /// # use ignitia::{Router, Response, handler::extractor::State};
+    /// # use std::sync::Arc;
+    /// # use parking_lot::Mutex;
+    ///
     /// #[derive(Clone)]
-    /// struct AppState {
-    ///     db: DatabasePool,
-    ///     config: Config,
+    /// struct AppConfig {
+    ///     database_url: String,
     /// }
     ///
-    /// let state = AppState {
-    ///     db: create_pool(),
-    ///     config: load_config(),
+    /// async fn get_config(State(config): State<AppConfig>) -> Result<Response, ignitia::Error> {
+    ///     Ok(Response::text(format!("DB: {}", config.database_url)))
+    /// }
+    ///
+    /// let config = AppConfig {
+    ///     database_url: "postgres://localhost/myapp".to_string(),
     /// };
     ///
-    /// let app = Router::new()
-    ///     .route("/users", get_users)
-    ///     .state(state);
-    /// ```
-    ///
-    /// # Multiple States
-    ///
-    /// You can add multiple different state types:
-    ///
-    /// ```
-    /// let app = Router::new()
-    ///     .state(database_pool)
-    ///     .state(redis_client)
-    ///     .state(app_config);
+    /// let router = Router::new()
+    ///     .state(config)
+    ///     .get("/config", get_config);
     /// ```
     pub fn state<T>(self, state: T) -> Self
     where
@@ -1048,25 +1153,28 @@ impl Router {
         self
     }
 
-    /// Add application state using an `Arc<T>` for maximum efficiency.
+    /// Add shared state wrapped in Arc to avoid cloning large objects.
     ///
-    /// This method is preferred when you already have your state wrapped in `Arc<T>`
-    /// or when you want to share the exact same state instance across multiple routers.
+    /// This is more efficient than `state()` when the state object is large
+    /// or expensive to clone, as it only clones the Arc pointer.
     ///
-    /// # Example
+    /// # Arguments
+    ///
+    /// * `state` - The state wrapped in Arc<T>
+    ///
+    /// # Examples
     ///
     /// ```
-    /// use std::sync::Arc;
+    /// # use ignitia::{Router, Response, handler::extractor::State};
+    /// # use std::sync::Arc;
     ///
-    /// let shared_state = Arc::new(AppState::new());
+    /// struct LargeDatabase {
+    ///     // Large or expensive-to-clone structure
+    /// }
     ///
-    /// let api_router = Router::new()
-    ///     .route("/v1/users", get_users)
-    ///     .state_arc(shared_state.clone());
-    ///
-    /// let admin_router = Router::new()
-    ///     .route("/admin/stats", get_stats)
-    ///     .state_arc(shared_state.clone());
+    /// let db = Arc::new(LargeDatabase {});
+    /// let router = Router::new()
+    ///     .state_arc(db);
     /// ```
     pub fn state_arc<T>(self, state: Arc<T>) -> Self
     where
@@ -1080,29 +1188,32 @@ impl Router {
         self
     }
 
-    /// Add state using a factory function that will be called once during router setup.
+    /// Add state using a factory function for lazy initialization.
     ///
-    /// Useful for state that requires async initialization or depends on other router configuration.
+    /// The factory function is called once when the state is first needed,
+    /// allowing for expensive initialization to be deferred.
     ///
-    /// # Example
+    /// # Arguments
+    ///
+    /// * `factory` - A function that creates the state object
+    ///
+    /// # Examples
     ///
     /// ```
-    /// let app = Router::new()
-    ///     .route("/data", get_data)
-    ///     .state_factory(|| {
-    ///         AppState {
-    ///             created_at: std::time::SystemTime::now(),
-    ///             id: uuid::Uuid::new_v4(),
-    ///         }
-    ///     });
+    /// # use ignitia::Router;
+    /// # struct DatabasePool;
+    /// # impl DatabasePool { fn new() -> Self { DatabasePool } }
+    ///
+    /// let router = Router::new()
+    ///     .state_factory(|| DatabasePool::new());
     /// ```
     pub fn state_factory<T, F>(self, factory: F) -> Self
     where
         T: Clone + Send + Sync + 'static,
         F: FnOnce() -> T,
     {
-        let state = factory();
         {
+            let state = factory();
             let mut inner = self.inner.write();
             inner.dirty = true;
             inner.extensions.insert(state);
@@ -1110,54 +1221,64 @@ impl Router {
         self
     }
 
-    /// Check if a specific state type has been added to this router.
+    /// Check if the router has state of a specific type.
     ///
-    /// Useful for debugging state configuration issues.
+    /// # Returns
     ///
-    /// # Example
+    /// `true` if state of type T exists, `false` otherwise.
+    ///
+    /// # Examples
     ///
     /// ```
-    /// let app = Router::new().state(app_config);
+    /// # use ignitia::Router;
+    /// # struct AppConfig;
     ///
-    /// assert!(app.has_state::<AppConfig>());
-    /// assert!(!app.has_state::<DatabasePool>());
+    /// let router = Router::new()
+    ///     .state(AppConfig);
+    ///
+    /// assert!(router.has_state::<AppConfig>());
+    /// assert!(!router.has_state::<String>());
     /// ```
     pub fn has_state<T: Send + Sync + Clone + 'static>(&self) -> bool {
-        let inner = self.inner.read();
-        inner.extensions.get::<T>().is_some()
+        self.inner.read().extensions.get::<T>().is_some()
     }
 
-    /// Get a reference to state if it exists (for debugging/testing).
+    /// Get state of a specific type from the router.
     ///
-    /// # Example
+    /// # Returns
+    ///
+    /// `Some(T)` if state exists, `None` otherwise.
+    ///
+    /// # Examples
     ///
     /// ```
-    /// let config = AppConfig { debug: true };
-    /// let app = Router::new().state(config);
+    /// # use ignitia::Router;
+    /// # struct AppConfig { pub value: i32 }
     ///
-    /// if let Some(state) = app.get_state::<AppConfig>() {
-    ///     println!("Debug mode: {}", state.debug);
+    /// let router = Router::new()
+    ///     .state(AppConfig { value: 42 });
+    ///
+    /// if let Some(config) = router.get_state::<AppConfig>() {
+    ///     println!("Config value: {}", config.value);
     /// }
     /// ```
     pub fn get_state<T: Clone + Send + Sync + 'static>(&self) -> Option<T> {
-        let inner = self.inner.read();
-        // Extensions store Arc<T>, so we get the Arc and then clone the inner value
-        inner
+        self.inner
+            .read()
             .extensions
             .get::<T>()
             .map(|arc_t| arc_t.as_ref().clone())
     }
 
-    /// Ensures the router is compiled and returns the compiled version.
+    /// Ensure the router is compiled and return the compiled version.
     ///
-    /// This method performs lazy compilation of routes. If the router hasn't
-    /// changed since the last compilation, it returns the cached version.
-    /// Otherwise, it compiles the routes and caches the result.
+    /// This method uses lazy compilation - the router is only compiled when needed
+    /// and cached for subsequent requests. Uses atomic operations for thread safety.
     ///
     /// # Returns
-    /// An `Arc<CompiledRouter>` containing the optimized route structure
+    ///
+    /// An atomic guard to the compiled router.
     fn ensure_compiled(&self) -> Arc<CompiledRouter> {
-        // Fast path: check if compilation is needed without holding the lock
         {
             let inner = self.inner.read();
             if !inner.dirty {
@@ -1165,17 +1286,14 @@ impl Router {
             }
         }
 
-        // Now get write lock for compilation
         let compiled = {
             let inner = self.inner.read();
-            self.compile_inner(&inner)
+            self.compile_inner(&*inner)
         };
 
-        // Store the compiled version
         let compiled_arc = Arc::new(compiled);
         self.compiled.store(Arc::clone(&compiled_arc));
 
-        // Mark as clean
         {
             let mut inner = self.inner.write();
             inner.dirty = false;
@@ -1184,110 +1302,143 @@ impl Router {
         compiled_arc
     }
 
-    /// Compiles the router's internal state into an optimized structure.
+    /// Compile the router's internal state into an optimized form.
     ///
-    /// This method processes all routes, nested routers, and middleware to
-    /// create an optimized structure for fast request matching.
+    /// This method processes nested routers, sorts routes by specificity,
+    /// merges middleware stacks, and creates optimized lookup structures.
     ///
-    /// # Parameters
-    /// - `inner`: The internal router state to compile
+    /// # Arguments
+    ///
+    /// * `inner` - The RouterInner state to compile
     ///
     /// # Returns
-    /// A `CompiledRouter` with optimized route matching structures
+    ///
+    /// A CompiledRouter ready for high-performance request handling.
     fn compile_inner(&self, inner: &RouterInner) -> CompiledRouter {
-        let mut routes = inner.routes.clone();
+        let routes = inner.routes.clone();
         let mut middleware = inner.middleware.clone();
         let mut not_found_handler = inner.not_found_handler.clone();
+        let route_cache = DashMap::new();
 
-        // Process nested routers
-        for (prefix, nested_router) in &inner.nested_routers {
-            let nested_compiled = nested_router.ensure_compiled();
+        let radix_router = match inner.mode {
+            RouterMode::Radix => Some(inner.radix_router.clone()),
+            RouterMode::Base => None,
+        };
 
-            // Merge routes with prefix
-            for (method, nested_routes) in &nested_compiled.routes {
-                for route in nested_routes {
-                    let full_path = if route.path == "/" {
-                        prefix.clone()
-                    } else {
-                        format!("{}{}", prefix, route.path)
-                    };
+        if matches!(inner.mode, RouterMode::Base) {
+            for (prefix, nested_router) in &inner.nested_routers {
+                let nested_compiled = nested_router.ensure_compiled();
+                match nested_compiled.mode {
+                    RouterMode::Base => {
+                        for entry in nested_compiled.routes.iter() {
+                            let method = entry.key().clone();
+                            let nested_routes = entry.value();
+                            for route in nested_routes {
+                                let full_path = if route.path == "/" {
+                                    prefix.trim_end_matches('/').to_string()
+                                } else {
+                                    format!("{}{}", prefix.trim_end_matches('/'), route.path)
+                                };
 
-                    let mut new_route = route.clone();
-                    new_route.path = full_path.clone();
-                    new_route.regex = Route::compile_regex(&full_path);
+                                let new_route =
+                                    Route::new(&full_path, method.clone(), route.handler.clone());
+                                routes
+                                    .entry(method.clone())
+                                    .or_insert_with(Vec::new)
+                                    .push(new_route);
+                            }
+                        }
+                    }
+                    RouterMode::Radix => {
+                        if let Some(ref radix_router) = nested_compiled.radix_router {
+                            let extracted = Self::extract_radix_routes(radix_router);
 
-                    routes
-                        .entry(method.clone())
-                        .or_insert_with(Vec::new)
-                        .push(new_route);
+                            for entry in extracted.iter() {
+                                let method = entry.key().clone();
+                                let route_vec = entry.value();
+
+                                for route in route_vec {
+                                    let full_path = if route.path == "/" {
+                                        prefix.clone()
+                                    } else {
+                                        format!("{}{}", prefix.trim_end_matches('/'), route.path)
+                                    };
+
+                                    let new_route = Route::new(
+                                        &full_path,
+                                        method.clone(),
+                                        route.handler.clone(),
+                                    );
+                                    routes
+                                        .entry(method.clone())
+                                        .or_insert_with(Vec::new)
+                                        .push(new_route);
+                                }
+                            }
+                        }
+                    }
                 }
-            }
 
-            // Merge middleware (nested first)
-            let mut combined = nested_compiled.middleware.clone();
-            combined.extend(middleware.drain(..));
-            middleware = combined;
+                let mut combined = nested_compiled.middleware.clone();
+                combined.extend(middleware.drain(..));
+                middleware = combined;
 
-            // Use nested not found handler if we don't have one
-            if not_found_handler.is_none() {
-                not_found_handler = nested_compiled.not_found_handler.clone();
+                if not_found_handler.is_none() {
+                    not_found_handler = nested_compiled.not_found_handler.clone();
+                }
             }
         }
 
-        // Sort routes by specificity for faster matching
-        for routes in routes.values_mut() {
-            routes.sort_by(|a, b| {
-                // Sort by number of path segments (more specific first)
-                let a_segments = a.path.matches('/').count();
-                let b_segments = b.path.matches('/').count();
-
-                // Then by number of parameters (fewer parameters first)
-                let a_params = a.param_names.len() + a.wildcard_names.len();
-                let b_params = b.param_names.len() + b.wildcard_names.len();
-
-                b_segments.cmp(&a_segments).then(a_params.cmp(&b_params))
-            });
+        if matches!(inner.mode, RouterMode::Base) {
+            for mut entry in routes.iter_mut() {
+                let routes = entry.value_mut();
+                routes.sort_by(|a, b| {
+                    let a_segments = a.path.matches('/').count();
+                    let b_segments = b.path.matches('/').count();
+                    let a_params = a.param_names.len() + a.wildcard_names.len();
+                    let b_params = b.param_names.len() + b.wildcard_names.len();
+                    b_segments.cmp(&a_segments).then(a_params.cmp(&b_params))
+                });
+            }
         }
 
         CompiledRouter {
+            mode: inner.mode,
             routes,
+            radix_router,
             middleware,
             not_found_handler,
+            route_cache,
         }
     }
 
-    /// Handles an incoming HTTP request.
+    /// Handle an incoming HTTP request using the compiled router.
     ///
-    /// This is the main request processing method. It applies middleware,
-    /// finds matching routes, executes handlers, and processes responses.
+    /// This is the main entry point for request processing. It:
+    /// 1. Ensures the router is compiled
+    /// 2. Adds application state to the request
+    /// 3. Executes global middleware (before)
+    /// 4. Routes the request to the appropriate handler
+    /// 5. Executes global middleware (after)
     ///
-    /// # Parameters
-    /// - `req`: The incoming HTTP request to handle
+    /// # Arguments
+    ///
+    /// * `req` - The incoming HTTP request
     ///
     /// # Returns
-    /// A `Result<Response>` containing either the response or an error
     ///
-    /// # Request Processing Flow
-    /// 1. Compile routes if needed
-    /// 2. Apply middleware `before` hooks
-    /// 3. Find matching route and extract parameters
-    /// 4. Execute route handler
-    /// 5. Apply middleware `after` hooks
-    /// 6. Return response or 404 error
+    /// The HTTP response or an error.
     ///
     /// # Examples
+    ///
     /// ```
-    /// use ignitia::{Router, Request, Method};
-    /// use http::Uri;
-    /// use bytes::Bytes;
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let router = Router::new()
-    ///     .get("/test", || async { Ok(ignitia::Response::text("Test")) });
-    ///
+    /// # use ignitia::{Router, Request, Response};
+    /// # use http::{Method, Uri};
+    /// # use bytes::Bytes;
+    /// # async fn example(router: Router) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = Request::new(
     ///     Method::GET,
-    ///     "/test".parse::<Uri>()?,
+    ///     Uri::from_static("/users/123"),
     ///     http::Version::HTTP_11,
     ///     http::HeaderMap::new(),
     ///     Bytes::new(),
@@ -1305,157 +1456,324 @@ impl Router {
             req.extensions = inner.extensions.clone();
         }
 
-        // Apply middleware in order
         for mw in &compiled.middleware {
             mw.before(&mut req).await?;
         }
 
-        // Get routes for this method only
-        if let Some(routes) = compiled.routes.get(&req.method) {
-            for route in routes {
-                if let Some(params) = route.matches(&req) {
+        let response = match compiled.mode {
+            RouterMode::Base => self.handle_base_route(&compiled, &mut req).await,
+            RouterMode::Radix => self.handle_radix_route(&compiled, &mut req).await,
+        }?;
+
+        let mut response = response;
+
+        for mw in compiled.middleware.iter().rev() {
+            mw.after(&req, &mut response).await?;
+        }
+
+        Ok(response)
+    }
+
+    /// Handle request routing using Base mode (linear search).
+    ///
+    /// This method searches through routes linearly, using a cache to speed up
+    /// frequently accessed routes.
+    async fn handle_base_route(
+        &self,
+        compiled: &CompiledRouter,
+        req: &mut Request,
+    ) -> Result<Response> {
+        let cache_key = format!("{}:{}", req.method, req.uri.path());
+
+        if let Some(cached_route) = compiled.route_cache.get(&cache_key) {
+            if let Some(route) = cached_route.value().as_ref() {
+                if let Some(params) = route.matches(req) {
                     req.params = params;
-
-                    // Apply route middleware before handler
-                    for mw in &route.middleware {
-                        mw.before(&mut req).await?;
-                    }
-
-                    let mut response = route.handler.handle(req.clone()).await?;
-
-                    // Apply route middleware after handler in reverse order
-                    for mw in route.middleware.iter().rev() {
-                        mw.after(&req, &mut response).await?;
-                    }
-
-                    // Apply global middleware after handler in reverse order
-                    for mw in compiled.middleware.iter().rev() {
-                        mw.after(&req, &mut response).await?;
-                    }
-
-                    return Ok(response);
+                    return self
+                        .execute_route(route, req.clone(), &compiled.middleware)
+                        .await;
                 }
             }
         }
 
-        // Handle not found
+        if let Some(routes) = compiled.routes.get(&req.method) {
+            for route in routes.value() {
+                if let Some(params) = route.matches(req) {
+                    compiled
+                        .route_cache
+                        .insert(cache_key, Some(Arc::new(route.clone())));
+                    req.params = params;
+                    return self
+                        .execute_route(route, req.clone(), &compiled.middleware)
+                        .await;
+                }
+            }
+        }
+
+        compiled.route_cache.insert(cache_key, None);
+
         if let Some(handler) = &compiled.not_found_handler {
-            handler.handle(req).await
+            handler.handle(req.clone()).await
         } else {
             Err(Error::NotFound(req.uri.path().to_string()))
         }
     }
 
-    /// Checks if a route exists for the given method and path.
+    /// Handle request routing using Radix mode (tree lookup).
     ///
-    /// This is a utility method primarily used for testing and debugging.
-    /// It checks if any route would match the given method and path without
-    /// actually processing a full request.
+    /// This method uses the radix tree for O(k) lookup where k is the path length.
+    async fn handle_radix_route(
+        &self,
+        compiled: &CompiledRouter,
+        req: &mut Request,
+    ) -> Result<Response> {
+        if let Some(radix_router) = &compiled.radix_router {
+            if let Some((handler, params)) = radix_router.lookup(&req.method, req.uri.path()) {
+                req.params = params;
+                return handler.handle(req.clone()).await;
+            }
+        }
+
+        if let Some(handler) = &compiled.not_found_handler {
+            handler.handle(req.clone()).await
+        } else {
+            Err(Error::NotFound(req.uri.path().to_string()))
+        }
+    }
+
+    /// Execute a route handler.
     ///
-    /// # Parameters
-    /// - `method`: The HTTP method to check
-    /// - `path`: The path to check for matches
+    /// This method executes the route handler and applies middleware before and after the handler.
+    async fn execute_route(
+        &self,
+        route: &Route,
+        mut req: Request,
+        global_middleware: &[Arc<dyn Middleware>],
+    ) -> Result<Response> {
+        for mw in &route.middleware {
+            mw.before(&mut req).await?;
+        }
+
+        let mut response = route.handler.handle(req.clone()).await?;
+
+        for mw in route.middleware.iter().rev() {
+            mw.after(&req, &mut response).await?;
+        }
+
+        for mw in global_middleware.iter().rev() {
+            mw.after(&req, &mut response).await?;
+        }
+
+        Ok(response)
+    }
+
+    /// Check if the router matches a given method and path.
+    ///
+    /// This method is useful for testing and introspection without actually
+    /// executing the handler.
+    ///
+    /// # Arguments
+    ///
+    /// * `method` - The HTTP method to test
+    /// * `path` - The path to test
     ///
     /// # Returns
-    /// `true` if a route matches, `false` otherwise
+    ///
+    /// `true` if a route matches, `false` otherwise.
     ///
     /// # Examples
+    ///
     /// ```
-    /// use ignitia::{Router, Method};
+    /// # use ignitia::{Router, Response};
+    /// # use http::Method;
+    /// # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
     ///
     /// let router = Router::new()
-    ///     .get("/users/:id", || async { Ok(ignitia::Response::text("User")) });
+    ///     .get("/users/:id", handler);
     ///
     /// assert!(router.matches(&Method::GET, "/users/123"));
-    /// assert!(!router.matches(&Method::GET, "/users"));
     /// assert!(!router.matches(&Method::POST, "/users/123"));
     /// ```
     pub fn matches(&self, method: &Method, path: &str) -> bool {
         let compiled = self.ensure_compiled();
-        if let Some(routes) = compiled.routes.get(method) {
-            for route in routes {
-                // Create a mock request for matching
-                let mock_req = Request::new(
-                    method.clone(),
-                    path.parse().unwrap_or_default(),
-                    http::Version::HTTP_11,
-                    http::HeaderMap::new(),
-                    bytes::Bytes::new(),
-                );
 
-                if route.matches(&mock_req).is_some() {
-                    return true;
+        match compiled.mode {
+            RouterMode::Base => {
+                if let Some(routes) = compiled.routes.get(method) {
+                    for route in routes.value() {
+                        let mock_req = Request::new(
+                            method.clone(),
+                            path.parse().unwrap_or_default(),
+                            http::Version::HTTP_11,
+                            http::HeaderMap::new(),
+                            bytes::Bytes::new(),
+                        );
+                        if route.matches(&mock_req).is_some() {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            RouterMode::Radix => {
+                if let Some(radix_router) = &compiled.radix_router {
+                    radix_router.lookup(method, path).is_some()
+                } else {
+                    false
                 }
             }
         }
-        false
+    }
+
+    /// Clear the route lookup cache.
+    ///
+    /// This can be useful in development or when routes are modified at runtime.
+    /// The cache will be rebuilt automatically as new requests are processed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use ignitia::Router;
+    /// let router = Router::new();
+    /// router.clear_cache();
+    /// ```
+    pub fn clear_cache(&self) {
+        let compiled = self.ensure_compiled();
+        compiled.route_cache.clear();
+    }
+
+    /// Get routing statistics (only available in Radix mode).
+    ///
+    /// Returns detailed statistics about the radix tree structure,
+    /// including node counts, depth metrics, and memory usage.
+    ///
+    /// # Returns
+    ///
+    /// `Some(RadixStats)` in Radix mode, `None` in Base mode.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use ignitia::{Router, RouterMode, Response};
+    /// # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
+    ///
+    /// let router = Router::new()
+    ///     .with_mode(RouterMode::Radix)
+    ///     .get("/users/:id", handler);
+    ///
+    /// if let Some(stats) = router.stats() {
+    ///     println!("Routes: {}", stats.total_routes);
+    /// }
+    /// ```
+    pub fn stats(&self) -> Option<crate::router::radix::RadixStats> {
+        let compiled = self.ensure_compiled();
+        match compiled.mode {
+            RouterMode::Radix => {
+                if let Some(radix_router) = &compiled.radix_router {
+                    Some(radix_router.stats())
+                } else {
+                    None
+                }
+            }
+            RouterMode::Base => None,
+        }
+    }
+
+    /// Print the radix tree structure for debugging (Radix mode only).
+    ///
+    /// This prints a visual representation of the radix tree to stdout,
+    /// showing the tree structure, paths, and handlers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use ignitia::{Router, RouterMode, Response};
+    /// # async fn handler() -> Result<Response, ignitia::Error> { Ok(Response::text("OK")) }
+    ///
+    /// let router = Router::new()
+    ///     .with_mode(RouterMode::Radix)
+    ///     .get("/api/users/:id", handler);
+    ///
+    /// router.print_tree(); // Prints tree structure to stdout
+    /// ```
+    pub fn print_tree(&self) {
+        let compiled = self.ensure_compiled();
+        if let Some(radix_router) = &compiled.radix_router {
+            radix_router.print_tree();
+        } else {
+            println!("Tree printing only available in radix mode");
+        }
     }
 }
 
-/// Normalizes a path by ensuring it starts with '/' and doesn't end with '/' (except for root).
+/// Normalize a path by ensuring it starts with `/` and doesn't end with `/` (except root).
 ///
-/// This function standardizes path formats to ensure consistent route matching.
+/// This function standardizes path formats for consistent routing behavior.
 ///
-/// # Parameters
-/// - `path`: The path to normalize
+/// # Arguments
+///
+/// * `path` - The path string to normalize
 ///
 /// # Returns
-/// The normalized path as a String
+///
+/// A normalized path string.
 ///
 /// # Examples
+///
 /// ```
 /// # use ignitia::router::normalize_path;
 /// assert_eq!(normalize_path("users"), "/users");
 /// assert_eq!(normalize_path("/users/"), "/users");
 /// assert_eq!(normalize_path("/"), "/");
 /// ```
+#[inline]
 fn normalize_path(path: &str) -> String {
     let mut normalized = path.to_string();
-
     if !normalized.starts_with('/') {
         normalized.insert(0, '/');
     }
-
     if normalized != "/" && normalized.ends_with('/') {
         normalized.pop();
     }
-
     normalized
 }
 
-// Implement Clone for Router
 impl Clone for Router {
-    /// Creates a deep clone of the router.
+    /// Create a deep clone of the router.
     ///
-    /// This creates a new router with the same configuration but independent
-    /// compilation state. The cloned router will need to be recompiled on
-    /// first use.
+    /// This creates a new Router with the same configuration, routes, and state
+    /// but independent compilation cache. Useful for creating router variants.
     fn clone(&self) -> Self {
         let inner = self.inner.read();
         Self {
             inner: Arc::new(RwLock::new(RouterInner {
+                mode: inner.mode,
                 routes: inner.routes.clone(),
+                radix_router: inner.radix_router.clone(),
                 middleware: inner.middleware.clone(),
                 not_found_handler: inner.not_found_handler.clone(),
                 nested_routers: inner.nested_routers.clone(),
                 dirty: inner.dirty,
                 extensions: inner.extensions.clone(),
                 #[cfg(feature = "websocket")]
-                #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
                 websocket_routes: inner.websocket_routes.clone(),
             })),
             compiled: ArcSwap::new(Arc::new(CompiledRouter {
-                routes: HashMap::new(),
+                mode: inner.mode,
+                routes: DashMap::new(),
+                radix_router: None,
                 middleware: Vec::new(),
                 not_found_handler: None,
+                route_cache: DashMap::new(),
             })),
         }
     }
 }
 
-// Default implementation
 impl Default for Router {
-    /// Creates a new empty router (same as `Router::new()`).
+    /// Create a router with default settings.
+    ///
+    /// Equivalent to `Router::new()` - creates an empty router with Radix mode enabled.
     fn default() -> Self {
         Self::new()
     }

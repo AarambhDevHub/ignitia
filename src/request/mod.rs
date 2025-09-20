@@ -364,7 +364,7 @@ pub struct Request {
     /// HTTP headers
     pub headers: HeaderMap,
     /// Request body as bytes
-    pub body: Bytes,
+    pub body: Arc<Bytes>,
     /// Path parameters extracted from route matching
     pub params: HashMap<String, String>,
     /// Query string parameters parsed from URI
@@ -421,7 +421,7 @@ impl Request {
             uri,
             version,
             headers,
-            body,
+            body: Arc::new(body),
             params: HashMap::new(),
             query_params,
             extensions: Extensions::new(),

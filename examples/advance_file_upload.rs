@@ -109,7 +109,7 @@ async fn advanced_upload_handler(req: Request) -> Result<Response> {
     println!("   Max fields: {}", config.max_fields);
 
     // Create multipart parser with custom config
-    let mut multipart = Multipart::new(req.body.clone(), boundary, config);
+    let mut multipart = Multipart::new((*req.body).clone(), boundary, config);
 
     let mut files = Vec::new();
     let mut form_data = FormData {
@@ -341,7 +341,7 @@ async fn batch_upload_handler(req: Request) -> Result<Response> {
 
     // Use batch upload configuration
     let config = MultipartConfigs::batch_upload();
-    let mut multipart = Multipart::new(req.body.clone(), boundary, config);
+    let mut multipart = Multipart::new((*req.body).clone(), boundary, config);
 
     let mut processed_files = Vec::new();
     let mut errors = Vec::new();
