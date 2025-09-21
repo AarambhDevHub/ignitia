@@ -41,7 +41,7 @@ Enable WebSocket support by adding the `websocket` feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ignitia = { version = "0.2.0", features = ["websocket"] }
+ignitia = { version = "0.2.1", features = ["websocket"] }
 ```
 
 ### Simple Echo Server

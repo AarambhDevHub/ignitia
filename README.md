@@ -113,7 +113,7 @@ Add Ignitia to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ignitia = { version = "0.2.0", features = ["tls", "websocket", "self-signed"] }
+ignitia = { version = "0.2.1", features = ["tls", "websocket", "self-signed"] }
 tokio = { version = "1.40", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -719,7 +719,7 @@ cargo run --example file_upload
 
 ## 📝 Changelog
 
-### v0.2.0 - Performance Champion Release 🏆
+### v0.2.1 - Performance Champion Release 🏆
 
 #### 🚀 **Industry-Leading Performance**
 - ✅ **18,367+ RPS**: Outperforms Axum by 185%, matches Actix-web
@@ -774,7 +774,7 @@ If you find Ignitia helpful, consider supporting the project:
 cargo new my-ignitia-app && cd my-ignitia-app
 
 # Add Ignitia with all features
-echo 'ignitia = { version = "0.2.0", features = ["tls", "websocket", "self-signed"] }' >> Cargo.toml
+echo 'ignitia = { version = "0.2.1", features = ["tls", "websocket", "self-signed"] }' >> Cargo.toml
 
 # Create your first high-performance app
 cargo run

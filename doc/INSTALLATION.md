@@ -41,7 +41,7 @@ Or manually add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ignitia = "0.2.0"
+ignitia = "0.2.1"
 ```
 
 ### Method 2: From Source
@@ -61,7 +61,7 @@ Ignitia supports several optional features that you can enable based on your nee
 ### Core Features
 ```toml
 [dependencies]
-ignitia = { version = "0.2.0", features = ["websocket", "tls"] }
+ignitia = { version = "0.2.1", features = ["websocket", "tls"] }
 ```
 
 ### Available Features
@@ -76,17 +76,17 @@ ignitia = { version = "0.2.0", features = ["websocket", "tls"] }
 
 **For Web APIs:**
 ```toml
-ignitia = { version = "0.2.0", features = ["tls"] }
+ignitia = { version = "0.2.1", features = ["tls"] }
 ```
 
 **For Real-time Applications:**
 ```toml
-ignitia = { version = "0.2.0", features = ["websocket", "tls"] }
+ignitia = { version = "0.2.1", features = ["websocket", "tls"] }
 ```
 
 **For Development:**
 ```toml
-ignitia = { version = "0.2.0", features = ["websocket", "tls", "self-signed"] }
+ignitia = { version = "0.2.1", features = ["websocket", "tls", "self-signed"] }
 ```
 
 ## Creating a New Project
@@ -106,7 +106,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ignitia = { version = "0.2.0", features = ["websocket"] }
+ignitia = { version = "0.2.1", features = ["websocket"] }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 ```
@@ -242,14 +242,14 @@ cargo build --release
 ### Development Environment
 ```toml
 [dependencies]
-ignitia = { version = "0.2.0", features = ["websocket", "self-signed"] }
+ignitia = { version = "0.2.1", features = ["websocket", "self-signed"] }
 tracing-subscriber = "0.3"
 ```
 
 ### Production Environment
 ```toml
 [dependencies]
-ignitia = { version = "0.2.0", features = ["tls"] }
+ignitia = { version = "0.2.1", features = ["tls"] }
 ```
 
 ## Troubleshooting
