@@ -228,6 +228,8 @@ async fn main() -> Result<()> {
     let auth_middleware =
         AuthMiddleware::new().protect_paths(vec!["/dashboard", "/profile", "/admin"]);
 
+    let state_router = Router::new().get("/", home).state(user_db.clone());
+
     // let role_middleware = RoleMiddleware::new().require_role("/admin", "admin");
 
     let router = Router::new()
@@ -237,7 +239,6 @@ async fn main() -> Result<()> {
         .middleware(auth_middleware)
         // .middleware(role_middleware)
         // Public routes (no auth required)
-        .get("/", home)
         .get("/login", login_form)
         .post("/login", login_process)
         // Protected routes (auth middleware will handle authentication)
@@ -253,7 +254,8 @@ async fn main() -> Result<()> {
         )
         // Logout (public)
         .get("/logout", logout)
-        .state(user_db);
+        .state(user_db.clone())
+        .nest("/", state_router);
 
     let addr: SocketAddr = "127.0.0.1:3009".parse().unwrap();
     let server = Server::new(router, addr);

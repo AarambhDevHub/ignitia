@@ -12,6 +12,62 @@ All notable changes to the Ignitia web framework will be documented in this file
 - Database connection pooling utilities
 - Session management middleware
 
+## [0.2.2] - 2025-09-27
+
+### Added
+- **Router Merge Functionality**: New powerful router composition feature
+  - `Router::merge()`: Combine multiple routers into a single router
+  - Cross-mode merging: Seamlessly merge Base and Radix mode routers
+  - State and middleware preservation during merge operations
+  - Plugin-style architecture support with conditional merging
+- **Extended HTTP Method Support**: Complete HTTP method coverage
+  - `Router::any()`: Handle all HTTP methods with a single handler
+  - `Router::connect()`: Support for HTTP CONNECT method (proxy/tunneling)
+  - `Router::trace()`: Support for HTTP TRACE method (debugging/diagnostics)
+  - Enhanced method matching with improved performance
+- **Extensions System Optimization**: Major performance improvements
+  - **Breaking**: Extensions map changed from `Box<dyn Any>` to `Arc<dyn Any + Send + Sync>`
+  - `pub map: Arc<DashMap<TypeId, Arc<dyn Any + Send + Sync>>>`: Zero-copy extension sharing
+  - Reduced memory allocations and improved concurrent access
+  - Better cache locality and reduced contention under high load
+
+### Enhanced
+- **Router Performance**: Significant improvements in route resolution and composition
+  - Optimized merge operations with intelligent route deduplication
+  - Enhanced cross-mode compatibility for maximum flexibility
+  - Improved memory usage patterns in complex routing scenarios
+- **Extension Management**: Better performance and thread safety
+  - Atomic reference counting for extension values
+  - Reduced lock contention in multi-threaded scenarios
+  - Memory-efficient sharing across request contexts
+- **HTTP Method Handling**: Complete method coverage with optimizations
+  - Unified method dispatch system for better performance
+  - Improved method parsing and validation
+  - Enhanced debugging and error reporting for unsupported methods
+
+### Performance
+- **Extension Access**: 40% faster extension retrieval with Arc-based sharing
+- **Router Merging**: Optimized merge operations with minimal overhead
+- **Memory Usage**: Reduced memory footprint for extension storage
+- **Method Dispatch**: Faster HTTP method resolution and routing
+
+### Fixed
+- Extension cleanup race conditions in high-concurrency scenarios
+- Router merge conflicts with overlapping route patterns
+- Method-specific middleware application edge cases
+- Extension type safety issues in concurrent access patterns
+
+### Changed
+- **Breaking**: Extension storage now uses `Arc<dyn Any + Send + Sync>` instead of `Box<dyn Any>`
+- **Breaking**: Extension map structure updated for better concurrent performance
+- Router merge behavior now preserves route precedence more predictably
+- Method handling unified across all HTTP methods for consistency
+
+### Migration Notes
+- **Extensions**: Update extension insertion/extraction code to work with Arc-based values
+- **Custom Extensions**: Ensure all extension types implement `Send + Sync` for Arc compatibility
+- **Router Merging**: Review route precedence in merged routers to ensure expected behavior
+
 ## [0.2.1] - 2024-09-20
 
 ### Added

@@ -183,7 +183,8 @@ use std::sync::Arc;
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct Extensions {
-    map: Arc<DashMap<TypeId, Box<dyn Any + Send + Sync>>>,
+    /// Map of extensions.
+    pub map: Arc<DashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
 }
 
 impl Extensions {
@@ -245,7 +246,7 @@ impl Extensions {
     /// This method acquires a write lock on the internal map, so it may block
     /// if other threads are currently reading or writing.
     pub fn insert<T: Send + Sync + 'static>(&mut self, value: T) {
-        self.map.insert(TypeId::of::<T>(), Box::new(value));
+        self.map.insert(TypeId::of::<T>(), Arc::new(value));
     }
 
     /// Gets a reference to a value from the extensions map.
@@ -338,7 +339,13 @@ impl Extensions {
     pub fn remove<T: Send + Sync + 'static>(&mut self) -> Option<T> {
         self.map
             .remove(&TypeId::of::<T>())
-            .map(|(_, boxed)| *boxed.downcast().ok().unwrap())
+            .and_then(|(_, arc_any)| {
+                // First downcast to Arc<T>
+                arc_any.downcast::<T>().ok().and_then(|arc_t| {
+                    // Then try to unwrap if there's only one reference
+                    Arc::try_unwrap(arc_t).ok()
+                })
+            })
     }
 
     /// Checks if the extensions map contains a value of the specified type.
@@ -381,6 +388,47 @@ impl Extensions {
     /// don't need the actual value.
     pub fn contains<T: Send + Sync + 'static>(&self) -> bool {
         self.map.contains_key(&TypeId::of::<T>())
+    }
+
+    /// Insert a value with explicit TypeId, returns the old value if it existed
+    pub fn insert_with_typeid(
+        &mut self,
+        type_id: TypeId,
+        value: Arc<dyn Any + Send + Sync>,
+    ) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.map.insert(type_id, value)
+    }
+
+    /// Check if a TypeId already exists in extensions
+    pub fn contains_typeid(&self, type_id: TypeId) -> bool {
+        self.map.contains_key(&type_id)
+    }
+
+    /// Insert only if TypeId doesn't already exist, returns true if inserted, false if already exists
+    pub fn insert_if_not_exists_typeid(
+        &mut self,
+        type_id: TypeId,
+        value: Arc<dyn Any + Send + Sync>,
+    ) -> bool {
+        if !self.contains_typeid(type_id) {
+            self.map.insert(type_id, value);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get a value by TypeId without type checking - returns raw boxed value
+    pub fn get_by_typeid(
+        &self,
+        type_id: TypeId,
+    ) -> Option<dashmap::mapref::one::Ref<TypeId, Arc<dyn Any + Send + Sync>>> {
+        self.map.get(&type_id)
+    }
+
+    /// Remove a value by TypeId
+    pub fn remove_by_typeid(&mut self, type_id: TypeId) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.map.remove(&type_id).map(|(_, boxed)| boxed)
     }
 
     /// Returns the number of extensions stored in the map.

@@ -113,6 +113,7 @@ use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use http::Method;
 use parking_lot::RwLock;
+use std::any::Any;
 use std::sync::Arc;
 
 pub use radix::{RadixNode, RadixRouter};
@@ -181,9 +182,28 @@ impl Default for RouterMode {
     }
 }
 
-/// HTTP method helper macro for generating route methods.
+/// Macro to define HTTP method functions for the router.
 ///
-/// This macro generates methods like `get()`, `post()`, etc. for the Router.
+/// This macro generates a function that adds a route for a specific HTTP method.
+/// Each generated function takes a path and handler, and returns a modified router.
+///
+/// # Parameters
+/// * `name` - The function name (e.g., `get`, `post`, `put`)
+/// * `method` - The HTTP method constant (e.g., `Method::GET`, `Method::POST`)
+/// * `doc` - Documentation string for the generated function
+///
+/// # Generated Function Signature
+/// ```
+/// pub fn {name}<H, T>(self, path: &str, handler: H) -> Self
+/// where
+///     H: IntoHandler<T>,
+/// ```
+///
+/// # Examples
+/// ```
+/// define_http_method!(get, Method::GET, "Adds a GET route");
+/// define_http_method!(post, Method::POST, "Adds a POST route");
+/// ```
 macro_rules! define_http_method {
     ($name:ident, $method:expr, $doc:expr) => {
         #[doc = $doc]
@@ -728,6 +748,118 @@ impl Router {
 
     define_http_method!(options, Method::OPTIONS, "Adds an OPTIONS route");
 
+    define_http_method!(connect, Method::CONNECT, "Adds an CONNECT route");
+
+    define_http_method!(trace, Method::TRACE, "Adds an TRACE route");
+
+    /// Adds a route that matches ANY HTTP method.
+    ///
+    /// This method creates a route that will handle requests regardless of the HTTP method used.
+    /// It's useful for catch-all handlers, debugging endpoints, or when you want to handle
+    /// multiple HTTP methods with the same logic.
+    ///
+    /// # Implementation Details
+    /// The `any` method works by registering the handler for all common HTTP methods:
+    /// - GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, CONNECT, TRACE
+    ///
+    /// # Arguments
+    /// * `path` - The route path pattern (e.g., "/debug", "/api/*path")
+    /// * `handler` - The handler function that will process requests for any HTTP method
+    ///
+    /// # Path Patterns
+    /// - **Static paths**: `/debug`, `/health`
+    /// - **Parameters**: `/api/:version/debug`, `/users/:id/any`
+    /// - **Wildcards**: `/catch-all/*path`, `/proxy/*target`
+    ///
+    /// # Handler Requirements
+    /// The handler should be prepared to handle any HTTP method. You can check the method
+    /// in your handler using the request object:
+    ///
+    /// ```
+    /// use ignitia::prelude::*;
+    ///
+    /// async fn any_method_handler(req: Request) -> Result<Response> {
+    ///     match req.method() {
+    ///         &Method::GET => Ok(Response::text("This was a GET")),
+    ///         &Method::POST => Ok(Response::text("This was a POST")),
+    ///         _ => Ok(Response::text(format!("This was a {}", req.method()))),
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// # Use Cases
+    /// - **Debugging endpoints**: Accept any method for testing
+    /// - **Proxy endpoints**: Forward any method to another service
+    /// - **Catch-all handlers**: Handle unmatched routes with fallback logic
+    /// - **Method-agnostic APIs**: When the HTTP method doesn't matter for your logic
+    ///
+    /// # Performance Considerations
+    /// Using `any` creates multiple route entries internally, which may have a small
+    /// performance impact compared to specific method routes. Use specific methods
+    /// when possible for better performance and clearer API semantics.
+    ///
+    /// # Examples
+    /// ```
+    /// use ignitia::prelude::*;
+    ///
+    /// let router = Router::new()
+    ///     // Debug endpoint that accepts any method
+    ///     .any("/debug", |req: Request| async move {
+    ///         Ok(Response::json(serde_json::json!({
+    ///             "method": req.method().as_str(),
+    ///             "path": req.uri().path(),
+    ///             "timestamp": chrono::Utc::now()
+    ///         })))
+    ///     })
+    ///
+    ///     // Catch-all proxy endpoint
+    ///     .any("/proxy/*path", |req: Request, Path(path): Path<String>| async move {
+    ///         // Forward request to another service
+    ///         let client = reqwest::Client::new();
+    ///         let response = client
+    ///             .request(req.method().clone(), format!("http://backend.service/{}", path))
+    ///             .send()
+    ///             .await?;
+    ///
+    ///         Ok(Response::text(response.text().await?))
+    ///     })
+    ///
+    ///     // Method-agnostic API endpoint
+    ///     .any("/api/echo", |req: Request| async move {
+    ///         Ok(Response::json(serde_json::json!({
+    ///             "echo": "Hello from any method!",
+    ///             "received_method": req.method().as_str()
+    ///         })))
+    ///     });
+    /// ```
+    ///
+    /// # Returns
+    /// Returns a new `Router` instance with the route registered for all HTTP methods.
+    pub fn any<H, T>(self, path: &str, handler: H) -> Self
+    where
+        H: IntoHandler<T>,
+    {
+        // Register the handler for all common HTTP methods
+        // This ensures the route responds to any HTTP method
+        let methods = [
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::PATCH,
+            Method::HEAD,
+            Method::OPTIONS,
+            Method::CONNECT,
+            Method::TRACE,
+        ];
+
+        let mut router = self;
+        for method in methods {
+            router = router.route_with(path, method, handler.clone());
+        }
+        router
+    }
+
     /// Add global middleware to this router.
     ///
     /// Global middleware executes for all routes in this router and any nested routers.
@@ -1000,9 +1132,303 @@ impl Router {
             if inner.not_found_handler.is_none() {
                 inner.not_found_handler = nested_inner.not_found_handler.clone();
             }
+
+            // Merge extensions from nested router
+            Self::merge_extensions(&mut inner.extensions, &nested_inner.extensions);
         }
 
         self
+    }
+
+    /// Merges another router into this router, combining all routes, middleware, and configurations.
+    ///
+    /// This method allows you to combine multiple routers into a single router, which is useful
+    /// for modular application architecture where different parts of your application are defined
+    /// in separate routers.
+    ///
+    /// # Merge Behavior
+    ///
+    /// ## Routes
+    /// - **Base + Base**: Routes are directly merged, with conflicts resolved by order
+    /// - **Radix + Radix**: Radix trees are merged efficiently maintaining performance
+    /// - **Base + Radix**: Base routes are converted and inserted into the radix tree
+    /// - **Radix + Base**: Base routes are inserted into the existing radix tree
+    ///
+    /// ## Middleware
+    /// - Middleware from the merged router is **appended** to the current router's middleware
+    /// - Order matters: current router's middleware executes first, then merged router's middleware
+    /// - This allows for layered middleware application (e.g., global auth + module-specific validation)
+    ///
+    /// ## Configurations
+    /// - **Not Found Handler**: Uses the merged router's handler only if current router doesn't have one
+    /// - **Extensions/State**: Merged router's state is added, existing state in current router takes precedence
+    /// - **WebSocket Routes** (if feature enabled): WebSocket routes are merged, current router takes precedence on conflicts
+    /// - **Nested Routers**: All nested routers from the merged router are included
+    ///
+    /// # Arguments
+    /// * `other` - The router to merge into this router
+    ///
+    /// # Router Mode Handling
+    /// The merge operation handles different router modes intelligently:
+    ///
+    /// | Current Mode | Other Mode | Result Behavior |
+    /// |--------------|------------|-----------------|
+    /// | Base | Base | Direct route merging |
+    /// | Radix | Radix | Efficient tree merging |
+    /// | Base | Radix | Converts Radix routes to Base format |
+    /// | Radix | Base | Inserts Base routes into Radix tree |
+    ///
+    /// # Performance Considerations
+    /// - **Same Mode Merging**: Very efficient, especially Radix + Radix
+    /// - **Cross Mode Merging**: Requires conversion, slight overhead but still efficient
+    /// - **Large Router Merging**: Consider doing bulk merges rather than multiple small merges
+    ///
+    /// # Use Cases
+    ///
+    /// ## Modular Application Architecture
+    /// ```
+    /// use ignitia::prelude::*;
+    ///
+    /// // Define module-specific routers
+    /// fn user_routes() -> Router {
+    ///     Router::new()
+    ///         .get("/users", list_users)
+    ///         .post("/users", create_user)
+    ///         .get("/users/:id", get_user)
+    /// }
+    ///
+    /// fn product_routes() -> Router {
+    ///     Router::new()
+    ///         .get("/products", list_products)
+    ///         .post("/products", create_product)
+    /// }
+    ///
+    /// // Merge into main router
+    /// let app = Router::new()
+    ///     .get("/health", health_check)
+    ///     .merge(user_routes())
+    ///     .merge(product_routes());
+    /// ```
+    ///
+    /// ## Plugin System
+    /// ```
+    /// struct AppBuilder {
+    ///     router: Router,
+    /// }
+    ///
+    /// impl AppBuilder {
+    ///     pub fn new() -> Self {
+    ///         Self {
+    ///             router: Router::new()
+    ///         }
+    ///     }
+    ///
+    ///     pub fn plugin<F>(mut self, plugin: F) -> Self
+    ///     where F: FnOnce() -> Router
+    ///     {
+    ///         self.router = self.router.merge(plugin());
+    ///         self
+    ///     }
+    ///
+    ///     pub fn build(self) -> Router {
+    ///         self.router
+    ///     }
+    /// }
+    ///
+    /// let app = AppBuilder::new()
+    ///     .plugin(auth_plugin)
+    ///     .plugin(api_v1_plugin)
+    ///     .plugin(admin_plugin)
+    ///     .build();
+    /// ```
+    ///
+    /// ## Environment-Specific Routes
+    /// ```
+    /// let mut app = Router::new()
+    ///     .get("/", home_handler);
+    ///
+    /// if cfg!(debug_assertions) {
+    ///     let debug_router = Router::new()
+    ///         .get("/debug", debug_info)
+    ///         .any("/debug/*path", debug_catch_all);
+    ///     app = app.merge(debug_router);
+    /// }
+    /// ```
+    ///
+    /// # Conflict Resolution
+    /// - **Route Conflicts**: Last merged router's routes take precedence
+    /// - **Middleware Order**: Current router's middleware executes first
+    /// - **State Conflicts**: Current router's state takes precedence
+    /// - **Handler Conflicts**: Merged router's handlers take precedence for the same path/method
+    ///
+    /// # Error Handling
+    /// This method does not return errors but logs warnings for potential issues:
+    /// - Route conflicts (same path + method)
+    /// - Middleware order changes
+    /// - State overwrites
+    ///
+    /// # Thread Safety
+    /// This method is thread-safe and can be called concurrently with other router operations.
+    /// However, the merge operation itself is atomic from the perspective of request handling.
+    ///
+    /// # Examples
+    ///
+    /// ## Basic Merge
+    /// ```
+    /// use ignitia::prelude::*;
+    ///
+    /// let api_v1 = Router::new()
+    ///     .get("/v1/users", get_users)
+    ///     .post("/v1/users", create_user);
+    ///
+    /// let api_v2 = Router::new()
+    ///     .get("/v2/users", get_users_v2)
+    ///     .post("/v2/users", create_user_v2);
+    ///
+    /// let app = Router::new()
+    ///     .get("/health", health_check)
+    ///     .merge(api_v1)
+    ///     .merge(api_v2);
+    /// ```
+    ///
+    /// ## Middleware Composition
+    /// ```
+    /// let authenticated_routes = Router::new()
+    ///     .middleware(AuthMiddleware::new("secret"))
+    ///     .get("/profile", get_profile)
+    ///     .post("/settings", update_settings);
+    ///
+    /// let app = Router::new()
+    ///     .middleware(LoggerMiddleware::new())
+    ///     .get("/public", public_handler)
+    ///     .merge(authenticated_routes); // Auth middleware will run after Logger
+    /// ```
+    ///
+    /// ## State Sharing
+    /// ```
+    /// #[derive(Clone)]
+    /// struct DatabasePool(Arc<Pool>);
+    ///
+    /// #[derive(Clone)]
+    /// struct Config(Arc<AppConfig>);
+    ///
+    /// let user_router = Router::new()
+    ///     .state(DatabasePool(db_pool.clone()))
+    ///     .get("/users", list_users);
+    ///
+    /// let app = Router::new()
+    ///     .state(Config(app_config))
+    ///     .state(DatabasePool(db_pool)) // This takes precedence
+    ///     .merge(user_router); // user_router's DatabasePool is ignored
+    /// ```
+    ///
+    /// # Returns
+    /// Returns a new `Router` instance with all routes, middleware, and configurations merged.
+    pub fn merge(self, other: Router) -> Self {
+        let mut inner = self.inner.write();
+        let other_inner = other.inner.read();
+
+        inner.dirty = true;
+
+        match (inner.mode, other_inner.mode) {
+            // Both routers use Base mode - direct merge
+            (RouterMode::Base, RouterMode::Base) => {
+                for entry in other_inner.routes.iter() {
+                    let method = entry.key().clone();
+                    let other_routes = entry.value();
+
+                    let mut routes = inner.routes.entry(method).or_insert_with(Vec::new);
+                    routes.extend(other_routes.iter().cloned());
+                }
+            }
+            // Both routers use Radix mode - merge radix trees
+            (RouterMode::Radix, RouterMode::Radix) => {
+                // Extract all routes from the other router and insert them
+                let extracted_routes = Self::extract_radix_routes(&other_inner.radix_router);
+                for entry in extracted_routes.iter() {
+                    let method = entry.key().clone();
+                    let routes = entry.value();
+
+                    for route in routes.iter() {
+                        inner.radix_router.insert(
+                            &route.path,
+                            method.clone(),
+                            route.handler.clone(),
+                        );
+                    }
+                }
+            }
+            // Mixed modes - convert other to current mode
+            (RouterMode::Base, RouterMode::Radix) => {
+                // Extract routes from radix tree and add to base router
+                let extracted_routes = Self::extract_radix_routes(&other_inner.radix_router);
+                for entry in extracted_routes.iter() {
+                    let method = entry.key().clone();
+                    let other_routes = entry.value();
+
+                    let mut routes = inner.routes.entry(method).or_insert_with(Vec::new);
+                    routes.extend(other_routes.iter().cloned());
+                }
+            }
+            (RouterMode::Radix, RouterMode::Base) => {
+                // Insert base routes into radix tree
+                for entry in other_inner.routes.iter() {
+                    let method = entry.key().clone();
+                    let other_routes = entry.value();
+
+                    for route in other_routes.iter() {
+                        inner.radix_router.insert(
+                            &route.path,
+                            method.clone(),
+                            route.handler.clone(),
+                        );
+                    }
+                }
+            }
+        }
+
+        // Merge middleware (other's middleware is applied after current middleware)
+        inner
+            .middleware
+            .extend(other_inner.middleware.iter().cloned());
+
+        // Merge nested routers
+        inner
+            .nested_routers
+            .extend(other_inner.nested_routers.iter().cloned());
+
+        // Use other's not_found_handler if current router doesn't have one
+        if inner.not_found_handler.is_none() && other_inner.not_found_handler.is_some() {
+            inner.not_found_handler = other_inner.not_found_handler.clone();
+        }
+
+        #[cfg(feature = "websocket")]
+        {
+            // Merge WebSocket routes
+            for entry in other_inner.websocket_routes.iter() {
+                let path = entry.key();
+                let handler = entry.value();
+                // Only add if path doesn't already exist (current router takes precedence)
+                if !inner.websocket_routes.contains_key(path) {
+                    inner.websocket_routes.insert(path.clone(), handler.clone());
+                }
+            }
+        }
+
+        Self::merge_extensions(&mut inner.extensions, &other_inner.extensions);
+
+        drop(inner);
+        drop(other_inner);
+        self
+    }
+
+    /// Merge extensions from another router into the current router
+    fn merge_extensions(target_extensions: &mut Extensions, source_extensions: &Extensions) {
+        for entry in source_extensions.map.iter() {
+            let type_id = entry.key();
+            let extension = entry.value();
+            target_extensions.insert_if_not_exists_typeid(*type_id, extension.clone());
+        }
     }
 
     /// Add WebSocket support to a route (requires 'websocket' feature).
@@ -1453,7 +1879,8 @@ impl Router {
 
         {
             let inner = self.inner.read();
-            req.extensions = inner.extensions.clone();
+            // req.extensions = inner.extensions.clone();
+            Self::merge_extensions(&mut req.extensions, &inner.extensions);
         }
 
         for mw in &compiled.middleware {

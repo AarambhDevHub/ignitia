@@ -173,7 +173,7 @@ What actually happened.
 **Environment:**
 - OS: [e.g. Ubuntu 22.04, macOS 13.0, Windows 11]
 - Rust version: [e.g. 1.75.0]
-- Ignitia version: [e.g. 0.2.1]
+- Ignitia version: [e.g. 0.2.2]
 - Features enabled: [e.g. websocket, tls]
 
 **Additional context**

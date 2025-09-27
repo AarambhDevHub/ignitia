@@ -11,6 +11,7 @@ A complete guide to routing in Ignitia - covering everything from basic route de
 - [Path Parameters](#path-parameters)
 - [Query Parameters](#query-parameters)
 - [Route Groups and Nesting](#route-groups-and-nesting)
+- [Router Merging - NEW!](#router-merging---new)
 - [Route Middleware](#route-middleware)
 - [State Management](#state-management)
 - [Advanced Routing Patterns](#advanced-routing-patterns)
@@ -895,6 +896,185 @@ fn build_router(config: &AppConfig) -> Router {
     router
 }
 ```
+
+## Router Merging - NEW!
+
+The new `merge` functionality allows you to combine multiple routers into a single router, providing powerful composition capabilities.
+
+### Basic Router Merging
+
+```rust
+use ignitia::Router;
+
+// Create separate routers for different features
+let user_router = Router::new()
+    .get("/users", list_users)
+    .post("/users", create_user)
+    .get("/users/:id", get_user);
+
+let post_router = Router::new()
+    .get("/posts", list_posts)
+    .post("/posts", create_post)
+    .get("/posts/:id", get_post);
+
+// Merge routers together
+let main_router = Router::new()
+    .get("/", home_page)
+    .merge(user_router)
+    .merge(post_router);
+```
+
+### Cross-Mode Router Merging
+
+The merge functionality intelligently handles different router modes :
+
+```rust
+// Base mode router
+let base_router = Router::new()
+    .with_mode(RouterMode::Base)
+    .get("/legacy", legacy_handler);
+
+// Radix mode router (default)
+let radix_router = Router::new()
+    .get("/modern", modern_handler);
+
+// Merge different modes - routes are automatically converted
+let combined_router = radix_router.merge(base_router);
+// Result: All routes in radix_router's mode (Radix)
+```
+
+### Merging with State and Middleware
+
+```rust
+#[derive(Clone)]
+struct DatabaseState {
+    pool: PgPool,
+}
+
+#[derive(Clone)]
+struct CacheState {
+    redis: Arc<Redis>,
+}
+
+// Router with database state
+let db_router = Router::new()
+    .state(DatabaseState { pool: db_pool })
+    .middleware(DatabaseMiddleware::new())
+    .get("/db/users", get_users_from_db);
+
+// Router with cache state
+let cache_router = Router::new()
+    .state(CacheState { redis: redis_client })
+    .middleware(CacheMiddleware::new())
+    .get("/cache/stats", get_cache_stats);
+
+// Merge routers - states and middleware are combined
+let app_router = Router::new()
+    .merge(db_router)
+    .merge(cache_router);
+// Result: Both states available, middleware chains combined
+```
+
+### Advanced Merging Scenarios
+
+#### Conditional Router Merging
+
+```rust
+fn build_router(config: &AppConfig) -> Router {
+    let mut router = Router::new()
+        .get("/", homepage);
+
+    // Always include core API
+    router = router.merge(build_core_api());
+
+    // Conditionally merge admin routes
+    if config.admin_enabled {
+        router = router.merge(build_admin_routes());
+    }
+
+    // Conditionally merge debug routes
+    if config.environment == "development" {
+        router = router.merge(build_debug_routes());
+    }
+
+    router
+}
+```
+
+#### Plugin-Style Architecture
+
+```rust
+trait Plugin {
+    fn router(&self) -> Router;
+    fn name(&self) -> &str;
+}
+
+struct AuthPlugin;
+impl Plugin for AuthPlugin {
+    fn router(&self) -> Router {
+        Router::new()
+            .post("/login", login_handler)
+            .post("/logout", logout_handler)
+            .get("/profile", profile_handler)
+    }
+
+    fn name(&self) -> &str { "auth" }
+}
+
+struct PaymentPlugin;
+impl Plugin for PaymentPlugin {
+    fn router(&self) -> Router {
+        Router::new()
+            .post("/payment/charge", charge_handler)
+            .get("/payment/status/:id", payment_status)
+    }
+
+    fn name(&self) -> &str { "payment" }
+}
+
+// Build app by merging plugin routers
+fn build_app_with_plugins(plugins: Vec<Box<dyn Plugin>>) -> Router {
+    let mut app = Router::new()
+        .get("/", homepage);
+
+    for plugin in plugins {
+        println!("Loading plugin: {}", plugin.name());
+        app = app.merge(plugin.router());
+    }
+
+    app
+}
+
+// Usage
+let app = build_app_with_plugins(vec![
+    Box::new(AuthPlugin),
+    Box::new(PaymentPlugin),
+]);
+```
+
+### Merge Behavior Rules
+
+1. **Route Conflicts**: Current router routes take precedence over merged router routes
+2. **Middleware Combination**: Middleware from merged routers is applied after current router middleware
+3. **State Merging**: All states from both routers are available in the merged result
+4. **Not Found Handlers**: Current router's not found handler takes precedence
+5. **WebSocket Routes**: Only added if path doesn't already exist
+
+### Performance Considerations for Merging
+
+```rust
+// Efficient: Merge once during startup
+let app_router = base_router
+    .merge(api_router)
+    .merge(admin_router);
+
+// Inefficient: Multiple merges in hot paths
+// Don't do this in request handlers
+async fn bad_example() {
+    let router = Router::new().merge(other_router); // ❌ Avoid
+}
+```
+
 
 ## Route Middleware
 
