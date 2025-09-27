@@ -48,19 +48,23 @@ async fn main() -> Result<()> {
 
     let layer_handler = LayeredHandler::new(hello).layer(RequestIdMiddleware::new());
 
+    let layer_router = Router::new()
+        .with_mode(ignitia::router::RouterMode::Radix)
+        .route_with_layered("/hello/:name", http::Method::GET, layer_handler);
+
     // Create router using the new handler system
     let router = Router::new()
         .middleware(RateLimitingMiddleware::new(rate_limiting_middleware))
         // .middleware(RequestIdMiddleware::new())
-        .with_mode(ignitia::router::RouterMode::Base)
+        .with_mode(ignitia::router::RouterMode::Radix)
         .get("/", home)
         // .get("/hello/:name", hello)
-        .route_with_layered("/hello/:name", http::Method::GET, layer_handler)
         .get("/users", list_users) // Uses Query extractor
         .get("/users/:id", get_user) // Uses Path extractor
         .post("/users", create_user) // Uses Json extractor
         .get("/old-style", raw_handler(old_style_handler)) // For Request access
-        .not_found(not_found);
+        // .not_found(not_found)
+        .merge(layer_router);
 
     // 🚀 BEAST MODE: Maximum RPS Performance Configuration
     let perf_config = PerformanceConfig {

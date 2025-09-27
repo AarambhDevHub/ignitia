@@ -1,6 +1,6 @@
 [package]
 name = "ignitia"
-version = "0.2.0"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.70"
 description = "A blazing fast, lightweight web framework for Rust that ignites your development journey"
@@ -21,7 +21,7 @@ include = [
 ]
 
 [features]
-default = ["websocket", "tls"]
+default = []
 websocket = ["dep:tokio-tungstenite", "dep:tungstenite", "dep:sha1", "dep:base64", "dep:lazy_static"]
 tls = ["dep:tokio-rustls", "dep:rustls", "dep:rustls-pemfile"]
 self-signed = ["tls", "dep:rcgen"]
