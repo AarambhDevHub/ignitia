@@ -12,6 +12,17 @@ All notable changes to the Ignitia web framework will be documented in this file
 - Database connection pooling utilities
 - Session management middleware
 
+## [0.2.3] - 2025-09-28
+
+### Added
+- Scoped middleware for nested routers: Middleware added to nested routers now applies only to their specific routes, preventing global propagation.
+- New middleware wrapping mechanism during router nesting to ensure isolation.
+- Enhanced route compilation to preserve middleware scoping in both Radix and Base modes.
+
+### Changed
+- Updated nesting logic in `Router::nest` to wrap handlers with nested middleware instead of merging globally.
+- Refactored `compile_inner` and added helper functions like `wrap_handler_with_middleware` and `wrap_tree_handlers` for scoped application.
+
 ## [0.2.2] - 2025-09-27
 
 ### Added
