@@ -1002,7 +1002,7 @@ Configure Ignitia features through Cargo.toml:
 ```toml
 [dependencies]
 ignitia = {
-    version = "0.2.2",
+    version = "0.2.3",
     features = ["tls", "websocket", "self-signed"]
 }
 ```

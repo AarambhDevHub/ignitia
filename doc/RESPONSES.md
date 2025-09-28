@@ -34,7 +34,7 @@ async fn hello() -> Result<Response> {
 async fn api_response() -> Result<Response> {
     Response::json(serde_json::json!({
         "message": "Welcome to Ignitia",
-        "version": "0.2.2",
+        "version": "0.2.3",
         "status": "success"
     }))
 }

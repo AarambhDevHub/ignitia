@@ -37,7 +37,7 @@
 //!
 //! ```
 //! [dependencies]
-//! ignitia = { version = "0.2.2", features = ["tls", "websocket"] }
+//! ignitia = { version = "0.2.3", features = ["tls", "websocket"] }
 //! tokio = { version = "1.40", features = ["full"] }
 //! serde = { version = "1.0", features = ["derive"] }
 //! ```
@@ -441,7 +441,7 @@
 //!
 //! ```
 //! [dependencies]
-//! ignitia = { version = "0.2.2", features = ["websocket", "tls"] }
+//! ignitia = { version = "0.2.3", features = ["websocket", "tls"] }
 //! ```
 //!
 //! ### Advanced WebSocket Server
@@ -596,14 +596,14 @@
 //! [dependencies]
 //! # Full feature set (recommended for production)
 //! ignitia = {
-//!     version = "0.2.2",
+//!     version = "0.2.3",
 //!     features = ["tls", "websocket", "self-signed"]
 //! }
 //!
 //! # Individual features
-//! ignitia = { version = "0.2.2", features = ["tls"] }        # HTTPS support only
-//! ignitia = { version = "0.2.2", features = ["websocket"] }  # WebSocket support only
-//! ignitia = "0.2.2"                                          # HTTP only (minimal)
+//! ignitia = { version = "0.2.3", features = ["tls"] }        # HTTPS support only
+//! ignitia = { version = "0.2.3", features = ["websocket"] }  # WebSocket support only
+//! ignitia = "0.2.3"                                          # HTTP only (minimal)
 //! ```
 //!
 //! ### Feature Descriptions
@@ -1011,7 +1011,7 @@ pub mod info {
     /// use ignitia::info;
     ///
     /// println!("Running {}", info::version());
-    /// // Output: "Running ignitia v0.2.2"
+    /// // Output: "Running ignitia v0.2.3"
     /// ```
     pub fn version() -> String {
         format!("{} v{}", crate::NAME, crate::VERSION)

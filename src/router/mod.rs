@@ -113,7 +113,7 @@ use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use http::Method;
 use parking_lot::RwLock;
-use std::any::Any;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub use radix::{RadixNode, RadixRouter};
@@ -1026,13 +1026,18 @@ impl Router {
                                 format!("{}{}", prefix.trim_end_matches('/'), route.path)
                             };
 
-                            let new_route =
-                                Route::new(&full_path, method.clone(), route.handler.clone());
+                            let wrapped_handler = wrap_handler_with_middleware(
+                                route.handler.clone(),
+                                nested_inner.middleware.clone(),
+                            );
+
+                            let new_route = Route::new(&full_path, method.clone(), wrapped_handler);
                             tracing::debug!(
                                 "Converting Radix->Base route: {} -> {}",
                                 route.path,
                                 full_path
                             );
+
                             inner
                                 .routes
                                 .entry(method.clone())
@@ -1041,10 +1046,10 @@ impl Router {
                         }
                     }
 
-                    let mut combined = nested_inner.middleware.clone();
-                    combined.extend(inner.middleware.iter().cloned());
-                    inner.middleware = combined;
-                    tracing::debug!("Base -> Radix nesting completed at prefix '{}'", prefix);
+                    // let mut combined = nested_inner.middleware.clone();
+                    // combined.extend(inner.middleware.iter().cloned());
+                    // inner.middleware = combined;
+                    // tracing::debug!("Base -> Radix nesting completed at prefix '{}'", prefix);
                 }
                 (RouterMode::Radix, RouterMode::Base) => {
                     for entry in nested_inner.routes.iter() {
@@ -1062,11 +1067,13 @@ impl Router {
                                 route.path,
                                 full_path
                             );
-                            inner.radix_router.insert(
-                                &full_path,
-                                method.clone(),
+                            let wrapped_handler = wrap_handler_with_middleware(
                                 route.handler.clone(),
+                                nested_inner.middleware.clone(),
                             );
+                            inner
+                                .radix_router
+                                .insert(&full_path, method.clone(), wrapped_handler);
                         }
                     }
 
@@ -1088,29 +1095,34 @@ impl Router {
                                         route.path
                                     )
                                 };
-
+                                let wrapped_handler = wrap_handler_with_middleware(
+                                    route.handler.clone(),
+                                    nested_inner.middleware.clone(),
+                                );
                                 inner.radix_router.insert(
                                     &full_path,
                                     method.clone(),
-                                    route.handler.clone(),
+                                    wrapped_handler,
                                 );
                             }
                         }
                     }
 
-                    let mut combined = inner.middleware.clone();
-                    combined.extend(nested_inner.middleware.iter().cloned());
-                    inner.middleware = combined;
+                    // let mut combined = inner.middleware.clone();
+                    // combined.extend(nested_inner.middleware.iter().cloned());
+                    // inner.middleware = combined;
                     tracing::debug!("Radix -> Base nesting completed at prefix '{}'", prefix);
                 }
                 (RouterMode::Radix, RouterMode::Radix) => {
+                    let mut wrapped_root = nested_inner.radix_router.root.clone();
+                    wrap_tree_handlers(&mut wrapped_root, nested_inner.middleware.clone());
                     inner
                         .radix_router
-                        .insert_nested(&prefix, &nested_inner.radix_router);
+                        .insert_nested(&prefix, &RadixRouter { root: wrapped_root });
 
-                    let mut combined = inner.middleware.clone();
-                    combined.extend(nested_inner.middleware.iter().cloned());
-                    inner.middleware = combined;
+                    // let mut combined = inner.middleware.clone();
+                    // combined.extend(nested_inner.middleware.iter().cloned());
+                    // inner.middleware = combined;
                     tracing::debug!("Radix -> Radix nesting completed at prefix '{}'", prefix);
                 }
             }
@@ -1765,9 +1777,12 @@ impl Router {
                                 } else {
                                     format!("{}{}", prefix.trim_end_matches('/'), route.path)
                                 };
-
+                                let wrapped_handler = wrap_handler_with_middleware(
+                                    route.handler.clone(),
+                                    nested_compiled.middleware.clone(),
+                                );
                                 let new_route =
-                                    Route::new(&full_path, method.clone(), route.handler.clone());
+                                    Route::new(&full_path, method.clone(), wrapped_handler);
                                 routes
                                     .entry(method.clone())
                                     .or_insert_with(Vec::new)
@@ -2130,6 +2145,43 @@ impl Router {
         } else {
             println!("Tree printing only available in radix mode");
         }
+    }
+}
+
+fn wrap_handler_with_middleware(
+    handler: HandlerFn,
+    middleware: Vec<Arc<dyn Middleware>>,
+) -> HandlerFn {
+    Arc::new(move |mut req: Request| {
+        let middleware = middleware.clone();
+        let handler = handler.clone();
+        Box::pin(async move {
+            for mw in &middleware {
+                mw.before(&mut req).await?;
+            }
+            let mut res = handler.handle(req.clone()).await?;
+            for mw in middleware.iter().rev() {
+                mw.after(&req, &mut res).await?;
+            }
+            Ok(res)
+        })
+    })
+}
+
+fn wrap_tree_handlers(node: &mut RadixNode, middleware: Vec<Arc<dyn Middleware>>) {
+    // Wrap handlers at this node
+    let new_handlers = DashMap::new();
+    for entry in &node.handlers {
+        let method = entry.key().clone();
+        let handler = entry.value().clone();
+        let wrapped = wrap_handler_with_middleware(handler.clone(), middleware.clone());
+        new_handlers.insert(method.clone(), wrapped);
+    }
+    node.handlers = new_handlers;
+
+    // Recurse for children
+    for child in &mut node.children {
+        wrap_tree_handlers(child, middleware.clone());
     }
 }
 

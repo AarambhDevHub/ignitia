@@ -556,7 +556,7 @@ async fn get_data(State(state): State<AppState>) -> Result<Response> {
 
 ## Breaking Changes
 
-### v0.2.2 Breaking Changes
+### v0.2.3 Breaking Changes
 
 1. **Handler Signatures**: Direct request parameter removed in favor of extractors
 2. **WebSocket API**: Simplified handler creation functions
@@ -568,7 +568,7 @@ async fn get_data(State(state): State<AppState>) -> Result<Response> {
 1. **Update Dependencies**:
    ```toml
    [dependencies]
-   ignitia = "0.2.2"
+   ignitia = "0.2.3"
    ```
 
 2. **Update Handler Functions**:
