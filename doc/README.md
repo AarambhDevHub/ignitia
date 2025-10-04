@@ -128,7 +128,7 @@ Advanced routing with performance optimizations:
 ```
 // Router architecture
 Router::new()
-    .get("/users/:id", user_handler)           // Path parameters
+    .get("/users/{id}", user_handler)           // Path parameters
     .post("/users", create_user_handler)       // HTTP methods
     .nest("/api/v1", api_routes)               // Nested routing
     .websocket("/ws", websocket_handler)       // WebSocket endpoints
@@ -263,7 +263,7 @@ This architecture ensures that Ignitia applications are:
 
 ## 🚦 Status
 
-- **Current Version**: 0.2.3
+- **Current Version**: 0.2.4
 - **Stability**: Beta (API may change)
 - **Minimum Rust Version**: 1.70+
 

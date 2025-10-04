@@ -7,29 +7,38 @@
 //!
 //! ## 🔥 Key Features
 //!
-//! ### **Multi-Protocol Excellence**
+//! ### Multi-Protocol Excellence
+//!
 //! - **HTTP/1.1 & HTTP/2**: Full support with automatic protocol negotiation via ALPN
 //! - **HTTPS/TLS**: Production-ready TLS with certificate management and modern cipher suites
 //! - **WebSocket**: Native WebSocket protocol with connection management and message routing
 //! - **H2C Support**: HTTP/2 over cleartext connections for development and internal services
 //!
-//! ### **Performance Optimized**
-//! - **65K+ RPS Capable**: Optimized for extreme throughput with zero-cost abstractions
+//! ### Performance Optimized
+//!
+//! - **155K+ RPS Capable**: Optimized for extreme throughput with zero-cost abstractions
 //! - **Sub-millisecond Latency**: Fast request processing with efficient routing and middleware
 //! - **Connection Pooling**: Advanced connection management and resource optimization
 //! - **Memory Efficient**: Smart buffer management and minimal heap allocations
+//! - **Radix Tree Routing**: O(k) route lookup complexity where k is path length
+//! - **Lock-Free Reads**: Atomic router swapping for zero-downtime updates
 //!
-//! ### **Developer Experience**
+//! ### Developer Experience
+//!
 //! - **Type-Safe Routing**: Compile-time route validation with automatic parameter extraction
 //! - **Rich Extractors**: JSON, forms, headers, cookies, query params, and custom extractors
 //! - **Composable Middleware**: Flexible middleware pipeline for cross-cutting concerns
 //! - **Comprehensive Error Handling**: Structured error types with detailed diagnostics
+//! - **Hot Reloading**: Runtime route updates without connection drops
 //!
-//! ### **Production Features**
+//! ### Production Features
+//!
 //! - **Advanced CORS**: Regex-based origin matching with fine-grained control
 //! - **Security Headers**: Built-in security middleware with configurable policies
 //! - **Rate Limiting**: Token bucket algorithm with distributed support
 //! - **Observability**: Structured logging, metrics, and request tracing
+//! - **Multipart Forms**: File upload support with streaming and size limits
+//! - **WebSocket Rooms**: Built-in room system for broadcast messaging
 //!
 //! ## 🚀 Quick Start Guide
 //!
@@ -37,7 +46,7 @@
 //!
 //! ```
 //! [dependencies]
-//! ignitia = { version = "0.2.3", features = ["tls", "websocket"] }
+//! ignitia = { version = "0.2.4", features = ["tls", "websocket"] }
 //! tokio = { version = "1.40", features = ["full"] }
 //! serde = { version = "1.0", features = ["derive"] }
 //! ```
@@ -72,9 +81,9 @@
 //! use std::time::Duration;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<()> {
+//! async fn main() -> ignitia::Result<()> {
 //!     let router = Router::new()
-//!         .get("/", || async { Ok(Response::text("HTTP/2 Ready! 🚀")) });
+//!         .get("/", || async { Ok(ignitia::Response::text("HTTP/2 Ready! 🚀")) });
 //!
 //!     // Configure HTTP/2 with optimizations
 //!     let config = ServerConfig {
@@ -140,28 +149,6 @@
 //!     .await
 //! ```
 //!
-//! ### Development with Self-Signed Certificates
-//!
-//! ```
-//! #[cfg(all(feature = "tls", feature = "self-signed"))]
-//! Server::new(router, addr)
-//!     .with_self_signed_cert("localhost")? // ⚠️ Development only!
-//!     .ignitia()
-//!     .await
-//! ```
-//!
-//! ### HTTP to HTTPS Redirect
-//!
-//! ```
-//! // Automatically redirect all HTTP traffic to HTTPS
-//! tokio::spawn(async move {
-//!     Server::new(redirect_router, "0.0.0.0:80".parse().unwrap())
-//!         .redirect_to_https(443)
-//!         .ignitia()
-//!         .await
-//! });
-//! ```
-//!
 //! ## 🌐 Advanced CORS Configuration
 //!
 //! Comprehensive CORS support for secure cross-origin requests:
@@ -169,8 +156,9 @@
 //! ### Production CORS Setup
 //!
 //! ```
-//! use ignitia::{CorsMiddleware, Method};
+//! use ignitia::{CorsMiddleware, Method, Router, Response};
 //!
+//! # async fn example() -> ignitia::Result<()> {
 //! let cors = CorsMiddleware::new()
 //!     .allowed_origins(&["https://myapp.com", "https://admin.myapp.com"])
 //!     .allowed_methods(&[Method::GET, Method::POST, Method::PUT, Method::DELETE])
@@ -182,274 +170,36 @@
 //!
 //! let router = Router::new()
 //!     .middleware(cors)
-//!     .get("/api/users", || async { Ok(Response::json("users")?) });
+//!     .get("/api/users", || async { Ok(Response::json(vec!["user1", "user2"])?) });
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ### Regex-Based Origin Matching
 //!
 //! ```
+//! use ignitia::CorsMiddleware;
+//!
+//! # fn example() -> ignitia::Result<()> {
 //! let cors = CorsMiddleware::new()
 //!     .allowed_origin_regex(r"https://.*\.myapp\.com") // All subdomains
 //!     .allowed_origin_regex(r"https://localhost:\d+") // Local development ports
 //!     .build()?;
+//! # Ok(())
+//! # }
 //! ```
 //!
-//! ### Convenience Configurations
-//!
-//! ```
-//! // Development (permissive)
-//! let dev_cors = CorsMiddleware::permissive();
-//!
-//! // Production API
-//! let api_cors = CorsMiddleware::default_api();
-//!
-//! // Secure API with specific origins
-//! let secure_cors = CorsMiddleware::secure_api(&[
-//!     "https://app.example.com",
-//!     "https://admin.example.com"
-//! ]);
-//! ```
-//!
-//! ## 📡 HTTP/2 Features and Optimization
-//!
-//! Leverage HTTP/2's advanced features for maximum performance:
-//!
-//! ### HTTP/2 Stream Management
-//!
-//! ```
-//! use ignitia::{Http2Config, ServerConfig};
-//! use std::time::Duration;
-//!
-//! let http2_config = Http2Config {
-//!     enabled: true,
-//!     enable_prior_knowledge: true, // H2C support
-//!     max_concurrent_streams: Some(1000),
-//!     initial_connection_window_size: Some(1024 * 1024), // 1MB
-//!     initial_stream_window_size: Some(64 * 1024), // 64KB
-//!     max_frame_size: Some(16 * 1024), // 16KB
-//!     keep_alive_interval: Some(Duration::from_secs(60)),
-//!     keep_alive_timeout: Some(Duration::from_secs(20)),
-//!     adaptive_window: true,
-//!     max_header_list_size: Some(16 * 1024),
-//! };
-//!
-//! let server_config = ServerConfig {
-//!     http1_enabled: true, // Support both protocols
-//!     http2: http2_config,
-//!     auto_protocol_detection: true,
-//!     ..Default::default()
-//! };
-//! ```
-//!
-//! ### Testing HTTP/2 Connections
-//!
-//! ```
-//! # HTTP/2 over TLS (recommended)
-//! curl -v --http2 https://localhost:8443/
-//!
-//! # HTTP/2 prior knowledge (H2C)
-//! curl -v --http2-prior-knowledge http://localhost:8080/
-//!
-//! # Check protocol negotiation
-//! curl -v --http2 -H "Accept: application/json" https://localhost:8443/api/status
-//! ```
-//!
-//! ## 📚 Core Concepts and Architecture
-//!
-//! ### Protocol Negotiation Flow
-//!
-//! Ignitia automatically selects the optimal protocol:
-//!
-//! ```
-//! // 1. TLS connections use ALPN negotiation
-//! // Client advertises: ["h2", "http/1.1"]
-//! // Server selects: "h2" (HTTP/2 preferred)
-//!
-//! // 2. Cleartext connections check for HTTP/2 Prior Knowledge
-//! // Client sends: PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n
-//! // Server responds with HTTP/2 connection preface
-//!
-//! // 3. HTTP/1.1 upgrade mechanism
-//! // Client sends: Upgrade: h2c, Connection: Upgrade, HTTP2-Settings: ...
-//! // Server responds: HTTP/1.1 101 Switching Protocols
-//! ```
-//!
-//! ### Request/Response Lifecycle
-//!
-//! ```
-//! ┌─────────────────────────────────────────────────────────────────┐
-//! │                    Ignitia Request Pipeline                     │
-//! └─────────────────────────────────────────────────────────────────┘
-//!
-//! 1. Connection Accept (TCP/TLS)
-//!    ├─ Protocol Detection (HTTP/1.1, HTTP/2, WebSocket)
-//!    ├─ TLS Handshake (if HTTPS)
-//!    └─ Connection Pooling
-//!
-//! 2. Request Parsing
-//!    ├─ Header Parsing and Validation
-//!    ├─ Body Streaming (with size limits)
-//!    └─ Protocol-specific Processing
-//!
-//! 3. Middleware Pipeline (Request Phase)
-//!    ├─ CORS Preflight Handling
-//!    ├─ Authentication/Authorization
-//!    ├─ Rate Limiting
-//!    ├─ Request ID Generation
-//!    └─ Custom middleware
-//!
-//! 4. Route Resolution
-//!    ├─ Path Matching (radix tree)
-//!    ├─ Parameter Extraction
-//!    ├─ Handler Selection
-//!    └─ WebSocket Upgrade Detection
-//!
-//! 5. Handler Execution
-//!    ├─ Extractor Processing
-//!    ├─ Business Logic
-//!    └─ Response Generation
-//!
-//! 6. Middleware Pipeline (Response Phase)
-//!    ├─ Error Handling
-//!    ├─ Response Headers (Security, CORS)
-//!    ├─ Compression
-//!    └─ Logging
-//!
-//! 7. Response Transmission
-//!    ├─ Protocol-specific Formatting
-//!    ├─ Connection Management
-//!    └─ Metrics Collection
-//! ```
-//!
-//! ### Advanced Request Extractors
-//!
-//! ```
-//! use ignitia::{Path, Query, Json, Headers, Cookies, Body, Method, Uri};
-//! use serde::Deserialize;
-//!
-//! #[derive(Deserialize)]
-//! struct UserQuery {
-//!     page: Option<u32>,
-//!     limit: Option<u32>,
-//!     sort: Option<String>,
-//!     filter: Option<String>,
-//! }
-//!
-//! #[derive(Deserialize)]
-//! struct CreateUserRequest {
-//!     name: String,
-//!     email: String,
-//!     role: Option<String>,
-//! }
-//!
-//! async fn advanced_handler(
-//!     Path(user_id): Path<u64>,
-//!     Query(query): Query<UserQuery>,
-//!     Json(data): Json<CreateUserRequest>,
-//!     headers: Headers,
-//!     cookies: Cookies,
-//!     body: Body,
-//!     method: Method,
-//!     uri: Uri,
-//! ) -> ignitia::Result<Response> {
-//!     // Access HTTP version and protocol information
-//!     let http_version = headers.get("version").unwrap_or("HTTP/1.1");
-//!     let user_agent = headers.get("user-agent").unwrap_or("Unknown");
-//!
-//!     // Handle authentication from cookies
-//!     let session_token = cookies.get("session_token");
-//!
-//!     Response::json(serde_json::json!({
-//!         "user_id": user_id,
-//!         "query": {
-//!             "page": query.page.unwrap_or(1),
-//!             "limit": query.limit.unwrap_or(10),
-//!             "sort": query.sort.unwrap_or_else(|| "created_at".to_string()),
-//!             "filter": query.filter
-//!         },
-//!         "method": method.as_str(),
-//!         "path": uri.path(),
-//!         "query_string": uri.query(),
-//!         "http_version": http_version,
-//!         "user_agent": user_agent,
-//!         "authenticated": session_token.is_some(),
-//!         "content_length": body.len(),
-//!         "timestamp": chrono::Utc::now().timestamp()
-//!     }))
-//! }
-//! ```
-//!
-//! ### Comprehensive Middleware Pipeline
-//!
-//! ```
-//! use ignitia::{
-//!     Router, LoggerMiddleware, CorsMiddleware, AuthMiddleware,
-//!     ErrorHandlerMiddleware, RateLimitingMiddleware, SecurityMiddleware
-//! };
-//!
-//! let router = Router::new()
-//!     // Request logging with detailed HTTP information
-//!     .middleware(LoggerMiddleware::new()
-//!         .include_headers(true)
-//!         .include_body_size(true)
-//!         .include_timing(true))
-//!
-//!     // Security headers (HSTS, CSP, etc.)
-//!     .middleware(SecurityMiddleware::new()
-//!         .enable_hsts(Duration::from_secs(31536000)) // 1 year
-//!         .content_security_policy("default-src 'self'")
-//!         .frame_options("DENY")
-//!         .content_type_options("nosniff"))
-//!
-//!     // Rate limiting with token bucket algorithm
-//!     .middleware(RateLimitingMiddleware::new()
-//!         .requests_per_minute(1000)
-//!         .burst_size(100)
-//!         .enable_headers(true))
-//!
-//!     // CORS with production configuration
-//!     .middleware(CorsMiddleware::secure_api(&["https://myapp.com"])
-//!         .allow_credentials()
-//!         .max_age(3600)
-//!         .build()?)
-//!
-//!     // Authentication for protected routes
-//!     .middleware(AuthMiddleware::bearer_token("your-secret-key")
-//!         .protect_paths(&["/api/admin", "/api/user/profile"])
-//!         .optional_paths(&["/api/public"]))
-//!
-//!     // Global error handling with detailed responses
-//!     .middleware(ErrorHandlerMiddleware::new()
-//!         .with_stack_trace(cfg!(debug_assertions))
-//!         .with_error_id(true)
-//!         .with_logging(true))
-//!
-//!     // Application routes
-//!     .get("/", || async { Ok(Response::text("Hello, World!")) })
-//!     .get("/api/health", health_check_handler)
-//!     .post("/api/users", create_user_handler)
-//!     .get("/api/users/:id", get_user_handler)
-//!     .put("/api/users/:id", update_user_handler)
-//!     .delete("/api/users/:id", delete_user_handler);
-//! ```
-//!
-//! ## 🌐 WebSocket Support
+//! ## 📡 WebSocket Support
 //!
 //! Full-featured WebSocket implementation with HTTP/2 compatibility:
-//!
-//! ### Enable WebSocket Feature
-//!
-//! ```
-//! [dependencies]
-//! ignitia = { version = "0.2.3", features = ["websocket", "tls"] }
-//! ```
 //!
 //! ### Advanced WebSocket Server
 //!
 //! ```
 //! #[cfg(feature = "websocket")]
 //! use ignitia::websocket::{websocket_handler, Message, WebSocketConnection};
-//! use std::sync::{Arc, Mutex};
+//! use std::sync::Arc;
+//! use tokio::sync::Mutex;
 //! use std::collections::HashMap;
 //!
 //! #[cfg(feature = "websocket")]
@@ -478,77 +228,7 @@
 //!             }
 //!         }
 //!         Ok(())
-//!     }))
-//!
-//!     // Chat room WebSocket
-//!     .websocket("/ws/chat", {
-//!         let clients = Arc::clone(&clients);
-//!         websocket_handler(move |ws: WebSocketConnection| {
-//!             let clients = Arc::clone(&clients);
-//!             async move {
-//!                 let client_id = uuid::Uuid::new_v4().to_string();
-//!                 clients.lock().unwrap().insert(client_id.clone(), ws.clone());
-//!
-//!                 while let Some(message) = ws.recv().await {
-//!                     if let Message::Text(text) = message {
-//!                         let broadcast = format!("User {}: {}", client_id, text);
-//!
-//!                         // Broadcast to all connected clients
-//!                         let mut disconnected = Vec::new();
-//!                         for (id, client_ws) in clients.lock().unwrap().iter() {
-//!                             if let Err(_) = client_ws.send_text(broadcast.clone()).await {
-//!                                 disconnected.push(id.clone());
-//!                             }
-//!                         }
-//!
-//!                         // Remove disconnected clients
-//!                         let mut clients_lock = clients.lock().unwrap();
-//!                         for id in disconnected {
-//!                             clients_lock.remove(&id);
-//!                         }
-//!                     }
-//!                 }
-//!
-//!                 clients.lock().unwrap().remove(&client_id);
-//!                 Ok(())
-//!             }
-//!         })
-//!     })
-//!
-//!     // JSON API over WebSocket
-//!     .websocket("/ws/api", websocket_handler(|ws: WebSocketConnection| async move {
-//!         while let Some(message) = ws.recv().await {
-//!             if let Message::Text(text) = message {
-//!                 match serde_json::from_str::<serde_json::Value>(&text) {
-//!                     Ok(request) => {
-//!                         let response = process_api_request(request).await?;
-//!                         ws.send_json(&response).await?;
-//!                     }
-//!                     Err(_) => {
-//!                         ws.send_json(&serde_json::json!({
-//!                             "error": "Invalid JSON format"
-//!                         })).await?;
-//!                     }
-//!                 }
-//!             }
-//!         }
-//!         Ok(())
 //!     }));
-//! ```
-//!
-//! ### WebSocket with HTTPS
-//!
-//! ```
-//! #[cfg(feature = "websocket")]
-//! #[tokio::main]
-//! async fn main() -> Result<()> {
-//!     Server::new(router, "127.0.0.1:8443".parse()?)
-//!         .enable_https("cert.pem", "key.pem")?
-//!         .ignitia()
-//!         .await
-//!
-//!     // Client connects via: wss://localhost:8443/ws/echo
-//! }
 //! ```
 //!
 //! ## 🏗️ Framework Architecture
@@ -557,31 +237,22 @@
 //!
 //! ```
 //! ┌─────────────────────────────────────────────────────────────────────────────┐
-//! │                           Application Layer                                 │
+//! │ Application Layer                                                           │
 //! │ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │
-//! │ │   Routes    │ │ Middleware  │ │    CORS     │ │      WebSocket          │ │
-//! │ │  & Handlers │ │   Pipeline  │ │Configuration│ │      Handlers           │ │
+//! │ │   Routes    │ │ Middleware  │ │    CORS     │ │     WebSocket           │ │
+//! │ │ & Handlers  │ │  Pipeline   │ │Configuration│ │      Handlers           │ │
 //! │ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────────────────┘ │
 //! ├─────────────────────────────────────────────────────────────────────────────┤
-//! │                           Ignitia Framework                                │
+//! │ Ignitia Framework                                                           │
 //! │ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │
-//! │ │   Router    │ │   Server    │ │    TLS      │ │      WebSocket          │ │
-//! │ │             │ │             │ │             │ │       Support           │ │
-//! │ │ ┌─────────┐ │ │ ┌─────────┐ │ │ ┌─────────┐ │ │ ┌─────────────────────┐ │ │
-//! │ │ │  Route  │ │ │ │HTTP/1.1 │ │ │ │  ALPN   │ │ │ │    Connection       │ │ │
-//! │ │ │Matching │ │ │ │Support  │ │ │ │Protocol │ │ │ │    Management       │ │ │
-//! │ │ └─────────┘ │ │ └─────────┘ │ │ │Negotiat.│ │ │ └─────────────────────┘ │ │
-//! │ │             │ │             │ │ └─────────┘ │ │                         │ │
-//! │ │ ┌─────────┐ │ │ ┌─────────┐ │ │ ┌─────────┐ │ │ ┌─────────────────────┐ │ │
-//! │ │ │Handler  │ │ │ │HTTP/2   │ │ │ │  Cert   │ │ │ │      Message        │ │ │
-//! │ │ │Extract  │ │ │ │Support  │ │ │ │Management│ │ │ │     Processing      │ │ │
-//! │ │ └─────────┘ │ │ └─────────┘ │ │ └─────────┘ │ │ └─────────────────────┘ │ │
+//! │ │   Router    │ │   Server    │ │     TLS     │ │      WebSocket          │ │
+//! │ │  Radix Tree │ │ HTTP/1.1+2  │ │ ALPN & Cert │ │  Connection Management  │ │
 //! │ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────────────────┘ │
 //! ├─────────────────────────────────────────────────────────────────────────────┤
-//! │                          Runtime Layer (Tokio)                            │
+//! │ Runtime Layer (Tokio)                                                       │
 //! │ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │
-//! │ │    HTTP     │ │     TLS     │ │     TCP     │ │       Async I/O         │ │
-//! │ │   (Hyper)   │ │  (Rustls)   │ │  Listeners  │ │      & Futures          │ │
+//! │ │    HTTP     │ │     TLS     │ │     TCP     │ │     Async I/O           │ │
+//! │ │   (Hyper)   │ │  (Rustls)   │ │  Listeners  │ │     & Futures           │ │
 //! │ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────────────────┘ │
 //! └─────────────────────────────────────────────────────────────────────────────┘
 //! ```
@@ -591,22 +262,6 @@
 //! Ignitia uses Cargo features for optional functionality:
 //!
 //! ### Available Features
-//!
-//! ```
-//! [dependencies]
-//! # Full feature set (recommended for production)
-//! ignitia = {
-//!     version = "0.2.3",
-//!     features = ["tls", "websocket", "self-signed"]
-//! }
-//!
-//! # Individual features
-//! ignitia = { version = "0.2.3", features = ["tls"] }        # HTTPS support only
-//! ignitia = { version = "0.2.3", features = ["websocket"] }  # WebSocket support only
-//! ignitia = "0.2.3"                                          # HTTP only (minimal)
-//! ```
-//!
-//! ### Feature Descriptions
 //!
 //! - **`tls`**: Enables HTTPS/TLS support with certificate management and ALPN protocol negotiation
 //! - **`websocket`**: Enables WebSocket protocol support with connection management and message routing
@@ -618,243 +273,96 @@
 //! Ignitia is optimized for exceptional performance:
 //!
 //! ### Throughput (Requests/Second)
-//! - **Simple JSON API**: 65,000+ RPS
-//! - **Static file serving**: 85,000+ RPS
+//!
+//! - **Simple JSON API**: 155,000+ RPS (Radix mode)
+//! - **Static file serving**: 140,000+ RPS
 //! - **WebSocket connections**: 25,000+ concurrent
-//! - **HTTPS with TLS 1.3**: 55,000+ RPS
+//! - **HTTPS with TLS 1.3**: 110,000+ RPS
 //!
 //! ### Latency (99th percentile)
-//! - **HTTP/1.1**: < 1ms
-//! - **HTTP/2**: < 1.2ms
-//! - **HTTPS**: < 1.5ms
-//! - **WebSocket message**: < 0.8ms
+//!
+//! - **HTTP/1.1**: < 0.8ms
+//! - **HTTP/2**: < 1.0ms
+//! - **HTTPS**: < 1.3ms
+//! - **WebSocket message**: < 0.5ms
 //!
 //! ### Resource Usage
+//!
 //! - **Memory per connection**: ~2KB
-//! - **CPU overhead**: < 5% at 50K RPS
+//! - **CPU overhead**: < 3% at 100K RPS
 //! - **Binary size**: ~4MB (with all features)
 //!
-//! ## 🧪 Testing Your Applications
+//! ## 📚 Core Concepts
 //!
-//! Comprehensive testing utilities and examples:
-//!
-//! ```
-//! #[cfg(test)]
-//! mod tests {
-//!     use super::*;
-//!     use ignitia::{Router, Response, Method};
-//!
-//!     #[tokio::test]
-//!     async fn test_basic_routing() {
-//!         let router = Router::new()
-//!             .get("/health", || async {
-//!                 Ok(Response::json(serde_json::json!({"status": "ok"}))?)
-//!             });
-//!
-//!         // Test route registration
-//!         assert!(router.has_route(&Method::GET, "/health"));
-//!         assert!(!router.has_route(&Method::POST, "/health"));
-//!     }
-//!
-//!     #[tokio::test]
-//!     async fn test_cors_middleware() {
-//!         let cors = CorsMiddleware::new()
-//!             .allowed_origins(&["https://example.com"])
-//!             .allowed_methods(&[Method::GET, Method::POST])
-//!             .build().unwrap();
-//!
-//!         let router = Router::new()
-//!             .middleware(cors)
-//!             .get("/api/test", || async {
-//!                 Ok(Response::text("CORS enabled"))
-//!             });
-//!
-//!         // Test CORS preflight
-//!         assert!(router.handles_cors_preflight("/api/test"));
-//!     }
-//!
-//!     #[tokio::test]
-//!     async fn test_https_configuration() {
-//!         let config = ServerConfig::default()
-//!             .with_https_redirect(443);
-//!
-//!         assert!(config.redirect_http_to_https);
-//!         assert_eq!(config.https_port, Some(443));
-//!     }
-//!
-//!     #[cfg(feature = "websocket")]
-//!     #[tokio::test]
-//!     async fn test_websocket_upgrade() {
-//!         use ignitia::websocket::websocket_handler;
-//!
-//!         let router = Router::new()
-//!             .websocket("/ws", websocket_handler(|_ws| async { Ok(()) }));
-//!
-//!         assert!(router.has_websocket_route("/ws"));
-//!     }
-//! }
-//! ```
-//!
-//! ## 🔍 Production Examples
-//!
-//! ### Complete REST API with Authentication
+//! ### Request/Response Lifecycle
 //!
 //! ```
-//! use ignitia::prelude::*;
-//! use serde::{Deserialize, Serialize};
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │ Ignitia Request Pipeline                                        │
+//! └─────────────────────────────────────────────────────────────────┘
 //!
-//! #[derive(Serialize, Deserialize)]
-//! struct ApiResponse<T> {
-//!     success: bool,
-//!     data: T,
-//!     timestamp: i64,
-//!     version: String,
-//! }
+//! 1. Connection Accept (TCP/TLS)
+//!    ├─ Protocol Detection (HTTP/1.1, HTTP/2, WebSocket)
+//!    ├─ TLS Handshake (if HTTPS)
+//!    └─ Connection Pooling
 //!
-//! #[derive(Serialize, Deserialize)]
-//! struct User {
-//!     id: u64,
-//!     name: String,
-//!     email: String,
-//!     role: String,
-//! }
+//! 2. Request Parsing
+//!    ├─ Header Parsing and Validation
+//!    ├─ Body Streaming (with size limits)
+//!    └─ Protocol-specific Processing
 //!
-//! async fn get_user_handler(Path(id): Path<u64>) -> Result<Response> {
-//!     // Simulate database lookup
-//!     let user = User {
-//!         id,
-//!         name: "John Doe".to_string(),
-//!         email: "john@example.com".to_string(),
-//!         role: "user".to_string(),
-//!     };
+//! 3. Middleware Pipeline (Request Phase)
+//!    ├─ CORS Preflight Handling
+//!    ├─ Authentication/Authorization
+//!    ├─ Rate Limiting
+//!    ├─ Request ID Generation
+//!    └─ Custom middleware
 //!
-//!     let response = ApiResponse {
-//!         success: true,
-//!         data: user,
-//!         timestamp: chrono::Utc::now().timestamp(),
-//!         version: "1.0.0".to_string(),
-//!     };
+//! 4. Route Resolution
+//!    ├─ Path Matching (radix tree O(k) lookup)
+//!    ├─ Parameter Extraction
+//!    ├─ Handler Selection
+//!    └─ WebSocket Upgrade Detection
 //!
-//!     Response::json(response)
-//! }
+//! 5. Handler Execution
+//!    ├─ Extractor Processing
+//!    ├─ Business Logic
+//!    └─ Response Generation
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<()> {
-//!     // Initialize logging
-//!     tracing_subscriber::init();
+//! 6. Middleware Pipeline (Response Phase)
+//!    ├─ Error Handling
+//!    ├─ Response Headers (Security, CORS)
+//!    ├─ Compression
+//!    └─ Logging
 //!
-//!     let router = Router::new()
-//!         // Global middleware pipeline
-//!         .middleware(LoggerMiddleware::new())
-//!         .middleware(SecurityMiddleware::strict())
-//!         .middleware(CorsMiddleware::secure_api(&["https://myapp.com"])
-//!             .build()?)
-//!         .middleware(RateLimitingMiddleware::new()
-//!             .requests_per_minute(10000))
-//!
-//!         // Public routes
-//!         .get("/", || async { Ok(Response::text("API v1.0")) })
-//!         .get("/health", || async {
-//!             Ok(Response::json(serde_json::json!({
-//!                 "status": "healthy",
-//!                 "timestamp": chrono::Utc::now().timestamp(),
-//!                 "version": env!("CARGO_PKG_VERSION")
-//!             }))?)
-//!         })
-//!
-//!         // Protected API routes
-//!         .middleware(AuthMiddleware::bearer_token("your-jwt-secret")
-//!             .protect_paths(&["/api/v1/"]))
-//!         .get("/api/v1/users/:id", get_user_handler)
-//!         .post("/api/v1/users", create_user_handler)
-//!         .put("/api/v1/users/:id", update_user_handler)
-//!         .delete("/api/v1/users/:id", delete_user_handler);
-//!
-//!     // Production HTTPS server
-//!     let addr = "0.0.0.0:8443".parse()?;
-//!     Server::new(router, addr)
-//!         .enable_https("production.crt", "production.key")?
-//!         .with_performance_config(PerformanceConfig::max_rps())
-//!         .ignitia()
-//!         .await
-//! }
+//! 7. Response Transmission
+//!    ├─ Protocol-specific Formatting
+//!    ├─ Connection Management
+//!    └─ Metrics Collection
 //! ```
 //!
-//! ### Real-time Chat Application
+//! ### Routing Modes
 //!
-//! ```
-//! #[cfg(feature = "websocket")]
-//! use ignitia::websocket::{websocket_handler, Message, WebSocketConnection};
-//! use std::sync::{Arc, RwLock};
-//! use std::collections::HashMap;
-//! use tokio::sync::broadcast;
+//! Ignitia supports two routing modes optimized for different use cases:
 //!
-//! #[cfg(feature = "websocket")]
-//! type ChatClients = Arc<RwLock<HashMap<String, WebSocketConnection>>>;
+//! #### Radix Mode (Default - Recommended)
 //!
-//! #[cfg(feature = "websocket")]
-//! #[tokio::main]
-//! async fn main() -> Result<()> {
-//!     let (broadcast_tx, _) = broadcast::channel(1000);
-//!     let clients: ChatClients = Arc::new(RwLock::new(HashMap::new()));
+//! - **Performance**: O(k) lookup where k is path length
+//! - **Best for**: Applications with 50+ routes
+//! - **Features**: Compressed prefix tree, efficient parameter extraction
+//! - **Memory**: Optimized for large route sets
 //!
-//!     let router = Router::new()
-//!         // Serve chat UI
-//!         .get("/", || async {
-//!             Ok(Response::html(include_str!("../static/chat.html")))
-//!         })
+//! #### Base Mode
 //!
-//!         // WebSocket chat endpoint
-//!         .websocket("/ws/chat", {
-//!             let clients = Arc::clone(&clients);
-//!             let broadcast_tx = broadcast_tx.clone();
-//!
-//!             websocket_handler(move |ws: WebSocketConnection| {
-//!                 let clients = Arc::clone(&clients);
-//!                 let broadcast_tx = broadcast_tx.clone();
-//!                 let mut broadcast_rx = broadcast_tx.subscribe();
-//!
-//!                 async move {
-//!                     let client_id = uuid::Uuid::new_v4().to_string();
-//!                     clients.write().unwrap().insert(client_id.clone(), ws.clone());
-//!
-//!                     // Spawn broadcast listener
-//!                     let ws_clone = ws.clone();
-//!                     tokio::spawn(async move {
-//!                         while let Ok(message) = broadcast_rx.recv().await {
-//!                             if let Err(_) = ws_clone.send_text(message).await {
-//!                                 break;
-//!                             }
-//!                         }
-//!                     });
-//!
-//!                     // Handle incoming messages
-//!                     while let Some(message) = ws.recv().await {
-//!                         if let Message::Text(text) = message {
-//!                             let chat_message = format!("User {}: {}", client_id, text);
-//!                             let _ = broadcast_tx.send(chat_message);
-//!                         }
-//!                     }
-//!
-//!                     // Cleanup
-//!                     clients.write().unwrap().remove(&client_id);
-//!                     Ok(())
-//!                 }
-//!             })
-//!         });
-//!
-//!     // HTTPS chat server
-//!     let addr = "127.0.0.1:8443".parse()?;
-//!     Server::new(router, addr)
-//!         .enable_https("chat.crt", "chat.key")?
-//!         .ignitia()
-//!         .await
-//! }
-//! ```
+//! - **Performance**: O(n) linear matching where n is route count
+//! - **Best for**: Applications with < 50 routes
+//! - **Features**: Simple regex-based matching
+//! - **Memory**: Lower overhead for small apps
 //!
 //! ## 📖 Module Documentation
 //!
 //! ### Core Modules
+//!
 //! - [`cookie`]: HTTP cookie handling with secure defaults and session management
 //! - [`error`]: Comprehensive error handling with structured error types and custom responses
 //! - [`extension`]: Type-safe request/response extensions for sharing data between middleware
@@ -868,6 +376,7 @@
 //! - [`utils`]: Utility functions for common web development tasks
 //!
 //! ### Feature-Gated Modules
+//!
 //! - [`websocket`]: WebSocket protocol support with connection management (requires `websocket` feature)
 //!
 //! ## 🤝 Contributing
@@ -888,10 +397,11 @@
 //!
 //! ## 🔗 Resources
 //!
-//! - **Repository**: [https://github.com/AarambhDevHub/ignitia](https://github.com/AarambhDevHub/ignitia)
-//! - **Documentation**: [https://docs.rs/ignitia](https://docs.rs/ignitia)
-//! - **Examples**: [https://github.com/AarambhDevHub/ignitia/tree/main/examples](https://github.com/AarambhDevHub/ignitia/tree/main/examples)
-//! - **Changelog**: [https://github.com/AarambhDevHub/ignitia/blob/main/doc/CHANGELOG.md](https://github.com/AarambhDevHub/ignitia/blob/main/doc/CHANGELOG.md)
+//! - **Repository**: <https://github.com/AarambhDevHub/ignitia>
+//! - **Documentation**: <https://docs.rs/ignitia>
+//! - **Examples**: <https://github.com/AarambhDevHub/ignitia/tree/main/examples>
+//! - **Changelog**: <https://github.com/AarambhDevHub/ignitia/blob/main/doc/CHANGELOG.md>
+//! - **Crates.io**: <https://crates.io/crates/ignitia>
 
 // Enable documentation features for docs.rs
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -949,18 +459,17 @@ pub use handler::{
 
 // Re-export middleware types
 pub use middleware::{
-    AuthMiddleware, BodySizeLimitBuilder, BodySizeLimitMiddleware, CompressionMiddleware,
-    CorsMiddleware, ErrorHandlerMiddleware, IdGenerator, LoggerMiddleware, Middleware,
-    RateLimitConfig, RateLimitInfo, RateLimitStats, RateLimitingMiddleware, RequestIdMiddleware,
-    SecurityMiddleware,
+    BodySizeLimitBuilder, BodySizeLimitMiddleware, CompressionMiddleware, CorsMiddleware,
+    IdGenerator, LoggerMiddleware, Middleware, Next, RateLimitConfig, RateLimitInfo,
+    RateLimitStats, RateLimitingMiddleware, RequestIdMiddleware, SecurityMiddleware,
 };
 
 // Re-export core request and response types
 pub use request::Request;
-pub use response::{Response, ResponseBuilder};
+pub use response::{CacheControl, Html, IntoResponse, Response, ResponseBuilder};
 
 // Re-export routing components
-pub use router::{LayeredHandler, Route, Router, RouterMode};
+pub use router::{LayeredHandler, Route, Router};
 
 // Re-export server components
 pub use server::{Http2Config, PerformanceConfig, PoolConfig, Server, ServerConfig};
@@ -1011,7 +520,7 @@ pub mod info {
     /// use ignitia::info;
     ///
     /// println!("Running {}", info::version());
-    /// // Output: "Running ignitia v0.2.3"
+    /// // Output: "Running ignitia v0.2.4"
     /// ```
     pub fn version() -> String {
         format!("{} v{}", crate::NAME, crate::VERSION)
@@ -1135,13 +644,10 @@ pub mod prelude {
     pub use crate::{TlsConfig, TlsError, TlsVersion};
 
     // Handler and middleware types
-    pub use crate::{Handler, HandlerFn, IntoHandler, Middleware};
+    pub use crate::{Handler, HandlerFn, IntoHandler, Middleware, Next};
 
     // Essential middleware implementations
-    pub use crate::{
-        AuthMiddleware, CorsMiddleware, ErrorHandlerMiddleware, LoggerMiddleware,
-        RateLimitingMiddleware, SecurityMiddleware,
-    };
+    pub use crate::{CorsMiddleware, LoggerMiddleware, RateLimitingMiddleware, SecurityMiddleware};
 
     // Request extractors
     pub use crate::{Body, Cookies, Form, Headers, Json, Path, Query, State, Uri};

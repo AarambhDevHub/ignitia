@@ -1,8 +1,7 @@
-use ignitia::{Method, Multipart, Response, Router, Server, StatusCode};
+use ignitia::{Multipart, Response, Router, Server, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use tokio::fs;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let router = Router::new()
         .get("/", serve_upload_form)
         .post("/upload", handle_file_upload)
-        .get("/uploads/:filename", serve_uploaded_file);
+        .get("/uploads/{filename}", serve_uploaded_file);
 
     let addr: SocketAddr = "127.0.0.1:3000".parse()?;
     let server = Server::new(router, addr);
@@ -102,7 +101,7 @@ async fn handle_file_upload(mut multipart: Multipart) -> ignitia::Result<Respons
         form_data,
     };
 
-    Response::json(response)
+    Ok(Response::json(response))
 }
 
 // Serve the HTML upload form
@@ -355,7 +354,7 @@ async fn serve_uploaded_file(
             response
                 .headers
                 .insert("content-type", content_type.parse().unwrap());
-            response.body = Arc::new(contents.into());
+            response.body = contents.into();
             Ok(response)
         }
         Err(_) => Ok(Response::new(StatusCode::NOT_FOUND)),

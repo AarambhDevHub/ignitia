@@ -27,8 +27,8 @@ use tokio::fs;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let router = Router::new()
         .get("/", || async { Ok(Response::html(include_str!("../static/index.html"))) })
-        // Serve static files from /static/* routes
-        .get("/static/*path", |Path(path): Path<String>| async move {
+        // Serve static files from /static/{* routes}
+        .get("/static/{*path}", |Path(path): Path<String>| async move {
             serve_static_file(&path).await
         });
 
@@ -202,9 +202,9 @@ async fn serve_js(Path(filename): Path<String>) -> ignitia::Result<Response> {
 
 // Router setup
 let router = Router::new()
-    .get("/css/:filename", serve_css)
-    .get("/js/:filename", serve_js)
-    .get("/images/:filename", serve_image);
+    .get("/css/{filename}", serve_css)
+    .get("/js/{filename}", serve_js)
+    .get("/images/{filename}", serve_image);
 ```
 
 ## Configuration
@@ -355,7 +355,7 @@ let router = Router::new()
             "text/html",
             "image/svg+xml"
         ]))
-    .get("/static/*path", static_file_handler);
+    .get("/static/{*path}", static_file_handler);
 ```
 
 ### Efficient File Reading
@@ -521,7 +521,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
 
         // Static assets with caching
-        .get("/assets/*path", |req: Request, Path(path): Path<String>| async move {
+        .get("/assets/{*path}", |req: Request, Path(path): Path<String>| async move {
             serve_static_with_cache(req, &path).await
         })
 
@@ -590,8 +590,8 @@ async fn spa_handler(Path(path): Path<String>) -> ignitia::Result<Response> {
 
 // Router setup for SPA
 let router = Router::new()
-    .get("/api/*path", api_handler)
-    .get("/*path", spa_handler);
+    .get("/api/{*path}", api_handler)
+    .get("/{*path}", spa_handler);
 ```
 
 ### Development vs Production

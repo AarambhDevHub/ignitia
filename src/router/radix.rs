@@ -21,13 +21,13 @@
 //!
 //! ### Example Tree Structure
 //!
-//! For routes: `/users`, `/users/:id`, `/users/:id/posts`, `/posts`
+//! For routes: `/users`, `/users/{id}`, `/users/{id}/posts`, `/posts`
 //!
 //! ```
 //! root
 //! ├── users
 //! │   ├── ε (empty) [GET handler]
-//! │   └── :id
+//! │   └── {id}
 //! │       ├── ε (empty) [GET handler]
 //! │       └── posts [GET handler]
 //! └── posts [GET handler]
@@ -53,8 +53,8 @@
 //!
 //! // Insert routes
 //! router.insert("/users", Method::GET, my_handler);
-//! router.insert("/users/:id", Method::GET, user_handler);
-//! router.insert("/posts/*path", Method::GET, catch_all_handler);
+//! router.insert("/users/{id}", Method::GET, user_handler);
+//! router.insert("/posts/{*path}", Method::GET, catch_all_handler);
 //!
 //! // Lookup routes
 //! if let Some((handler, params)) = router.lookup(&Method::GET, "/users/123") {
@@ -477,8 +477,8 @@ impl RadixNode {
 /// // Add routes
 /// router.insert("/", Method::GET, home_handler);
 /// router.insert("/users", Method::GET, users_handler);
-/// router.insert("/users/:id", Method::GET, user_handler);
-/// router.insert("/files/*path", Method::GET, files_handler);
+/// router.insert("/users/{id}", Method::GET, user_handler);
+/// router.insert("/files/{*path}", Method::GET, files_handler);
 ///
 /// // Look up routes
 /// if let Some((handler, params)) = router.lookup(&Method::GET, "/users/123") {
@@ -554,8 +554,8 @@ impl RadixRouter {
     /// # Path Syntax
     ///
     /// - **Static segments**: `/users`, `/api/v1` - match exactly
-    /// - **Parameters**: `/:id`, `/users/:id` - match any single segment
-    /// - **Wildcards**: `/*path`, `/files/*filepath` - match remaining segments
+    /// - **Parameters**: `/{id}`, `/users/{id}` - match any single segment
+    /// - **Wildcards**: `/{*path}`, `/files/{*filepath}` - match remaining segments
     ///
     /// # Arguments
     ///
@@ -576,12 +576,12 @@ impl RadixRouter {
     /// router.insert("/about", Method::GET, about_handler);
     ///
     /// // Parameter routes
-    /// router.insert("/users/:id", Method::GET, user_handler);
-    /// router.insert("/posts/:slug/comments/:id", Method::GET, comment_handler);
+    /// router.insert("/users/{id}", Method::GET, user_handler);
+    /// router.insert("/posts/{slug}/comments/{id}", Method::GET, comment_handler);
     ///
     /// // Wildcard routes
-    /// router.insert("/static/*filepath", Method::GET, static_handler);
-    /// router.insert("/api/v1/*endpoint", Method::GET, api_handler);
+    /// router.insert("/static/{*filepath}", Method::GET, static_handler);
+    /// router.insert("/api/v1/{*endpoint}", Method::GET, api_handler);
     /// ```
     ///
     /// # Performance
@@ -640,9 +640,9 @@ impl RadixRouter {
         );
 
         // Check if this segment is a parameter or wildcard
-        if segment.starts_with(':') {
+        if segment.starts_with('{') && segment.ends_with('}') && !segment.starts_with("{*") {
             // Parameter segment
-            let param_name = segment[1..].to_string();
+            let param_name = segment[1..segment.len() - 1].to_string();
 
             // Look for existing parameter node
             for child in &mut node.children {
@@ -667,9 +667,9 @@ impl RadixRouter {
                 .position(|child| child.is_wildcard)
                 .unwrap_or(node.children.len());
             node.children.insert(insert_pos, param_node);
-        } else if segment.starts_with('*') {
+        } else if segment.starts_with("{*") && segment.ends_with('}') {
             // Wildcard segment
-            let wildcard_name = segment[1..].to_string();
+            let wildcard_name = segment[2..segment.len() - 1].to_string();
 
             // Look for existing wildcard node
             for child in &mut node.children {
@@ -762,7 +762,7 @@ impl RadixRouter {
     /// # use ignitia::router::RadixRouter;
     /// # use http::Method;
     /// let mut router = RadixRouter::new();
-    /// // router.insert("/users/:id", Method::GET, user_handler);
+    /// // router.insert("/users/{:id}", Method::GET, user_handler);
     ///
     /// // Successful lookup
     /// if let Some((handler, params)) = router.lookup(&Method::GET, "/users/123") {

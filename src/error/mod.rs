@@ -49,7 +49,7 @@ use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::{fmt, sync::Arc};
 
-use crate::{Request, Response};
+use crate::{response::IntoResponse, Request, Response};
 
 #[cfg(feature = "tls")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
@@ -469,7 +469,27 @@ impl Error {
         }
     }
 
-    // Fast path constructors for common errors
+    /// Returns the error code for the error.
+    ///
+    /// Example:
+    /// ```
+    /// let error = Error::NotFound("path");
+    /// assert_eq!(error.get_error_code(), Some("NOT_FOUND".to_string()));
+    /// ```
+    fn get_error_code(&self) -> Option<String> {
+        match self {
+            Error::NotFound(_) => Some("NOT_FOUND".to_string()),
+            Error::MethodNotAllowed(_) => Some("METHOD_NOT_ALLOWED".to_string()),
+            Error::BadRequest(_) => Some("BAD_REQUEST".to_string()),
+            Error::Unauthorized(_) => Some("UNAUTHORIZED".to_string()),
+            Error::Forbidden(_) => Some("FORBIDDEN".to_string()),
+            Error::Validation(_) => Some("VALIDATION_FAILED".to_string()),
+            Error::Database(_) => Some("DATABASE_ERROR".to_string()),
+            Error::ExternalService(_) => Some("EXTERNAL_SERVICE_ERROR".to_string()),
+            Error::Custom(custom) => custom.error_code(),
+            _ => Some("INTERNAL_SERVER_ERROR".to_string()),
+        }
+    }
 
     /// Creates a new "Not Found" error with the specified path.
     ///
@@ -918,5 +938,23 @@ impl ErrorHandlerType {
                 }
             }
         }
+    }
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        let status = self.status_code();
+
+        // Create structured JSON error response
+        let error_response = serde_json::json!({
+            "error": status.canonical_reason().unwrap_or("Error"),
+            "message": self.to_string(),
+            "status": status.as_u16(),
+            "error_type": self.error_type(),
+            "error_code": self.get_error_code(),
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        });
+
+        Response::json(error_response).with_status(status)
     }
 }

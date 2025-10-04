@@ -364,7 +364,7 @@ pub struct Request {
     /// HTTP headers
     pub headers: HeaderMap,
     /// Request body as bytes
-    pub body: Arc<Bytes>,
+    pub body: Bytes,
     /// Path parameters extracted from route matching
     pub params: HashMap<String, String>,
     /// Query string parameters parsed from URI
@@ -421,7 +421,7 @@ impl Request {
             uri,
             version,
             headers,
-            body: Arc::new(body),
+            body,
             params: HashMap::new(),
             query_params,
             extensions: Extensions::new(),
@@ -453,6 +453,7 @@ impl Request {
     /// assert_eq!(params.get("page"), Some(&"2".to_string()));
     /// assert_eq!(params.get("sort"), Some(&"desc".to_string()));
     /// ```
+    #[inline]
     fn parse_query_params(uri: &Uri) -> HashMap<String, String> {
         let query = match uri.query() {
             Some(q) => q,

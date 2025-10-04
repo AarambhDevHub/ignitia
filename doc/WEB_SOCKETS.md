@@ -5,14 +5,18 @@ This guide covers WebSocket support in Ignitia, enabling real-time, bidirectiona
 ## Table of Contents
 
 - [Overview](#overview)
+- [Protocol Support](#protocol-support)
 - [Basic Usage](#basic-usage)
 - [WebSocket Handlers](#websocket-handlers)
+- [Extractor Support](#extractor-support)
 - [Message Types](#message-types)
 - [Connection Management](#connection-management)
 - [Advanced Features](#advanced-features)
 - [Error Handling](#error-handling)
 - [Performance Considerations](#performance-considerations)
+- [Security](#security)
 - [Examples](#examples)
+- [Best Practices](#best-practices)
 
 ## Overview
 
@@ -27,13 +31,57 @@ Ignitia provides comprehensive WebSocket support built on top of `tokio-tungsten
 
 ### Key Features
 
-- ✅ **Automatic protocol negotiation** and upgrade handling
+- ✅ **Automatic protocol negotiation** and upgrade handling (HTTP/1.1)
+- ✅ **Universal extractor support** (State, Path, Query, Headers, etc.)
 - ✅ **Multiple handler types** for different use cases
 - ✅ **Batch message processing** for high throughput
 - ✅ **Automatic ping/pong handling** for connection health
 - ✅ **JSON message support** with serialization/deserialization
-- ✅ **Connection pooling** and management
+- ✅ **Secure WebSocket (wss://)** over TLS/HTTPS
 - ✅ **Graceful error handling** and reconnection support
+- ✅ **Type-safe parameter extraction** from requests
+
+## Protocol Support
+
+### HTTP/1.1 WebSocket (Fully Supported) ✅
+
+Ignitia fully supports WebSocket over HTTP/1.1 as defined in [RFC 6455](https://datatracker.ietf.org/doc/html/rfc6455):
+
+- Standard WebSocket upgrade handshake
+- Works over both HTTP (`ws://`) and HTTPS (`wss://`)
+- 101 Switching Protocols response
+- Full TLS encryption support
+
+```
+// Works with both:
+// ws://localhost:3000/ws   (non-secure)
+// wss://localhost:3000/ws  (secure over TLS)
+```
+
+### HTTP/2 WebSocket (Not Yet Supported) ⏳
+
+HTTP/2 WebSocket support (RFC 8441) is **not currently implemented** due to limitations in the Rust ecosystem:
+
+- Requires Hyper/h2 crate enhancements
+- Limited browser support
+- Most production systems use HTTP/1.1 for WebSockets
+
+**Current behavior**: WebSocket connections automatically use HTTP/1.1 even when the server supports HTTP/2 for regular requests. Browsers handle this negotiation automatically.
+
+### Secure WebSocket (wss://)
+
+When using HTTPS with TLS:
+
+- Initial HTTP/1.1 handshake occurs over TLS
+- All WebSocket frames are encrypted
+- Full security properties of TLS apply
+- Certificate validation required in production
+
+```rust
+let server = Server::new(router, addr)
+    .with_self_signed_cert("localhost")?; // For development
+    // Use proper certificates in production
+```
 
 ## Basic Usage
 
@@ -41,137 +89,330 @@ Enable WebSocket support by adding the `websocket` feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ignitia = { version = "0.2.3", features = ["websocket"] }
+ignitia = { version = "0.2.4", features = ["websocket"] }
 ```
 
 ### Simple Echo Server
 
 ```rust
-use ignitia::{Router, Server};
+use ignitia::prelude::*;
 use std::net::SocketAddr;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = Router::new()
-        .websocket("/echo", |mut ws| async move {
+async fn main() -> Result<()> {
+    let router = Router::new()
+        .websocket("/echo", |mut ws: WebSocketConnection| async move {
             while let Some(message) = ws.recv().await {
                 match message {
-                    ignitia::Message::Text(text) => {
-                        ws.send_text(format!("Echo: {}", text)).await?;
+                    Message::Text(text) => {
+                        ws.send_text(format!("Echo: {}", text)).await.ok();
                     }
-                    ignitia::Message::Binary(data) => {
-                        ws.send_bytes(data).await?;
+                    Message::Binary(data) => {
+                        ws.send_binary(data).await.ok();
                     }
-                    ignitia::Message::Close(_) => break,
-                    _ => {} // Handle other message types as needed
+                    Message::Close(_) => break,
+                    _ => {}
                 }
             }
-            Ok(())
+            Response::ok()
         });
 
     let addr: SocketAddr = "127.0.0.1:3000".parse()?;
-    let server = Server::new(app, addr);
+    let server = Server::new(router, addr);
 
     println!("WebSocket server running on ws://127.0.0.1:3000/echo");
     server.ignitia().await
 }
 ```
 
-### Using `.websocket_fn()` Method
+### Using Named Handler Functions
 
 ```rust
-use ignitia::{websocket::WebSocketConnection, Router, Result};
+use ignitia::prelude::*;
 
-async fn handle_websocket(mut ws: WebSocketConnection) -> Result<()> {
+async fn handle_websocket(mut ws: WebSocketConnection) -> Response {
     // Send welcome message
-    ws.send_text("Welcome to the chat!").await?;
+    ws.send_text("Welcome to the chat!").await.ok();
 
     while let Some(message) = ws.recv().await {
-        if let ignitia::Message::Text(text) = message {
-            // Broadcast to all connections (implement your logic)
-            ws.send_text(format!("You said: {}", text)).await?;
+        if let Message::Text(text) = message {
+            ws.send_text(format!("You said: {}", text)).await.ok();
         }
     }
-    Ok(())
+
+    Response::ok()
 }
 
-let app = Router::new()
-    .websocket_fn("/chat", handle_websocket);
+let router = Router::new()
+    .websocket("/chat", handle_websocket);
 ```
 
 ## WebSocket Handlers
 
-Ignitia provides several handler types for different use cases:
+### Return Type: IntoResponse
 
-### 1. Basic Handler
-
-For simple message-by-message processing:
+All WebSocket handlers must return a type that implements `IntoResponse`:
 
 ```rust
-use ignitia::websocket::{websocket_handler, WebSocketConnection};
+// ✅ Valid return types:
+Response::ok()
+"Connection closed"
+Json(json!({"status": "completed"}))
+(StatusCode::OK, "Success")
+Result<Response>
+Result<String>
 
-let handler = websocket_handler(|mut ws: WebSocketConnection| async move {
-    while let Some(message) = ws.recv().await {
-        // Process message
-        match message {
-            ignitia::Message::Text(text) => {
-                println!("Received: {}", text);
-                ws.send_text("Acknowledged").await?;
-            }
-            ignitia::Message::Close(_) => break,
-            _ => {}
-        }
-    }
-    Ok(())
-});
-
-let app = Router::new().websocket("/simple", handler);
+// ❌ Invalid:
+Ok(())  // Empty tuple doesn't implement IntoResponse
 ```
 
-### 2. Message Handler
+### Handler Styles
 
-Optimized for processing individual messages:
+#### 1. Closure Handler (Most Common)
 
 ```rust
-use ignitia::websocket::{websocket_message_handler, WebSocketConnection, Message};
+router.websocket("/ws", |mut ws: WebSocketConnection| async move {
+    while let Some(msg) = ws.recv().await {
+        // Handle messages
+    }
+    Response::ok()
+})
+```
 
-let handler = websocket_message_handler(|ws: WebSocketConnection, message: Message| async move {
-    match message {
+#### 2. Function Pointer Handler
+
+```rust
+async fn my_handler(mut ws: WebSocketConnection) -> Response {
+    // Implementation
+    Response::ok()
+}
+
+router.websocket("/ws", my_handler)
+```
+
+#### 3. Message Handler (Per-Message Processing)
+
+```rust
+use ignitia::websocket::websocket_message_handler;
+
+let handler = websocket_message_handler(|ws: WebSocketConnection, msg: Message| async move {
+    match msg {
         Message::Text(text) => {
-            // Process text message
-            let response = process_text_message(&text).await?;
-            ws.send_text(response).await?;
+            ws.send_text(format!("Got: {}", text)).await.ok();
+            Response::ok()
         }
-        Message::Binary(data) => {
-            // Process binary message
-            let processed = process_binary_data(&data).await?;
-            ws.send_bytes(processed).await?;
-        }
-        _ => {}
+        _ => Response::ok()
     }
-    Ok(())
 });
+
+router.websocket("/ws", handler)
 ```
 
-### 3. Batch Handler
-
-For high-throughput scenarios where you want to process messages in batches:
+#### 4. Batch Handler (High Throughput)
 
 ```rust
-use ignitia::websocket::{websocket_batch_handler, WebSocketConnection, Message};
+use ignitia::websocket::websocket_batch_handler;
 
 let handler = websocket_batch_handler(
     |ws: WebSocketConnection, messages: Vec<Message>| async move {
-        // Process batch of messages
-        let responses = process_message_batch(messages).await?;
-
-        // Send batch response
-        ws.send_batch(responses).await?;
-        Ok(())
+        // Process up to 50 messages at once
+        for msg in messages {
+            // Handle batch...
+        }
+        Response::ok()
     },
     50,    // Batch size
-    100,   // Timeout in milliseconds
+    100    // Timeout in milliseconds
 );
+
+router.websocket("/ws/batch", handler)
+```
+
+## Extractor Support
+
+WebSocket handlers support the same extractors as HTTP handlers, allowing you to access request data before the WebSocket upgrade.
+
+### Available Extractors
+
+All standard extractors work with WebSocket handlers:
+
+- `State<T>` - Shared application state
+- `Path<T>` - URL path parameters
+- `Query<T>` - Query string parameters
+- `Headers` - Request headers
+- `Extension<T>` - Request extensions
+- `Cookies` - Cookie jar
+- `Json<T>` - JSON body (for POST upgrade requests)
+
+### Basic WebSocket with State
+
+```rust
+use ignitia::prelude::*;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+#[derive(Clone)]
+struct AppState {
+    connections: Arc<RwLock<Vec<String>>>,
+}
+
+router
+    .state(AppState {
+        connections: Arc::new(RwLock::new(Vec::new())),
+    })
+    .websocket("/ws", |
+        State(state): State<AppState>,
+        mut ws: WebSocketConnection
+    | async move {
+        // Access shared state
+        state.connections.write().await.push("new_user".to_string());
+
+        ws.send_text("Connected!").await.ok();
+
+        while let Some(msg) = ws.recv().await {
+            // Handle messages...
+        }
+
+        "Connection closed successfully"
+    })
+```
+
+### WebSocket with Path Parameters
+
+```rust
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct RoomParams {
+    room_id: String,
+}
+
+router.websocket("/ws/room/{room_id}", |
+    Path(params): Path<RoomParams>,
+    mut ws: WebSocketConnection
+| async move {
+    ws.send_text(format!("Welcome to room: {}", params.room_id)).await.ok();
+
+    while let Some(msg) = ws.recv().await {
+        // Handle messages in this specific room...
+    }
+
+    Json(json!({ "room": params.room_id, "status": "closed" }))
+})
+```
+
+### WebSocket with Query Parameters
+
+```rust
+#[derive(Deserialize)]
+struct WsQuery {
+    token: String,
+    user_id: Option<String>,
+}
+
+router.websocket("/ws", |
+    Query(query): Query<WsQuery>,
+    mut ws: WebSocketConnection
+| async move {
+    // Validate token
+    if !validate_token(&query.token).await {
+        return Response::unauthorized("Invalid token");
+    }
+
+    ws.send_text("Authenticated!").await.ok();
+
+    while let Some(msg) = ws.recv().await {
+        // Handle authenticated messages...
+    }
+
+    Response::ok()
+})
+```
+
+### WebSocket with Multiple Extractors
+
+```rust
+router.websocket("/ws/{user_id}", |
+    Path(path): Path<HashMap<String, String>>,
+    Query(query): Query<HashMap<String, String>>,
+    State(state): State<AppState>,
+    Headers(headers): Headers,
+    mut ws: WebSocketConnection
+| async move {
+    let user_id = &path["user_id"];
+    let token = query.get("token");
+
+    // Check authentication header
+    if let Some(auth) = headers.get("authorization") {
+        if !is_valid_auth(auth) {
+            return Response::unauthorized("Invalid auth");
+        }
+    }
+
+    ws.send_text(format!("Welcome, {}", user_id)).await.ok();
+
+    while let Some(msg) = ws.recv().await {
+        // Handle messages with full context...
+    }
+
+    (StatusCode::OK, "Session ended")
+})
+```
+
+### WebSocket with Extensions
+
+```rust
+#[derive(Clone)]
+struct Database {
+    // Your database connection
+}
+
+router
+    .extension(Arc::new(Database::new()))
+    .websocket("/ws", |
+        Extension(db): Extension<Arc<Database>>,
+        mut ws: WebSocketConnection
+    | async move {
+        // Access database in WebSocket handler
+        let user_data = db.fetch_user_data().await;
+
+        ws.send_json(&user_data).await.ok();
+
+        while let Some(msg) = ws.recv().await {
+            // Use database for message processing...
+        }
+
+        Response::ok()
+    })
+```
+
+### Combining Up to 7 Extractors
+
+```rust
+router.websocket("/ws/{room}/{user}", |
+    Path(path): Path<HashMap<String, String>>,
+    Query(query): Query<HashMap<String, String>>,
+    State(state): State<AppState>,
+    Extension(db): Extension<Arc<Database>>,
+    Headers(headers): Headers,
+    Cookies(cookies): Cookies,
+    // RequestId(id): RequestId,  // 7th extractor if needed
+    mut ws: WebSocketConnection
+| async move {
+    // Access all extracted data before handling WebSocket
+    let room = &path["room"];
+    let user = &path["user"];
+    let session = cookies.get("session_id");
+
+    // Full context available for WebSocket handling
+    ws.send_text(format!("Welcome to {} room, {}!", room, user)).await.ok();
+
+    while let Some(msg) = ws.recv().await {
+        // Process with full context...
+    }
+
+    Response::ok()
+})
 ```
 
 ## Message Types
@@ -182,136 +423,108 @@ Ignitia supports all standard WebSocket message types:
 use ignitia::websocket::{Message, CloseFrame};
 
 // Text messages
-let text_msg = Message::text("Hello, World!");
-let text_msg = Message::Text("Hello".to_string());
+ws.send_text("Hello, World!").await?;
+ws.send(Message::Text("Hello".to_string())).await?;
 
 // Binary messages
-let binary_msg = Message::binary(vec![1, 2, 3, 4]);
-let binary_msg = Message::Binary(bytes::Bytes::from("data"));
+ws.send_binary(vec!).await?;[1]
+ws.send(Message::Binary(bytes::Bytes::from(vec![1]))).await?;
 
 // Control messages
-let ping = Message::ping(b"ping data");
-let pong = Message::pong(b"pong data");
-let close = Message::close();
-let close_with_reason = Message::close_with_reason(1000, "Normal closure");
+ws.send_ping(b"ping").await?;
+ws.send_pong(b"pong").await?;
+ws.close(None).await?;
+ws.close(Some(CloseFrame {
+    code: 1000,
+    reason: "Normal closure".into()
+})).await?;
+```
 
-// JSON messages (convenience method)
-#[derive(Serialize)]
+### JSON Messages
+
+```rust
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
 struct ChatMessage {
     user: String,
     text: String,
     timestamp: u64,
 }
 
-let json_msg = Message::json(&ChatMessage {
+// Send JSON
+let msg = ChatMessage {
     user: "Alice".to_string(),
-    text: "Hello everyone!".to_string(),
-    timestamp: 1634567890,
-})?;
-```
+    text: "Hello!".to_string(),
+    timestamp: 1234567890,
+};
+ws.send_json(&msg).await?;
 
-### Working with JSON Messages
-
-```rust
-use serde::{Deserialize, Serialize};
-use ignitia::websocket::{WebSocketConnection, Message};
-
-#[derive(Serialize, Deserialize)]
-struct GameMove {
-    player_id: u32,
-    x: i32,
-    y: i32,
-    piece: String,
-}
-
-async fn handle_game_websocket(mut ws: WebSocketConnection) -> ignitia::Result<()> {
-    while let Some(message) = ws.recv().await {
-        if let Message::Text(text) = message {
-            // Parse incoming JSON
-            match serde_json::from_str::<GameMove>(&text) {
-                Ok(game_move) => {
-                    // Process game move
-                    let response = process_move(game_move).await;
-
-                    // Send JSON response
-                    ws.send_json(&response).await?;
-                }
-                Err(e) => {
-                    ws.send_text(format!("Invalid JSON: {}", e)).await?;
-                }
-            }
-        }
-    }
-    Ok(())
+// Receive and parse JSON
+if let Message::Text(text) = msg {
+    let parsed: ChatMessage = serde_json::from_str(&text)?;
+    println!("{}: {}", parsed.user, parsed.text);
 }
 ```
 
 ## Connection Management
 
-### Connection Information
+### Connection Lifecycle
 
 ```rust
-async fn handle_websocket(mut ws: WebSocketConnection) -> ignitia::Result<()> {
-    // The connection is already established at this point
-    println!("New WebSocket connection established");
+async fn handle_websocket(mut ws: WebSocketConnection) -> Response {
+    // 1. Connection established (after HTTP upgrade)
+    tracing::info!("WebSocket connected");
 
-    // Send welcome message
-    ws.send_text("Connected successfully!").await?;
+    // 2. Send welcome message
+    ws.send_text("Welcome!").await.ok();
 
-    // Handle messages...
-    Ok(())
-}
-```
-
-### Ping/Pong Handling
-
-Ignitia automatically handles ping/pong frames for connection health:
-
-```rust
-async fn handle_websocket(mut ws: WebSocketConnection) -> ignitia::Result<()> {
-    while let Some(message) = ws.recv().await {
-        match message {
+    // 3. Message loop
+    while let Some(msg) = ws.recv().await {
+        match msg {
             Message::Text(text) => {
-                ws.send_text(format!("Echo: {}", text)).await?;
-            }
-            Message::Ping(data) => {
-                // Automatically handled, but you can add custom logic
-                println!("Received ping with {} bytes", data.len());
-            }
-            Message::Pong(data) => {
-                println!("Received pong with {} bytes", data.len());
+                // Process message
             }
             Message::Close(_) => {
-                println!("Connection closed by client");
+                // 4. Connection closing
+                tracing::info!("Client closed connection");
                 break;
             }
             _ => {}
         }
     }
-    Ok(())
+
+    // 5. Cleanup and return response
+    tracing::info!("WebSocket handler completed");
+    Response::ok()
 }
 ```
 
-### Manual Ping/Pong
+### Heartbeat / Keep-Alive
 
 ```rust
 use tokio::time::{interval, Duration};
 
-async fn websocket_with_heartbeat(mut ws: WebSocketConnection) -> ignitia::Result<()> {
+async fn websocket_with_heartbeat(mut ws: WebSocketConnection) -> Response {
     let mut heartbeat = interval(Duration::from_secs(30));
 
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
                 // Send ping every 30 seconds
-                ws.ping("heartbeat").await?;
+                if ws.send_ping(b"heartbeat").await.is_err() {
+                    break;
+                }
             }
 
             message = ws.recv() => {
                 if let Some(msg) = message {
                     match msg {
                         Message::Text(text) => {
-                            ws.send_text(format!("Got: {}", text)).await?;
+                            ws.send_text(format!("Got: {}", text)).await.ok();
+                        }
+                        Message::Pong(_) => {
+                            tracing::debug!("Heartbeat acknowledged");
                         }
                         Message::Close(_) => break,
                         _ => {}
@@ -323,16 +536,17 @@ async fn websocket_with_heartbeat(mut ws: WebSocketConnection) -> ignitia::Resul
         }
     }
 
-    Ok(())
+    Response::ok()
 }
 ```
 
 ### Graceful Shutdown
 
 ```rust
-async fn handle_websocket(mut ws: WebSocketConnection) -> ignitia::Result<()> {
-    // Set up graceful shutdown
-    let shutdown_signal = tokio::signal::ctrl_c();
+async fn handle_websocket(mut ws: WebSocketConnection) -> Response {
+    let shutdown = tokio::signal::ctrl_c();
+
+    tokio::pin!(shutdown);
 
     loop {
         tokio::select! {
@@ -344,96 +558,89 @@ async fn handle_websocket(mut ws: WebSocketConnection) -> ignitia::Result<()> {
                 }
             }
 
-            _ = shutdown_signal => {
-                println!("Shutting down gracefully...");
-                ws.close_with_reason(1001, "Server shutdown").await?;
+            _ = &mut shutdown => {
+                tracing::info!("Shutting down gracefully...");
+                ws.close(Some(CloseFrame {
+                    code: 1001,
+                    reason: "Server shutdown".into()
+                })).await.ok();
                 break;
             }
         }
     }
 
-    Ok(())
+    Response::ok()
 }
 ```
 
 ## Advanced Features
 
-### Connection Pooling and Broadcasting
+### Connection Pool and Broadcasting
 
 ```rust
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
 
-type ConnectionPool = Arc<Mutex<HashMap<String, WebSocketConnection>>>;
-
-struct ChatServer {
-    connections: ConnectionPool,
+#[derive(Clone)]
+struct ChatRoom {
+    connections: Arc<Mutex<HashMap<String, WebSocketConnection>>>,
+    broadcast_tx: broadcast::Sender<String>,
 }
 
-impl ChatServer {
+impl ChatRoom {
     fn new() -> Self {
+        let (tx, _) = broadcast::channel(100);
         Self {
             connections: Arc::new(Mutex::new(HashMap::new())),
+            broadcast_tx: tx,
         }
-    }
-
-    async fn handle_connection(&self, ws: WebSocketConnection) -> ignitia::Result<()> {
-        let id = Uuid::new_v4().to_string();
-
-        // Add connection to pool
-        {
-            let mut connections = self.connections.lock().await;
-            connections.insert(id.clone(), ws.clone());
-        }
-
-        // Handle messages
-        while let Some(message) = ws.recv().await {
-            if let Message::Text(text) = message {
-                self.broadcast_message(&text, &id).await?;
-            }
-        }
-
-        // Remove connection from pool
-        {
-            let mut connections = self.connections.lock().await;
-            connections.remove(&id);
-        }
-
-        Ok(())
-    }
-
-    async fn broadcast_message(&self, message: &str, sender_id: &str) -> ignitia::Result<()> {
-        let connections = self.connections.lock().await;
-        let broadcast_msg = format!("[{}]: {}", sender_id, message);
-
-        for (id, connection) in connections.iter() {
-            if id != sender_id {
-                let _ = connection.send_text(broadcast_msg.clone()).await;
-            }
-        }
-
-        Ok(())
     }
 }
 
-// Usage in router
-let chat_server = Arc::new(ChatServer::new());
+async fn handle_chat(
+    State(room): State<ChatRoom>,
+    mut ws: WebSocketConnection
+) -> Response {
+    let id = Uuid::new_v4().to_string();
 
-let app = Router::new()
-    .websocket("/chat", {
-        let server = Arc::clone(&chat_server);
-        move |ws| {
-            let server = Arc::clone(&server);
-            async move {
-                server.handle_connection(ws).await
-            }
+    // Add connection to pool
+    {
+        let mut connections = room.connections.lock().await;
+        connections.insert(id.clone(), ws.clone());
+    }
+
+    // Subscribe to broadcasts
+    let mut rx = room.broadcast_tx.subscribe();
+
+    // Spawn broadcast listener
+    let ws_clone = ws.clone();
+    tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            let _ = ws_clone.send_text(msg).await;
         }
     });
+
+    // Handle incoming messages
+    while let Some(msg) = ws.recv().await {
+        if let Message::Text(text) = msg {
+            let broadcast_msg = format!("[{}]: {}", id, text);
+            let _ = room.broadcast_tx.send(broadcast_msg);
+        }
+    }
+
+    // Remove connection
+    {
+        let mut connections = room.connections.lock().await;
+        connections.remove(&id);
+    }
+
+    Response::ok()
+}
 ```
 
-### Rate Limiting WebSocket Messages
+### Rate Limiting
 
 ```rust
 use tokio::time::{Duration, Instant};
@@ -457,7 +664,7 @@ impl RateLimiter {
     fn is_allowed(&mut self) -> bool {
         let now = Instant::now();
 
-        // Remove old requests outside the window
+        // Remove old requests
         while let Some(&front) = self.requests.front() {
             if now.duration_since(front) > self.window {
                 self.requests.pop_front();
@@ -475,119 +682,64 @@ impl RateLimiter {
     }
 }
 
-async fn rate_limited_websocket(mut ws: WebSocketConnection) -> ignitia::Result<()> {
-    let mut rate_limiter = RateLimiter::new(10, Duration::from_secs(60)); // 10 req/min
+async fn rate_limited_websocket(mut ws: WebSocketConnection) -> Response {
+    let mut limiter = RateLimiter::new(10, Duration::from_secs(60)); // 10/min
 
-    while let Some(message) = ws.recv().await {
-        if !rate_limiter.is_allowed() {
-            ws.send_text("Rate limit exceeded. Please slow down.").await?;
+    while let Some(msg) = ws.recv().await {
+        if !limiter.is_allowed() {
+            ws.send_text("Rate limit exceeded").await.ok();
             continue;
         }
 
         // Process message...
-        match message {
-            Message::Text(text) => {
-                ws.send_text(format!("Processed: {}", text)).await?;
-            }
-            _ => {}
-        }
     }
 
-    Ok(())
+    Response::ok()
 }
 ```
 
 ## Error Handling
 
-### Connection Errors
+### Robust Error Handling
 
 ```rust
-use ignitia::websocket::{WebSocketConnection, Message};
-
-async fn robust_websocket_handler(mut ws: WebSocketConnection) -> ignitia::Result<()> {
-    loop {
-        match ws.recv_timeout(Duration::from_secs(30)).await {
-            Some(message) => {
-                match message {
-                    Message::Text(text) => {
-                        if let Err(e) = process_message(&text).await {
-                            eprintln!("Error processing message: {}", e);
-                            ws.send_text("Error processing your message").await?;
-                        }
-                    }
-                    Message::Close(frame) => {
-                        if let Some(frame) = frame {
-                            println!("Connection closed: {} - {}", frame.code, frame.reason);
-                        }
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            None => {
-                // Timeout - connection might be dead
-                println!("No message received within timeout, checking connection...");
-                if let Err(_) = ws.ping("keepalive").await {
-                    println!("Connection lost");
-                    break;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn process_message(text: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // Your message processing logic
-    Ok(())
-}
-```
-
-### Error Recovery
-
-```rust
-async fn resilient_websocket(mut ws: WebSocketConnection) -> ignitia::Result<()> {
+async fn robust_handler(mut ws: WebSocketConnection) -> Response {
     let mut error_count = 0;
     const MAX_ERRORS: usize = 5;
 
-    while let Some(message) = ws.recv().await {
-        match handle_message(&mut ws, message).await {
+    while let Some(msg) = ws.recv().await {
+        match process_message(&mut ws, msg).await {
             Ok(_) => {
-                error_count = 0; // Reset on successful processing
+                error_count = 0; // Reset on success
             }
             Err(e) => {
                 error_count += 1;
-                eprintln!("Error handling message ({}): {}", error_count, e);
+                tracing::error!("Error ({}): {}", error_count, e);
 
                 if error_count >= MAX_ERRORS {
-                    ws.close_with_reason(1011, "Too many errors").await?;
-                    break;
+                    ws.close(Some(CloseFrame {
+                        code: 1011,
+                        reason: "Too many errors".into()
+                    })).await.ok();
+                    return Response::internal_error();
                 }
 
-                // Send error response
-                ws.send_text(format!("Error: {}", e)).await?;
+                ws.send_text(format!("Error: {}", e)).await.ok();
             }
         }
     }
 
-    Ok(())
+    Response::ok()
 }
 
-async fn handle_message(
+async fn process_message(
     ws: &mut WebSocketConnection,
-    message: Message
+    msg: Message
 ) -> Result<(), Box<dyn std::error::Error>> {
-    match message {
+    match msg {
         Message::Text(text) => {
-            // Process text message
-            let result = some_processing_function(&text).await?;
+            let result = some_processing(&text).await?;
             ws.send_text(result).await?;
-        }
-        Message::Binary(data) => {
-            // Process binary data
-            let processed = process_binary(&data).await?;
-            ws.send_bytes(processed).await?;
         }
         _ => {}
     }
@@ -597,329 +749,196 @@ async fn handle_message(
 
 ## Performance Considerations
 
-### Batch Processing for High Throughput
+### Batch Processing
 
 ```rust
 use tokio::time::{timeout, Duration};
 
-async fn high_throughput_websocket(mut ws: WebSocketConnection) -> ignitia::Result<()> {
-    let mut message_buffer = Vec::new();
+async fn high_throughput_handler(mut ws: WebSocketConnection) -> Response {
+    let mut buffer = Vec::new();
     const BATCH_SIZE: usize = 100;
-    const BATCH_TIMEOUT: Duration = Duration::from_millis(50);
+    const TIMEOUT: Duration = Duration::from_millis(50);
 
     loop {
-        match timeout(BATCH_TIMEOUT, ws.recv()).await {
-            Ok(Some(message)) => {
-                message_buffer.push(message);
+        match timeout(TIMEOUT, ws.recv()).await {
+            Ok(Some(msg)) => {
+                buffer.push(msg);
 
-                if message_buffer.len() >= BATCH_SIZE {
-                    process_message_batch(&mut ws, &mut message_buffer).await?;
+                if buffer.len() >= BATCH_SIZE {
+                    process_batch(&mut ws, &mut buffer).await;
                 }
             }
-            Ok(None) => break, // Connection closed
+            Ok(None) => break,
             Err(_) => {
-                // Timeout - process accumulated messages
-                if !message_buffer.is_empty() {
-                    process_message_batch(&mut ws, &mut message_buffer).await?;
+                if !buffer.is_empty() {
+                    process_batch(&mut ws, &mut buffer).await;
                 }
             }
         }
     }
 
-    Ok(())
+    Response::ok()
 }
 
-async fn process_message_batch(
-    ws: &mut WebSocketConnection,
-    messages: &mut Vec<Message>
-) -> ignitia::Result<()> {
-    // Process all messages in batch
-    let responses = messages
-        .drain(..)
-        .map(|msg| process_single_message(msg))
-        .collect::<Vec<_>>();
-
-    // Send responses in batch
-    let response_messages: Vec<Message> = responses
-        .into_iter()
-        .filter_map(|r| r.ok())
-        .collect();
-
-    if !response_messages.is_empty() {
-        ws.send_batch(response_messages).await?;
-    }
-
-    Ok(())
-}
-
-fn process_single_message(message: Message) -> Result<Message, Box<dyn std::error::Error>> {
-    match message {
-        Message::Text(text) => {
-            let processed = text.to_uppercase();
-            Ok(Message::Text(processed))
-        }
-        _ => Err("Unsupported message type".into())
+async fn process_batch(ws: &mut WebSocketConnection, msgs: &mut Vec<Message>) {
+    for msg in msgs.drain(..) {
+        // Process message...
     }
 }
 ```
 
-### Memory Optimization
+## Security
+
+### TLS/SSL Configuration
 
 ```rust
-async fn memory_efficient_websocket(mut ws: WebSocketConnection) -> ignitia::Result<()> {
-    // Pre-allocate buffers to avoid frequent allocations
-    let mut response_buffer = String::with_capacity(1024);
+// Development (self-signed certificate)
+let server = Server::new(router, addr)
+    .with_self_signed_cert("localhost")?;
 
-    while let Some(message) = ws.recv().await {
-        match message {
-            Message::Text(text) => {
-                response_buffer.clear();
+// Production (proper certificates)
+let server = Server::new(router, addr)
+    .with_server_config(ServerConfig {
+        tls: Some(TlsConfig {
+            cert: std::fs::read("cert.pem")?,
+            key: std::fs::read("key.pem")?,
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+```
 
-                // Process message without creating new strings
-                response_buffer.push_str("Echo: ");
-                response_buffer.push_str(&text);
+### Authentication Example
 
-                ws.send_text(response_buffer.clone()).await?;
-            }
-            Message::Close(_) => break,
-            _ => {}
-        }
+```rust
+async fn authenticated_websocket(
+    Query(query): Query<HashMap<String, String>>,
+    State(state): State<AppState>,
+    mut ws: WebSocketConnection
+) -> Response {
+    // Validate token from query
+    let token = match query.get("token") {
+        Some(t) => t,
+        None => return Response::unauthorized("Token required"),
+    };
+
+    if !state.validate_token(token).await {
+        return Response::unauthorized("Invalid token");
     }
 
-    Ok(())
+    // Token valid - proceed with WebSocket
+    ws.send_text("Authenticated successfully!").await.ok();
+
+    while let Some(msg) = ws.recv().await {
+        // Handle authenticated messages...
+    }
+
+    Response::ok()
 }
 ```
 
 ## Examples
 
-### Real-Time Chat Application
+### Complete Chat Application
 
 ```rust
-use ignitia::{Router, Server, websocket::WebSocketConnection};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use ignitia::prelude::*;
+use serde::{Serialize, Deserialize};
 use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast};
+use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct ChatMessage {
     user: String,
     message: String,
-    timestamp: u64,
 }
 
-struct ChatRoom {
-    connections: Arc<Mutex<HashMap<String, WebSocketConnection>>>,
+#[derive(Clone)]
+struct ChatState {
+    users: Arc<Mutex<HashMap<String, WebSocketConnection>>>,
     broadcast: broadcast::Sender<ChatMessage>,
 }
 
-impl ChatRoom {
-    fn new() -> Self {
-        let (broadcast, _) = broadcast::channel(100);
-        Self {
-            connections: Arc::new(Mutex::new(HashMap::new())),
-            broadcast,
+async fn handle_chat(
+    State(state): State<ChatState>,
+    Path(username): Path<String>,
+    mut ws: WebSocketConnection
+) -> Response {
+    // Add user
+    {
+        let mut users = state.users.lock().await;
+        users.insert(username.clone(), ws.clone());
+    }
+
+    // Subscribe to broadcasts
+    let mut rx = state.broadcast.subscribe();
+    let ws_clone = ws.clone();
+
+    tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            ws_clone.send_json(&msg).await.ok();
+        }
+    });
+
+    // Handle messages
+    while let Some(msg) = ws.recv().await {
+        if let Message::Text(text) = msg {
+            let chat_msg = ChatMessage {
+                user: username.clone(),
+                message: text,
+            };
+            state.broadcast.send(chat_msg).ok();
         }
     }
 
-    async fn handle_user(&self, ws: WebSocketConnection, user_id: String) -> ignitia::Result<()> {
-        // Add user to room
-        {
-            let mut connections = self.connections.lock().await;
-            connections.insert(user_id.clone(), ws.clone());
-        }
-
-        // Subscribe to broadcasts
-        let mut receiver = self.broadcast.subscribe();
-
-        // Spawn broadcast listener
-        let ws_clone = ws.clone();
-        tokio::spawn(async move {
-            while let Ok(message) = receiver.recv().await {
-                let _ = ws_clone.send_json(&message).await;
-            }
-        });
-
-        // Handle incoming messages
-        while let Some(message) = ws.recv().await {
-            if let Message::Text(text) = message {
-                if let Ok(chat_msg) = serde_json::from_str::<ChatMessage>(&text) {
-                    // Broadcast to all users
-                    let _ = self.broadcast.send(chat_msg);
-                }
-            }
-        }
-
-        // Remove user from room
-        {
-            let mut connections = self.connections.lock().await;
-            connections.remove(&user_id);
-        }
-
-        Ok(())
+    // Remove user
+    {
+        let mut users = state.users.lock().await;
+        users.remove(&username);
     }
+
+    Response::ok()
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let chat_room = Arc::new(ChatRoom::new());
+async fn main() -> Result<()> {
+    let (broadcast_tx, _) = broadcast::channel(100);
 
-    let app = Router::new()
-        .websocket("/chat/:user_id", {
-            let room = Arc::clone(&chat_room);
-            move |ws: WebSocketConnection, path: ignitia::Path<String>| {
-                let room = Arc::clone(&room);
-                async move {
-                    room.handle_user(ws, path.into_inner()).await
-                }
-            }
-        });
+    let state = ChatState {
+        users: Arc::new(Mutex::new(HashMap::new())),
+        broadcast: broadcast_tx,
+    };
 
-    let server = Server::new(app, "127.0.0.1:3000".parse()?);
+    let router = Router::new()
+        .state(state)
+        .websocket("/chat/{username}", handle_chat);
+
+    let server = Server::new(router, "127.0.0.1:3000".parse()?);
     server.ignitia().await
 }
 ```
 
-### WebSocket with Authentication
-
-```rust
-use ignitia::{Router, middleware::AuthMiddleware, websocket::WebSocketConnection};
-
-async fn authenticated_websocket(
-    ws: WebSocketConnection,
-    auth: ignitia::Extension<AuthInfo>
-) -> ignitia::Result<()> {
-    let user = auth.user_id;
-    println!("Authenticated user {} connected", user);
-
-    // Send personalized welcome
-    ws.send_json(&serde_json::json!({
-        "type": "welcome",
-        "user_id": user,
-        "message": "Welcome to the authenticated channel!"
-    })).await?;
-
-    while let Some(message) = ws.recv().await {
-        // Handle authenticated user messages
-        match message {
-            Message::Text(text) => {
-                // Process message with user context
-                let response = process_authenticated_message(&user, &text).await?;
-                ws.send_text(response).await?;
-            }
-            Message::Close(_) => break,
-            _ => {}
-        }
-    }
-
-    Ok(())
-}
-
-#[derive(Clone)]
-struct AuthInfo {
-    user_id: String,
-    permissions: Vec<String>,
-}
-
-let app = Router::new()
-    .middleware(AuthMiddleware::new("secret-token"))
-    .websocket("/secure-chat", authenticated_websocket);
-```
-
-### Game Server Example
-
-```rust
-use ignitia::websocket::{WebSocketConnection, Message};
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "type")]
-enum GameMessage {
-    Join { player_name: String },
-    Move { x: i32, y: i32 },
-    Leave,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "type")]
-enum GameResponse {
-    Joined { player_id: u32, game_state: String },
-    MoveResult { success: bool, new_state: String },
-    Error { message: String },
-}
-
-async fn game_websocket(mut ws: WebSocketConnection) -> ignitia::Result<()> {
-    let mut player_id: Option<u32> = None;
-
-    while let Some(message) = ws.recv().await {
-        if let Message::Text(text) = message {
-            match serde_json::from_str::<GameMessage>(&text) {
-                Ok(game_msg) => match game_msg {
-                    GameMessage::Join { player_name } => {
-                        let id = create_player(&player_name).await;
-                        player_id = Some(id);
-
-                        ws.send_json(&GameResponse::Joined {
-                            player_id: id,
-                            game_state: get_game_state().await,
-                        }).await?;
-                    }
-
-                    GameMessage::Move { x, y } => {
-                        if let Some(id) = player_id {
-                            let success = make_move(id, x, y).await;
-                            ws.send_json(&GameResponse::MoveResult {
-                                success,
-                                new_state: get_game_state().await,
-                            }).await?;
-                        }
-                    }
-
-                    GameMessage::Leave => {
-                        if let Some(id) = player_id {
-                            remove_player(id).await;
-                        }
-                        break;
-                    }
-                }
-
-                Err(e) => {
-                    ws.send_json(&GameResponse::Error {
-                        message: format!("Invalid message: {}", e),
-                    }).await?;
-                }
-            }
-        }
-    }
-
-    // Cleanup on disconnect
-    if let Some(id) = player_id {
-        remove_player(id).await;
-    }
-
-    Ok(())
-}
-
-// Mock game functions
-async fn create_player(name: &str) -> u32 { 1 }
-async fn get_game_state() -> String { "game_state".to_string() }
-async fn make_move(player_id: u32, x: i32, y: i32) -> bool { true }
-async fn remove_player(player_id: u32) {}
-```
-
-***
-
 ## Best Practices
 
-1. **Always handle connection closure gracefully**
-2. **Implement proper error recovery mechanisms**
-3. **Use appropriate handler types for your use case**
-4. **Consider rate limiting for public endpoints**
-5. **Validate all incoming messages**
-6. **Use structured logging for debugging**
-7. **Implement heartbeat/ping mechanisms for long-lived connections**
-8. **Consider message queuing for high-throughput scenarios**
-9. **Use JSON for structured data exchange**
-10. **Implement proper authentication and authorization**
+1. ✅ **Always return IntoResponse types** - Use `Response::ok()`, `String`, `Json<T>`, etc.
+2. ✅ **Handle connection closure gracefully** - Check for `Message::Close`
+3. ✅ **Use extractors for request data** - Leverage State, Path, Query, etc.
+4. ✅ **Implement heartbeat mechanisms** - Keep long-lived connections alive
+5. ✅ **Validate all incoming messages** - Don't trust client input
+6. ✅ **Use structured logging** - Log connection lifecycle events
+7. ✅ **Implement rate limiting** - Prevent abuse on public endpoints
+8. ✅ **Use TLS in production** - Always use `wss://` for security
+9. ✅ **Handle errors robustly** - Implement retry logic and error recovery
+10. ✅ **Consider message batching** - For high-throughput scenarios
 
-For more examples and advanced patterns, check the [examples directory](../examples/) in the Ignitia repository.
+## Additional Resources
+
+- [RFC 6455 - The WebSocket Protocol](https://datatracker.ietf.org/doc/html/rfc6455)
+- [tokio-tungstenite Documentation](https://docs.rs/tokio-tungstenite)
+- [Ignitia Examples](../examples/)
+- [WebSocket Security Best Practices](https://owasp.org/www-community/vulnerabilities/WebSocket_security)
+
+---
+
+**Note**: This documentation reflects Ignitia v0.2+ with full extractor support and improved WebSocket handling. For older versions, refer to the legacy documentation.

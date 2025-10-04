@@ -1,793 +1,408 @@
-//! # WebSocket Protocol Upgrade Module
+//! WebSocket Protocol Upgrade Implementation
 //!
-//! This module implements the WebSocket protocol upgrade mechanism according to RFC 6455.
-//! It handles the HTTP to WebSocket protocol transition, including request validation,
-//! handshake processing, and connection establishment.
+//! This module handles the WebSocket protocol upgrade handshake as defined in
+//! [RFC 6455](https://datatracker.ietf.org/doc/html/rfc6455) for HTTP/1.1.
 //!
-//! ## Protocol Overview
+//! # WebSocket Protocol Overview
 //!
-//! The WebSocket protocol upgrade follows a specific handshake process:
+//! The WebSocket protocol enables bidirectional, full-duplex communication between
+//! a client and server over a single TCP connection. It starts as an HTTP/1.1
+//! upgrade request and then switches to the WebSocket protocol.
 //!
-//! 1. **Client Request**: The client sends an HTTP GET request with specific headers
-//! 2. **Server Validation**: The server validates the upgrade request headers
-//! 3. **Key Generation**: The server generates a WebSocket accept key
-//! 4. **Response**: The server responds with HTTP 101 Switching Protocols
-//! 5. **Connection**: The connection is upgraded to WebSocket protocol
+//! # Handshake Process
 //!
-//! ## RFC 6455 Compliance
+//! 1. **Client sends upgrade request**:
+//!    ```
+//!    GET /ws HTTP/1.1
+//!    Host: localhost:8080
+//!    Upgrade: websocket
+//!    Connection: Upgrade
+//!    Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+//!    Sec-WebSocket-Version: 13
+//!    ```
 //!
-//! This implementation strictly follows RFC 6455 WebSocket Protocol Standard:
+//! 2. **Server responds with 101 Switching Protocols**:
+//!    ```
+//!    HTTP/1.1 101 Switching Protocols
+//!    Upgrade: websocket
+//!    Connection: Upgrade
+//!    Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+//!    ```
 //!
-//! - **Version 13**: Only supports WebSocket protocol version 13
-//! - **Header Validation**: Validates all required WebSocket headers
-//! - **Key Algorithm**: Uses the standard SHA-1 + base64 accept key algorithm
-//! - **Status Codes**: Returns appropriate HTTP status codes for different scenarios
+//! 3. **Connection upgraded to WebSocket protocol**
 //!
-//! ## Security Considerations
+//! # Security
 //!
-//! - **Origin Validation**: Can be extended to validate request origins
-//! - **Protocol Negotiation**: Supports subprotocol selection
-//! - **Key Validation**: Validates WebSocket-Key format and presence
-//! - **Header Sanitization**: Safely handles malformed headers
+//! The module implements the required security checks:
+//! - Validates `Sec-WebSocket-Key` header presence
+//! - Generates proper `Sec-WebSocket-Accept` value using SHA-1 and Base64
+//! - Verifies all required headers are present
+//! - Supports TLS encryption (wss://)
 //!
-//! ## Usage Examples
+//! # Secure WebSocket (wss://)
 //!
-//! ### Basic WebSocket Upgrade
+//! When using TLS/HTTPS:
+//! - Initial HTTP/1.1 handshake occurs over TLS
+//! - WebSocket data frames are encrypted via TLS
+//! - All security properties of TLS apply to WebSocket traffic
 //!
-//! ```
-//! use ignitia::websocket::{is_websocket_request, upgrade_connection};
-//! use ignitia::{Request, Response};
+//! # Examples
 //!
-//! async fn handle_request(req: Request) -> Result<Response, Box<dyn std::error::Error>> {
-//!     if is_websocket_request(&req) {
-//!         // This is a WebSocket upgrade request
-//!         match upgrade_connection(req) {
-//!             Ok(response) => {
-//!                 println!("WebSocket upgrade successful");
-//!                 Ok(response)
-//!             }
-//!             Err(e) => {
-//!                 println!("WebSocket upgrade failed: {}", e);
-//!                 Err(Box::new(e))
-//!             }
-//!         }
-//!     } else {
-//!         // Handle as regular HTTP request
-//!         Ok(Response::text("This is not a WebSocket request"))
-//!     }
-//! }
-//! ```
-//!
-//! ### Integration with Router
+//! ## Basic Upgrade Check
 //!
 //! ```
-//! use ignitia::{Router, Server, websocket::*};
-//! use std::net::SocketAddr;
+//! use ignitia::websocket::is_websocket_request;
+//! use ignitia::{Request, Method};
+//! use http::{HeaderMap, HeaderValue, Version};
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let router = Router::new()
-//!         .get("/ws", |req| async move {
-//!             if is_websocket_request(&req) {
-//!                 upgrade_connection(req)
-//!             } else {
-//!                 Ok(Response::text("Please use WebSocket client"))
-//!             }
-//!         });
+//! let mut headers = HeaderMap::new();
+//! headers.insert("upgrade", HeaderValue::from_static("websocket"));
+//! headers.insert("connection", HeaderValue::from_static("Upgrade"));
+//! headers.insert("sec-websocket-key", HeaderValue::from_static("dGhlIHNhbXBsZSBub25jZQ=="));
 //!
-//!     let addr: SocketAddr = "127.0.0.1:8080".parse()?;
-//!     let server = Server::new(router, addr);
-//!     server.ignitia().await
-//! }
+//! let req = Request::new(
+//!     Method::GET,
+//!     "/ws".parse().unwrap(),
+//!     Version::HTTP_11,
+//!     headers,
+//!     bytes::Bytes::new()
+//! );
+//!
+//! assert!(is_websocket_request(&req));
 //! ```
 //!
-//! ### Custom Validation
+//! ## Generate Upgrade Response
 //!
 //! ```
-//! use ignitia::websocket::{is_websocket_request, upgrade_connection};
-//! use ignitia::{Request, Response, Error};
-//!
-//! async fn secure_websocket_upgrade(req: Request) -> Result<Response, Error> {
-//!     // Validate that it's a WebSocket request
-//!     if !is_websocket_request(&req) {
-//!         return Err(Error::BadRequest("Not a WebSocket request".into()));
-//!     }
-//!
-//!     // Additional security checks
-//!     if let Some(origin) = req.header("origin") {
-//!         if !is_allowed_origin(origin) {
-//!             return Err(Error::Forbidden);
-//!         }
-//!     }
-//!
-//!     // Validate authentication
-//!     if let Some(auth) = req.header("authorization") {
-//!         if !validate_auth_token(auth) {
-//!             return Err(Error::Unauthorized);
-//!         }
-//!     }
-//!
-//!     // Proceed with upgrade
-//!     upgrade_connection(req)
-//! }
-//!
-//! fn is_allowed_origin(origin: &str) -> bool {
-//!     // Implement your origin validation logic
-//!     origin == "https://example.com" || origin == "https://app.example.com"
-//! }
-//!
-//! fn validate_auth_token(token: &str) -> bool {
-//!     // Implement your authentication logic
-//!     token.starts_with("Bearer ") && token.len() > 20
-//! }
-//! ```
-//!
-//! ## Performance Optimizations
-//!
-//! - **Pre-computed Headers**: Static headers are pre-computed for faster responses
-//! - **Fast Path Validation**: Early returns for invalid requests
-//! - **Efficient Key Generation**: Optimized SHA-1 computation
-//! - **Minimal Allocations**: Reduces memory allocations during upgrade
-//!
-//! ## Error Handling
-//!
-//! The upgrade process can fail for several reasons:
-//!
-//! - **Missing Headers**: Required WebSocket headers are missing
-//! - **Invalid Version**: Unsupported WebSocket protocol version
-//! - **Malformed Key**: Invalid or missing WebSocket-Key header
-//! - **Protocol Mismatch**: Unsupported subprotocols requested
-//!
-//! ## Testing WebSocket Upgrades
-//!
-//! ```
-//! use ignitia::websocket::{is_websocket_request, upgrade_connection, generate_accept_key};
+//! use ignitia::websocket::upgrade_connection;
 //! use ignitia::Request;
-//! use http::{Method, Uri, Version, HeaderMap, HeaderValue};
-//! use bytes::Bytes;
 //!
-//! #[tokio::test]
-//! async fn test_websocket_upgrade() {
-//!     let mut headers = HeaderMap::new();
-//!     headers.insert("connection", HeaderValue::from_static("Upgrade"));
-//!     headers.insert("upgrade", HeaderValue::from_static("websocket"));
-//!     headers.insert("sec-websocket-version", HeaderValue::from_static("13"));
-//!     headers.insert("sec-websocket-key", HeaderValue::from_static("dGhlIHNhbXBsZSBub25jZQ=="));
+//! let req = create_websocket_request(); // Your request
+//! let response = upgrade_connection(&req).unwrap();
 //!
-//!     let request = Request::new(
-//!         Method::GET,
-//!         Uri::from_static("/ws"),
-//!         Version::HTTP_11,
-//!         headers,
-//!         Bytes::new(),
-//!     );
-//!
-//!     assert!(is_websocket_request(&request));
-//!
-//!     let response = upgrade_connection(request).unwrap();
-//!     assert_eq!(response.status, http::StatusCode::SWITCHING_PROTOCOLS);
-//! }
-//!
-//! #[test]
-//! fn test_accept_key_generation() {
-//!     let key = "dGhlIHNhbXBsZSBub25jZQ==";
-//!     let expected = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-//!     assert_eq!(generate_accept_key(key), expected);
-//! }
+//! assert_eq!(response.status, 101); // Switching Protocols
+//! assert!(response.headers.contains_key("sec-websocket-accept"));
 //! ```
 
 use super::connection::WebSocketConnection;
 use super::handler::WebSocketHandler;
-use crate::{Request, Response, Result};
-use http::StatusCode;
+use crate::{Error, Request, Response, Result};
+use base64::Engine;
+use http::{header, HeaderValue, StatusCode, Version};
 use hyper_util::rt::TokioIo;
 use sha1::{Digest, Sha1};
 use std::sync::Arc;
 
-/// The WebSocket magic string used in accept key generation as defined by RFC 6455.
-///
-/// This constant is appended to the client's WebSocket-Key header value before
-/// computing the SHA-1 hash for the WebSocket-Accept response header.
-const WEBSOCKET_MAGIC_STRING: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const WEBSOCKET_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-// Use once_cell instead of lazy_static since it's already in dependencies
-use once_cell::sync::Lazy;
-
-/// Pre-computed "websocket" header value for performance optimization.
+/// Check if a request is a valid WebSocket upgrade request (HTTP/1.1).
 ///
-/// This static value is used in upgrade responses to avoid repeated string parsing
-/// and allocation during the upgrade process.
-static UPGRADE_HEADER: Lazy<http::HeaderValue> = Lazy::new(|| "websocket".parse().unwrap());
-
-/// Pre-computed "Upgrade" header value for performance optimization.
+/// This function validates that the request contains all required headers
+/// for a WebSocket upgrade as specified in RFC 6455.
 ///
-/// This static value is used in upgrade responses for the Connection header to
-/// avoid repeated string parsing and allocation during the upgrade process.
-static CONNECTION_HEADER: Lazy<http::HeaderValue> = Lazy::new(|| "Upgrade".parse().unwrap());
-
-/// Determines if an incoming HTTP request is a valid WebSocket upgrade request.
+/// # Required Headers
 ///
-/// This function validates all required headers according to RFC 6455 Section 4.2.1.
-/// It performs fast-path validation with early returns for better performance.
-///
-/// ## Required Headers
-///
-/// A valid WebSocket upgrade request must include:
-/// - `Connection: Upgrade` (case-insensitive, may include other tokens)
 /// - `Upgrade: websocket` (case-insensitive)
-/// - `Sec-WebSocket-Version: 13` (exact match)
-/// - `Sec-WebSocket-Key` (any valid base64-encoded 16-byte value)
+/// - `Connection: Upgrade` (must contain "upgrade", case-insensitive)
+/// - `Sec-WebSocket-Key: <base64-encoded-value>`
 ///
-/// ## Parameters
+/// # Parameters
 ///
-/// - `req`: The HTTP request to validate
+/// * `req` - The HTTP request to validate
 ///
-/// ## Returns
+/// # Returns
 ///
-/// - `true` if the request is a valid WebSocket upgrade request
-/// - `false` if any required headers are missing or invalid
+/// `true` if the request is a valid WebSocket upgrade request, `false` otherwise
 ///
-/// ## Performance Notes
-///
-/// - Uses early returns to minimize validation overhead for non-WebSocket requests
-/// - Performs case-insensitive header value comparisons as required by HTTP specs
-/// - Validates headers in order of most likely to fail first
-///
-/// ## Examples
-///
-/// ### Basic Usage
+/// # Examples
 ///
 /// ```
-/// use ignitia::websocket::is_websocket_request;
-/// use ignitia::Request;
-/// use http::{Method, Uri, Version, HeaderMap, HeaderValue};
-/// use bytes::Bytes;
+/// use ignitia::prelude::*;
 ///
-/// // Create a valid WebSocket upgrade request
-/// let mut headers = HeaderMap::new();
-/// headers.insert("connection", HeaderValue::from_static("keep-alive, Upgrade"));
-/// headers.insert("upgrade", HeaderValue::from_static("WebSocket"));
-/// headers.insert("sec-websocket-version", HeaderValue::from_static("13"));
-/// headers.insert("sec-websocket-key", HeaderValue::from_static("dGhlIHNhbXBsZSBub25jZQ=="));
-///
-/// let request = Request::new(
-///     Method::GET,
-///     Uri::from_static("/ws"),
-///     Version::HTTP_11,
-///     headers,
-///     Bytes::new(),
-/// );
-///
-/// assert!(is_websocket_request(&request));
-/// ```
-///
-/// ### Invalid Request Examples
-///
-/// ```
-/// use ignitia::websocket::is_websocket_request;
-/// use ignitia::Request;
-/// use http::{Method, Uri, Version, HeaderMap};
-/// use bytes::Bytes;
-///
-/// // Missing WebSocket headers - regular HTTP request
-/// let request = Request::new(
-///     Method::GET,
-///     Uri::from_static("/api/users"),
-///     Version::HTTP_11,
-///     HeaderMap::new(),
-///     Bytes::new(),
-/// );
-///
-/// assert!(!is_websocket_request(&request));
-/// ```
-///
-/// ### Conditional Handling
-///
-/// ```
-/// use ignitia::websocket::{is_websocket_request, upgrade_connection};
-/// use ignitia::{Request, Response};
-///
-/// async fn handle_request(req: Request) -> Result<Response, Box<dyn std::error::Error>> {
+/// fn handle_request(req: Request) {
 ///     if is_websocket_request(&req) {
 ///         // Handle WebSocket upgrade
-///         Ok(upgrade_connection(req)?)
 ///     } else {
 ///         // Handle regular HTTP request
-///         Ok(Response::text("Hello, HTTP World!"))
 ///     }
 /// }
 /// ```
+///
+/// # Protocol Support
+///
+/// Currently supports **HTTP/1.1 only**. HTTP/2 WebSocket support (RFC 8441)
+/// is not yet implemented due to limitations in the Rust ecosystem.
+///
+/// # Reference
+///
+/// - [RFC 6455 - The WebSocket Protocol](https://datatracker.ietf.org/doc/html/rfc6455)
+/// - [RFC 6455 Section 4.1 - Client Requirements](https://datatracker.ietf.org/doc/html/rfc6455#section-4.1)
 pub fn is_websocket_request(req: &Request) -> bool {
-    // Fast path checks with early returns for performance
-
-    // Check Connection header - must contain "upgrade" (case-insensitive)
-    let connection = match req.header("connection") {
-        Some(c) => c.to_lowercase(),
-        None => return false,
-    };
-
-    // Check Upgrade header - must contain "websocket" (case-insensitive)
-    let upgrade = match req.header("upgrade") {
-        Some(u) => u.to_lowercase(),
-        None => return false,
-    };
-
-    // Check WebSocket version - must be exactly "13"
-    let websocket_version = req.header("sec-websocket-version").unwrap_or("");
-
-    // Check for WebSocket key presence
-    let has_key = req.header("sec-websocket-key").is_some();
-
-    // All conditions must be met for a valid WebSocket upgrade request
-    connection.contains("upgrade")
-        && upgrade.contains("websocket")
-        && websocket_version == "13"
-        && has_key
+    req.version == Version::HTTP_11
+        && req
+            .headers
+            .get(header::UPGRADE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.eq_ignore_ascii_case("websocket"))
+            .unwrap_or(false)
+        && req
+            .headers
+            .get(header::CONNECTION)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_lowercase().contains("upgrade"))
+            .unwrap_or(false)
+        && req.headers.contains_key(header::SEC_WEBSOCKET_KEY)
 }
 
-/// Upgrades an HTTP request to a WebSocket connection.
+/// Upgrade an HTTP/1.1 connection to WebSocket protocol.
 ///
-/// This function performs the server-side WebSocket handshake by generating the
-/// appropriate HTTP 101 Switching Protocols response with required headers.
-/// The response follows RFC 6455 Section 4.2.2 specifications.
+/// This function generates the appropriate HTTP response to complete the
+/// WebSocket handshake, transitioning from HTTP to WebSocket protocol.
 ///
-/// ## WebSocket Handshake Process
+/// # Parameters
 ///
-/// 1. **Extract WebSocket-Key**: Gets the client's WebSocket-Key header
-/// 2. **Generate Accept Key**: Computes WebSocket-Accept using SHA-1 + base64
-/// 3. **Create Response**: Builds HTTP 101 response with required headers
-/// 4. **Protocol Negotiation**: Handles optional subprotocol selection
+/// * `req` - The HTTP request initiating the WebSocket upgrade
 ///
-/// ## Parameters
+/// # Returns
 ///
-/// - `req`: The validated WebSocket upgrade request
+/// - `Ok(Response)` - A 101 Switching Protocols response with proper headers
+/// - `Err(Error)` - If the request is invalid or missing required headers
 ///
-/// ## Returns
-///
-/// - `Ok(Response)`: HTTP 101 Switching Protocols response on success
-/// - `Err(Error)`: Error if the request is invalid or missing required headers
-///
-/// ## Response Headers
+/// # Response Headers
 ///
 /// The generated response includes:
 /// - `Status: 101 Switching Protocols`
 /// - `Upgrade: websocket`
 /// - `Connection: Upgrade`
-/// - `Sec-WebSocket-Accept: <computed-accept-key>`
-/// - `Sec-WebSocket-Protocol: <selected-protocol>` (if requested)
+/// - `Sec-WebSocket-Accept: <computed-value>`
+/// - `Sec-WebSocket-Protocol: <selected-protocol>` (if negotiated)
 ///
-/// ## Error Conditions
+/// # Protocol Negotiation
 ///
-/// - **Missing WebSocket-Key**: Returns `BadRequest` if Sec-WebSocket-Key header is absent
-/// - **Invalid Key Format**: Returns `BadRequest` if the key is malformed
-/// - **Header Generation Failure**: Returns `Internal` if response headers cannot be created
+/// If the client sends `Sec-WebSocket-Protocol` header with a list of
+/// subprotocols, the server selects the first one and includes it in
+/// the response.
 ///
-/// ## Examples
+/// # Errors
 ///
-/// ### Basic Upgrade
+/// Returns an error if:
+/// - The request is not a valid WebSocket upgrade request
+/// - `Sec-WebSocket-Key` header is missing
+/// - Required headers are malformed
 ///
-/// ```
-/// use ignitia::websocket::{is_websocket_request, upgrade_connection};
-/// use ignitia::{Request, Response};
-/// use http::StatusCode;
+/// # Examples
 ///
-/// async fn websocket_endpoint(req: Request) -> Result<Response, ignitia::Error> {
-///     // Validate the request first
-///     if !is_websocket_request(&req) {
-///         return Err(ignitia::Error::BadRequest(
-///             "Invalid WebSocket upgrade request".into()
-///         ));
-///     }
-///
-///     // Perform the upgrade
-///     let response = upgrade_connection(req)?;
-///
-///     // Verify the response status
-///     assert_eq!(response.status, StatusCode::SWITCHING_PROTOCOLS);
-///
-///     Ok(response)
-/// }
-/// ```
-///
-/// ### With Protocol Negotiation
+/// ## Basic Upgrade
 ///
 /// ```
-/// use ignitia::websocket::{upgrade_connection};
-/// use ignitia::Request;
-/// use http::{Method, Uri, Version, HeaderMap, HeaderValue};
-/// use bytes::Bytes;
+/// use ignitia::prelude::*;
 ///
-/// // Client requests multiple protocols
-/// let mut headers = HeaderMap::new();
-/// headers.insert("connection", HeaderValue::from_static("Upgrade"));
-/// headers.insert("upgrade", HeaderValue::from_static("websocket"));
-/// headers.insert("sec-websocket-version", HeaderValue::from_static("13"));
-/// headers.insert("sec-websocket-key", HeaderValue::from_static("dGhlIHNhbXBsZSBub25jZQ=="));
-/// headers.insert("sec-websocket-protocol", HeaderValue::from_static("chat, superchat"));
-///
-/// let request = Request::new(
-///     Method::GET,
-///     Uri::from_static("/ws"),
-///     Version::HTTP_11,
-///     headers,
-///     Bytes::new(),
-/// );
-///
-/// let response = upgrade_connection(request).unwrap();
-///
-/// // Server selects the first supported protocol
-/// let selected_protocol = response.headers.get("sec-websocket-protocol");
-/// println!("Selected protocol: {:?}", selected_protocol);
-/// ```
-///
-/// ### Error Handling
-///
-/// ```
-/// use ignitia::websocket::upgrade_connection;
-/// use ignitia::{Request, Error};
-/// use http::{Method, Uri, Version, HeaderMap};
-/// use bytes::Bytes;
-///
-/// // Request without WebSocket-Key header
-/// let request = Request::new(
-///     Method::GET,
-///     Uri::from_static("/ws"),
-///     Version::HTTP_11,
-///     HeaderMap::new(),
-///     Bytes::new(),
-/// );
-///
-/// match upgrade_connection(request) {
-///     Ok(_) => panic!("Should have failed"),
-///     Err(Error::BadRequest(msg)) => {
-///         assert!(msg.contains("Missing Sec-WebSocket-Key"));
-///     }
-///     Err(e) => panic!("Unexpected error: {}", e),
-/// }
-/// ```
-///
-/// ### Integration with Middleware
-///
-/// ```
-/// use ignitia::websocket::{is_websocket_request, upgrade_connection};
-/// use ignitia::{Request, Response, Error};
-///
-/// async fn auth_websocket_upgrade(req: Request) -> Result<Response, Error> {
-///     // Validate WebSocket request
-///     if !is_websocket_request(&req) {
-///         return Err(Error::BadRequest("Not a WebSocket request".into()));
-///     }
-///
-///     // Check authentication
-///     match req.header("authorization") {
-///         Some(token) if is_valid_token(token) => {
-///             // Proceed with upgrade
-///             upgrade_connection(req)
-///         }
-///         Some(_) => Err(Error::Unauthorized),
-///         None => Err(Error::BadRequest("Missing authorization header".into())),
+/// async fn handle_upgrade(req: Request) -> Result<Response> {
+///     if is_websocket_request(&req) {
+///         let response = upgrade_connection(&req)?;
+///         // Spawn WebSocket handler after sending response
+///         Ok(response)
+///     } else {
+///         Ok(Response::bad_request("Not a WebSocket request"))
 ///     }
 /// }
-///
-/// fn is_valid_token(token: &str) -> bool {
-///     // Implement your token validation logic
-///     token.starts_with("Bearer ") && token.len() > 20
-/// }
 /// ```
-pub fn upgrade_connection(req: Request) -> Result<Response> {
-    // Extract the WebSocket-Key header - this is required for the handshake
-    let websocket_key = req
-        .header("sec-websocket-key")
-        .ok_or_else(|| crate::Error::BadRequest("Missing Sec-WebSocket-Key header".into()))?;
+///
+/// ## With Protocol Negotiation
+///
+/// ```
+/// // Client sends: Sec-WebSocket-Protocol: chat, superchat
+/// // Server responds with: Sec-WebSocket-Protocol: chat
+/// let response = upgrade_connection(&req)?;
+/// ```
+///
+/// # Security Considerations
+///
+/// - Always validate the origin header in production
+/// - Use `wss://` (WebSocket Secure) in production environments
+/// - Implement authentication/authorization before upgrading
+/// - Validate all headers to prevent injection attacks
+///
+/// # Reference
+///
+/// - [RFC 6455 Section 4.2.2 - Sending the Server's Opening Handshake](https://datatracker.ietf.org/doc/html/rfc6455#section-4.2.2)
+pub fn upgrade_connection(req: &Request) -> Result<Response> {
+    // Validate request
+    if !is_websocket_request(req) {
+        return Err(Error::bad_request("Not a valid WebSocket upgrade request"));
+    }
 
-    // Generate the WebSocket-Accept key using the standard algorithm
-    let accept_key = generate_accept_key(websocket_key);
+    // Extract Sec-WebSocket-Key header
+    let key = req
+        .headers
+        .get(header::SEC_WEBSOCKET_KEY)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| Error::bad_request("Missing Sec-WebSocket-Key header"))?;
 
-    // Create the HTTP 101 Switching Protocols response
+    // Generate Sec-WebSocket-Accept value
+    let accept_key = generate_accept_key(key);
+
+    // Build 101 Switching Protocols response
     let mut response = Response::new(StatusCode::SWITCHING_PROTOCOLS);
 
-    // Add required WebSocket upgrade headers using pre-computed values for performance
-    response.headers.insert("upgrade", UPGRADE_HEADER.clone());
+    // Add required headers
     response
         .headers
-        .insert("connection", CONNECTION_HEADER.clone());
+        .insert(header::UPGRADE, HeaderValue::from_static("websocket"));
     response
         .headers
-        .insert("sec-websocket-accept", accept_key.parse().unwrap());
+        .insert(header::CONNECTION, HeaderValue::from_static("Upgrade"));
+    response.headers.insert(
+        header::SEC_WEBSOCKET_ACCEPT,
+        HeaderValue::from_str(&accept_key).unwrap(),
+    );
 
-    // Handle optional protocol negotiation
-    // If the client specified protocols, select the first one (simple strategy)
-    if let Some(protocols) = req.header("sec-websocket-protocol") {
-        if let Some(protocol) = protocols.split(',').find(|p| !p.trim().is_empty()) {
-            if let Ok(protocol_value) = protocol.trim().parse() {
-                response
-                    .headers
-                    .insert("sec-websocket-protocol", protocol_value);
-            }
+    // Handle subprotocol negotiation (optional)
+    if let Some(protocols) = req.headers.get(header::SEC_WEBSOCKET_PROTOCOL) {
+        if let Some(protocol) = protocols.to_str().ok().and_then(|p| p.split(',').next()) {
+            response.headers.insert(
+                header::SEC_WEBSOCKET_PROTOCOL,
+                HeaderValue::from_str(protocol.trim())
+                    .unwrap_or_else(|_| HeaderValue::from_static("")),
+            );
         }
     }
 
+    tracing::debug!("✅ WebSocket upgrade successful - returning 101 Switching Protocols");
     Ok(response)
 }
 
-/// Handles the complete WebSocket upgrade process from HTTP connection to WebSocket.
+/// Handle the WebSocket connection after protocol upgrade.
 ///
-/// This function manages the low-level details of upgrading the underlying HTTP connection
-/// to a WebSocket connection and initializing the WebSocket handler. It's typically called
-/// by the server framework after the HTTP handshake is complete.
+/// This function is called after the HTTP upgrade response has been sent.
+/// It wraps the upgraded connection in a WebSocket stream and passes it
+/// to the user-defined handler.
 ///
-/// ## Upgrade Process
+/// # Parameters
 ///
-/// 1. **Connection Upgrade**: Takes ownership of the upgraded HTTP connection
-/// 2. **WebSocket Initialization**: Creates a WebSocket stream from the raw connection
-/// 3. **Handler Initialization**: Wraps the stream in a WebSocketConnection
-/// 4. **Handler Execution**: Starts the WebSocket message handler
+/// * `req` - The original HTTP request (for context like headers, path, etc.)
+/// * `upgraded` - The upgraded connection from Hyper
+/// * `handler` - The WebSocket handler to process messages
 ///
-/// ## Parameters
+/// # Returns
 ///
-/// - `upgraded`: The upgraded HTTP connection from hyper
-/// - `handler`: The WebSocket handler to manage the connection
+/// A `Response` indicating the result of the WebSocket session. This response
+/// is typically used for logging/metrics and is not sent to the client.
 ///
-/// ## Returns
+/// # Flow
 ///
-/// - `Ok(())`: When the WebSocket connection closes normally
-/// - `Err(Error)`: If an error occurs during connection handling
+/// 1. Wrap upgraded connection with `TokioIo` adapter
+/// 2. Create WebSocket stream using `tokio-tungstenite`
+/// 3. Wrap in `WebSocketConnection` for convenient API
+/// 4. Pass to user handler for message processing
+/// 5. Return handler's response when connection closes
 ///
-/// ## Connection Lifecycle
-///
-/// The function manages the complete WebSocket connection lifecycle:
-/// - Connection establishment and configuration
-/// - Message processing loop
-/// - Error handling and recovery
-/// - Graceful connection cleanup
-///
-/// ## Performance Optimizations
-///
-/// - **Efficient Stream Setup**: Minimal overhead WebSocket initialization
-/// - **Async Processing**: Non-blocking message handling
-/// - **Resource Management**: Proper cleanup of connection resources
-///
-/// ## Examples
-///
-/// ### Basic Handler Integration
+/// # Example Usage (Internal)
 ///
 /// ```
-/// use ignitia::websocket::{handle_websocket_upgrade, WebSocketHandler, WebSocketConnection};
-/// use ignitia::Result;
-/// use std::sync::Arc;
+/// // After sending 101 response
+/// tokio::spawn(async move {
+///     match hyper::upgrade::on(req).await {
+///         Ok(upgraded) => {
+///             let response = handle_websocket_upgrade(
+///                 framework_req,
+///                 upgraded,
+///                 handler
+///             ).await;
 ///
-/// struct EchoHandler;
-///
-/// #[async_trait::async_trait]
-/// impl WebSocketHandler for EchoHandler {
-///     async fn handle_connection(&self, websocket: WebSocketConnection) -> Result<()> {
-///         while let Some(message) = websocket.recv().await {
-///             match message {
-///                 Message::Text(text) => {
-///                     websocket.send_text(format!("Echo: {}", text)).await?;
-///                 }
-///                 Message::Close(_) => break,
-///                 _ => {}
+///             if !response.status.is_success() {
+///                 tracing::error!("WebSocket error: {}", response.status);
 ///             }
 ///         }
-///         Ok(())
-///     }
-/// }
-///
-/// // This would typically be called by the server framework
-/// // let handler = Arc::new(EchoHandler);
-/// // handle_websocket_upgrade(upgraded_connection, handler).await?;
-/// ```
-///
-/// ### Error Recovery
-///
-/// ```
-/// use ignitia::websocket::{handle_websocket_upgrade, WebSocketHandler, WebSocketConnection};
-/// use ignitia::{Result, Error};
-/// use std::sync::Arc;
-///
-/// struct RobustHandler;
-///
-/// #[async_trait::async_trait]
-/// impl WebSocketHandler for RobustHandler {
-///     async fn handle_connection(&self, websocket: WebSocketConnection) -> Result<()> {
-///         loop {
-///             match websocket.recv().await {
-///                 Some(message) => {
-///                     if let Err(e) = self.process_message(&websocket, message).await {
-///                         tracing::error!("Message processing error: {}", e);
-///                         // Continue processing other messages
-///                         continue;
-///                     }
-///                 }
-///                 None => {
-///                     tracing::info!("WebSocket connection closed");
-///                     break;
-///                 }
-///             }
+///         Err(e) => {
+///             tracing::error!("Upgrade failed: {}", e);
 ///         }
-///         Ok(())
 ///     }
-/// }
-///
-/// impl RobustHandler {
-///     async fn process_message(
-///         &self,
-///         websocket: &WebSocketConnection,
-///         message: Message
-///     ) -> Result<()> {
-///         // Implement robust message processing with error handling
-///         match message {
-///             Message::Text(text) => {
-///                 // Process text message
-///                 websocket.send_text(format!("Processed: {}", text)).await?;
-///             }
-///             Message::Binary(data) => {
-///                 // Process binary message
-///                 websocket.send_bytes(data).await?;
-///             }
-///             Message::Close(_) => {
-///                 return Err(Error::Internal("Connection closed".into()));
-///             }
-///             _ => {}
-///         }
-///         Ok(())
-///     }
-/// }
+/// });
 /// ```
 ///
-/// ## Error Handling
+/// # Performance
 ///
-/// The function handles various error conditions:
-/// - **Connection Errors**: Network or protocol-level failures
-/// - **Handler Errors**: Application-level errors from the WebSocket handler
-/// - **Protocol Errors**: WebSocket frame parsing or validation failures
+/// The WebSocket stream is configured for optimal performance:
+/// - Zero-copy message passing where possible
+/// - Efficient framing and masking
+/// - Automatic fragmentation handling
+/// - Configurable buffer sizes
 ///
-/// Errors are logged appropriately and the connection is cleaned up safely.
+/// # Error Handling
+///
+/// Errors during the WebSocket session are returned as `Response` objects
+/// with appropriate status codes. The handler can return error responses
+/// which will close the connection gracefully.
+///
+/// # Reference
+///
+/// - [RFC 6455 Section 5 - Data Framing](https://datatracker.ietf.org/doc/html/rfc6455#section-5)
+/// - [tokio-tungstenite Documentation](https://docs.rs/tokio-tungstenite)
 pub async fn handle_websocket_upgrade(
+    req: Request,
     upgraded: hyper::upgrade::Upgraded,
     handler: Arc<dyn WebSocketHandler>,
-) -> Result<()> {
-    // Wrap the upgraded HTTP connection for use with tokio-tungstenite
+) -> Response {
     let io = TokioIo::new(upgraded);
 
-    // Create a WebSocket stream from the raw socket
-    // This performs the low-level WebSocket protocol setup
     let ws_stream = tokio_tungstenite::WebSocketStream::from_raw_socket(
         io,
         tokio_tungstenite::tungstenite::protocol::Role::Server,
-        None, // No additional configuration needed
+        None,
     )
     .await;
 
-    // Wrap the stream in our WebSocketConnection abstraction
     let connection = WebSocketConnection::new(ws_stream);
 
-    // Hand over control to the application handler
-    // The handler will manage the connection for its entire lifetime
-    handler.handle_connection(connection).await
+    // Pass both request and connection to handler
+    handler.handle(req, connection).await
 }
 
-/// Generates a WebSocket accept key from the client's WebSocket key.
+/// Generate the `Sec-WebSocket-Accept` value from the client's key.
 ///
-/// This function implements the WebSocket accept key algorithm specified in RFC 6455
-/// Section 4.2.2. The algorithm concatenates the client's key with the WebSocket magic
-/// string, computes a SHA-1 hash, and encodes the result in base64.
+/// This function implements the algorithm specified in RFC 6455:
+/// 1. Concatenate the client's `Sec-WebSocket-Key` with the WebSocket GUID
+/// 2. Compute SHA-1 hash of the result
+/// 3. Base64-encode the hash
 ///
-/// ## Algorithm Steps
+/// # Parameters
 ///
-/// 1. **Concatenation**: Append the WebSocket magic string to the client key
-/// 2. **Hashing**: Compute SHA-1 hash of the concatenated string
-/// 3. **Encoding**: Encode the hash bytes as base64
+/// * `key` - The client's `Sec-WebSocket-Key` header value
 ///
-/// ## Parameters
+/// # Returns
 ///
-/// - `websocket_key`: The client's Sec-WebSocket-Key header value
+/// A Base64-encoded string to be sent as `Sec-WebSocket-Accept`
 ///
-/// ## Returns
-///
-/// The computed WebSocket-Accept header value as a base64-encoded string
-///
-/// ## Security Notes
-///
-/// - **One-way Function**: The accept key cannot be reversed to obtain the original key
-/// - **Replay Prevention**: Each key should be unique per connection attempt
-/// - **Validation**: The client will validate this key to confirm the upgrade
-///
-/// ## Performance Optimizations
-///
-/// - **Efficient Hashing**: Uses optimized SHA-1 implementation
-/// - **Single Allocation**: Minimizes memory allocations during computation
-/// - **Fast Base64**: Uses efficient base64 encoding
-///
-/// ## Examples
-///
-/// ### Basic Usage
+/// # Algorithm
 ///
 /// ```
-/// use ignitia::websocket::generate_accept_key;
+/// Sec-WebSocket-Accept = base64(sha1(Sec-WebSocket-Key + GUID))
+/// ```
 ///
+/// where GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+///
+/// # Example
+///
+/// ```
 /// let client_key = "dGhlIHNhbXBsZSBub25jZQ==";
 /// let accept_key = generate_accept_key(client_key);
-///
-/// // The result should match the expected WebSocket accept key
-/// assert_eq!(accept_key, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+/// // accept_key = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
 /// ```
 ///
-/// ### Testing Key Generation
+/// # Security Note
 ///
-/// ```
-/// use ignitia::websocket::generate_accept_key;
+/// This function uses SHA-1, which is cryptographically weak but acceptable
+/// for this specific use case as defined by RFC 6455. The hash is used only
+/// for handshake validation, not for cryptographic security.
 ///
-/// // Test vectors from RFC 6455
-/// let test_cases = vec![
-///     ("dGhlIHNhbXBsZSBub25jZQ==", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
-///     ("AQIDBAUGBwgJCgsMDQ4PEC==", "6+0lRQ4dK0pJkjDKCSbP3TPN6Ns="),
-/// ];
+/// # Reference
 ///
-/// for (input, expected) in test_cases {
-///     let result = generate_accept_key(input);
-///     assert_eq!(result, expected, "Key generation failed for input: {}", input);
-/// }
-/// ```
-///
-/// ### Custom Validation
-///
-/// ```
-/// use ignitia::websocket::generate_accept_key;
-/// use base64;
-///
-/// fn validate_websocket_key_format(key: &str) -> bool {
-///     // WebSocket keys should be 24 characters of base64
-///     if key.len() != 24 {
-///         return false;
-///     }
-///
-///     // Should decode to exactly 16 bytes
-///     match base64::decode(key) {
-///         Ok(bytes) => bytes.len() == 16,
-///         Err(_) => false,
-///     }
-/// }
-///
-/// fn safe_generate_accept_key(websocket_key: &str) -> Result<String, &'static str> {
-///     if !validate_websocket_key_format(websocket_key) {
-///         return Err("Invalid WebSocket key format");
-///     }
-///
-///     Ok(generate_accept_key(websocket_key))
-/// }
-///
-/// // Usage
-/// let key = "dGhlIHNhbXBsZSBub25jZQ==";
-/// match safe_generate_accept_key(key) {
-///     Ok(accept_key) => println!("Accept key: {}", accept_key),
-///     Err(e) => println!("Error: {}", e),
-/// }
-/// ```
-///
-/// ## RFC 6455 Reference
-///
-/// The accept key algorithm is defined in RFC 6455 Section 4.2.2:
-///
-/// ```
-/// To prove that the handshake was received, the server has to prove that it
-/// read the handshake's contents. The server takes the value (as present in
-/// the request) of the |Sec-WebSocket-Key| header field and concatenates this
-/// with the GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11". The server then
-/// takes the SHA-1 hash of this concatenated value and base64-encodes it to
-/// obtain the |Sec-WebSocket-Accept| header field value.
-/// ```
-pub fn generate_accept_key(websocket_key: &str) -> String {
-    // Create a new SHA-1 hasher instance
+/// [RFC 6455 Section 4.2.2](https://datatracker.ietf.org/doc/html/rfc6455#section-4.2.2)
+pub fn generate_accept_key(key: &str) -> String {
     let mut hasher = Sha1::new();
-
-    // Hash the client's WebSocket key
-    hasher.update(websocket_key.as_bytes());
-
-    // Append the WebSocket magic string as specified by RFC 6455
-    hasher.update(WEBSOCKET_MAGIC_STRING.as_bytes());
-
-    // Compute the final hash and encode as base64
-    base64::encode(hasher.finalize())
+    hasher.update(key.as_bytes());
+    hasher.update(WEBSOCKET_GUID.as_bytes());
+    let hash = hasher.finalize();
+    base64::engine::general_purpose::STANDARD.encode(hash)
 }

@@ -1,4 +1,5 @@
 use http::StatusCode;
+use ignitia::middleware::Next;
 use ignitia::{
     Extension, Json, Middleware, Request, Response, ResponseBuilder, Result, Router, Server,
 };
@@ -29,9 +30,9 @@ impl TodoStoreMiddleware {
 
 #[ignitia::async_trait]
 impl Middleware for TodoStoreMiddleware {
-    async fn before(&self, req: &mut Request) -> Result<()> {
+    async fn handle(&self, mut req: Request, next: Next) -> Response {
         req.insert_extension(self.store.clone());
-        Ok(())
+        next.run(req).await
     }
 }
 
@@ -80,7 +81,7 @@ async fn main() -> Result<()> {
 async fn list_todos(Extension(store): Extension<TodoStore>) -> Result<Response> {
     let todos = store.lock().unwrap();
     let todos_vec: Vec<Todo> = todos.values().cloned().collect();
-    Response::json(todos_vec)
+    Ok(Response::json(todos_vec))
 }
 
 // Handler using both Json<T> and Extension extractors

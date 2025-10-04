@@ -83,7 +83,7 @@ async fn get_user_handler(
     let user = UserService::get_user(user_id)?;
 
     // If successful, return JSON response
-    Response::json(&user)
+    Ok(Response::json(&user))
 }
 
 // Handler for creating users with validation
@@ -92,7 +92,7 @@ async fn create_user_handler(Json(req): Json<CreateUserRequest>) -> Result<Respo
 
     let user = UserService::create_user(req)?;
 
-    Response::json(&user)
+    Ok(Response::json(&user))
 }
 
 // Handler that always returns a custom error for demonstration
@@ -118,7 +118,7 @@ async fn manual_error_handler() -> Result<Response> {
         "timestamp": chrono::Utc::now().to_rfc3339()
     });
 
-    Ok(Response::json(error_response)?.with_status(StatusCode::SERVICE_UNAVAILABLE))
+    Ok(Response::json(error_response).with_status(StatusCode::SERVICE_UNAVAILABLE))
 }
 
 // Handler that demonstrates validation errors
@@ -154,7 +154,7 @@ async fn validate_user_handler(Json(req): Json<CreateUserRequest>) -> Result<Res
         email: req.email,
     };
 
-    Response::json(&user)
+    Ok(Response::json(&user))
 }
 
 #[tokio::main]
@@ -164,7 +164,7 @@ async fn main() -> Result<()> {
 
     let router = Router::new()
         // Different error scenarios
-        .get("/users/:id", get_user_handler) // Try /users/1 (success), /users/2 (not found), /users/999 (db error)
+        .get("/users/{id}", get_user_handler) // Try /users/1 (success), /users/2 (not found), /users/999 (db error)
         .post("/users", create_user_handler) // Send JSON with invalid data
         .get("/error-demo", error_demo_handler) // Always returns error
         .get("/manual-error", manual_error_handler) // Custom error response

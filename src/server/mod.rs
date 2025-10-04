@@ -148,10 +148,6 @@ use tracing::{debug, info, warn};
 #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
 use tokio_rustls::TlsAcceptor;
 
-#[cfg(feature = "websocket")]
-#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
-use crate::websocket::upgrade::generate_accept_key;
-
 /// High-performance HTTP/HTTPS server with advanced optimizations
 ///
 /// The `Server` struct is the core component that handles incoming HTTP connections,
@@ -1064,7 +1060,7 @@ async fn handle_connection<I>(
     io: TokioIo<I>,
     router: Arc<Router>,
     config: ServerConfig,
-    addr: SocketAddr,
+    _addr: SocketAddr,
     metrics: Arc<PerformanceMetrics>,
     state: Arc<ServerState>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
@@ -1246,35 +1242,21 @@ async fn handle_request(
 fn is_websocket_upgrade(req: &hyper::Request<hyper::body::Incoming>) -> bool {
     use hyper::header::{CONNECTION, UPGRADE};
 
-    // Fast path checks with early returns
-    let connection_header = match req.headers().get(CONNECTION) {
-        Some(h) => h,
-        None => return false,
-    };
+    let version = req.version();
 
-    let upgrade_header = match req.headers().get(UPGRADE) {
-        Some(h) => h,
-        None => return false,
-    };
+    // HTTP/1.1 WebSocket upgrade
+    if version == http::Version::HTTP_11 {
+        let connection_header = req.headers().get(CONNECTION).and_then(|h| h.to_str().ok());
+        let upgrade_header = req.headers().get(UPGRADE).and_then(|h| h.to_str().ok());
 
-    let connection = match connection_header.to_str() {
-        Ok(c) => c.to_lowercase(),
-        Err(_) => return false,
-    };
+        if let (Some(conn), Some(upgrade)) = (connection_header, upgrade_header) {
+            return conn.to_lowercase().contains("upgrade")
+                && upgrade.to_lowercase().contains("websocket")
+                && req.headers().get("sec-websocket-key").is_some();
+        }
+    }
 
-    let upgrade = match upgrade_header.to_str() {
-        Ok(u) => u.to_lowercase(),
-        Err(_) => return false,
-    };
-
-    connection.contains("upgrade")
-        && upgrade.contains("websocket")
-        && req.headers().get("sec-websocket-key").is_some()
-        && req
-            .headers()
-            .get("sec-websocket-version")
-            .map(|v| v == "13")
-            .unwrap_or(false)
+    false
 }
 
 /// Handle WebSocket upgrade requests
@@ -1284,13 +1266,12 @@ fn is_websocket_upgrade(req: &hyper::Request<hyper::body::Incoming>) -> bool {
 #[cfg(feature = "websocket")]
 async fn handle_websocket_upgrade(
     router: Arc<Router>,
-    req: hyper::Request<hyper::body::Incoming>,
+    hyper_req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<hyper::Response<Full<Bytes>>, hyper::Error> {
-    use hyper::header::SEC_WEBSOCKET_KEY;
-
-    let path = req.uri().path();
+    let path = hyper_req.uri().path().to_string();
     let websocket_handlers = router.get_websocket_handlers();
-    let handler = match websocket_handlers.get(path) {
+
+    let handler = match websocket_handlers.get(&path) {
         Some(handler) => Arc::clone(handler.value()),
         None => {
             debug!("🔍 No WebSocket handler found for path: {}", path);
@@ -1301,53 +1282,68 @@ async fn handle_websocket_upgrade(
         }
     };
 
-    let websocket_key = match req.headers().get(SEC_WEBSOCKET_KEY) {
-        Some(key) => match key.to_str() {
-            Ok(k) => k,
-            Err(_) => {
-                return Ok(hyper::Response::builder()
-                    .status(400)
-                    .body(Full::new(Bytes::from("Invalid Sec-WebSocket-Key")))
-                    .unwrap());
-            }
-        },
-        None => {
+    // Extract metadata WITHOUT consuming body
+    let method = hyper_req.method().clone();
+    let uri = hyper_req.uri().clone();
+    let version = hyper_req.version();
+    let headers = hyper_req.headers().clone();
+
+    // Get router extensions with state
+    let router_extensions = {
+        let inner = router.inner.read();
+        inner.extensions.clone()
+    };
+
+    // Create framework Request with EMPTY body and router extensions
+    let mut framework_req = Request::new(method, uri, version, headers, Bytes::new());
+
+    // Copy router extensions (including State) to request
+    framework_req.extensions = router_extensions;
+
+    // Check if this is a valid WebSocket request
+    if !crate::websocket::is_websocket_request(&framework_req) {
+        debug!("❌ Invalid WebSocket upgrade request");
+        return Ok(hyper::Response::builder()
+            .status(400)
+            .body(Full::new(Bytes::from("Invalid WebSocket upgrade request")))
+            .unwrap());
+    }
+
+    // Generate upgrade response based on protocol
+    let upgrade_response = match crate::websocket::upgrade_connection(&framework_req) {
+        Ok(resp) => resp,
+        Err(e) => {
+            debug!("❌ WebSocket upgrade failed: {}", e);
             return Ok(hyper::Response::builder()
-                .status(400)
-                .body(Full::new(Bytes::from("Missing Sec-WebSocket-Key")))
+                .status(e.status_code())
+                .body(Full::new(Bytes::from(e.to_string())))
                 .unwrap());
         }
     };
 
-    let accept_key = generate_accept_key(websocket_key);
-    let mut response = hyper::Response::builder()
-        .status(101)
-        .header("upgrade", "websocket")
-        .header("connection", "Upgrade")
-        .header("sec-websocket-accept", accept_key);
+    // Build hyper response from framework response
+    let mut response_builder = hyper::Response::builder().status(upgrade_response.status);
 
-    // Handle protocol negotiation efficiently
-    if let Some(protocols) = req.headers().get("sec-websocket-protocol") {
-        if let Some(protocol) = protocols
-            .to_str()
-            .ok()
-            .and_then(|protocols_str| protocols_str.split(',').find(|p| !p.trim().is_empty()))
-        {
-            if let Ok(protocol_value) = protocol.trim().parse::<http::HeaderValue>() {
-                response = response.header("sec-websocket-protocol", protocol_value);
-            }
-        }
+    for (key, value) in upgrade_response.headers.iter() {
+        response_builder = response_builder.header(key, value);
     }
 
-    let response = response.body(Full::new(Bytes::new())).unwrap();
+    let response = response_builder.body(Full::new(Bytes::new())).unwrap();
 
     // Spawn WebSocket handling task
     tokio::spawn(async move {
-        match hyper::upgrade::on(req).await {
+        match hyper::upgrade::on(hyper_req).await {
             Ok(upgraded) => {
-                if let Err(e) = crate::websocket::handle_websocket_upgrade(upgraded, handler).await
-                {
-                    debug!("🔌 WebSocket handler error: {}", e);
+                let response =
+                    crate::websocket::handle_websocket_upgrade(framework_req, upgraded, handler)
+                        .await;
+
+                #[cfg(debug_assertions)]
+                if !response.status.is_success() {
+                    debug!(
+                        "🔌 WebSocket handler returned error status: {}",
+                        response.status
+                    );
                 }
             }
             Err(e) => {
@@ -1408,7 +1404,7 @@ async fn handle_regular_http_request(
         Err(err) => {
             let status = err.status_code();
             let mut res = Response::new(status);
-            res.body = Arc::new(Bytes::from(err.to_string()));
+            res.body = Bytes::from(err.to_string());
             res
         }
     };
@@ -1425,5 +1421,5 @@ async fn handle_regular_http_request(
         builder = builder.header(key, value);
     }
 
-    Ok(builder.body(Full::new((*response.body).clone())).unwrap())
+    Ok(builder.body(Full::new(response.body)).unwrap())
 }

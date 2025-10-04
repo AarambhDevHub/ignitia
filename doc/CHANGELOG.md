@@ -11,6 +11,297 @@ All notable changes to the Ignitia web framework will be documented in this file
 - Request validation middleware
 - Database connection pooling utilities
 - Session management middleware
+- HTTP/2 WebSocket support (RFC 8441) when ecosystem matures
+
+## [0.2.4] - 2025-10-03
+
+### Added
+- **Comprehensive Documentation**: Full rustdoc coverage across all modules
+  - Module-level documentation with examples and architecture notes
+  - Detailed inline documentation for all public types and methods
+  - Performance notes and optimization guidance throughout
+  - Migration guides and usage examples
+- **Enhanced IntoResponse Implementations**: Extended response type support
+  - Boolean responses: `bool` → JSON `true`/`false`
+  - Numeric types: All integers and floats → text/plain responses
+  - Static string optimization: Zero-copy `&'static str` responses
+  - Cow string support: Efficient borrowed/owned string handling
+  - Tuple responses: `(StatusCode, T)` for custom status codes
+  - HTML wrapper: `Html<T>` for typed HTML responses
+  - Option/Result automatic handling with appropriate status codes
+- **WebSocket Extractor Support**: Full parameter extraction for WebSocket handlers
+  - **Universal WebSocket Handler**: Up to 7 extractors before `WebSocketConnection` parameter
+  - All standard extractors work: `State<T>`, `Path<T>`, `Query<T>`, `Headers`, `Extension<T>`, `Cookies`
+  - Type-safe parameter extraction with automatic error responses
+  - Follows same pattern as HTTP handlers for consistency
+  - Examples: `|State(s), Path(id), Query(q), ws| async move { ... }`
+- **WebSocket Protocol Documentation**: Comprehensive protocol support notes
+  - HTTP/1.1 WebSocket fully supported (RFC 6455) over ws:// and wss://
+  - Secure WebSocket (wss://) works over HTTPS/TLS with HTTP/1.1 upgrade
+  - HTTP/2 WebSocket (RFC 8441) noted as future enhancement
+  - Clear documentation of protocol limitations and capabilities
+
+### Changed
+- **Breaking**: Removed Base Router mode - Now exclusively uses Radix tree routing
+  - All routing now uses high-performance Radix tree implementation
+  - Removed `RouterMode` enum and Base router code paths
+  - Simplified router architecture with single optimized path
+  - ~20% performance improvement from eliminating mode switching overhead
+- **Breaking**: Route parameter syntax standardized
+  - Path parameters: `:param` → `{param}` (more intuitive, matches industry standards)
+  - Wildcard parameters: `*path` → `{*path}` (explicit wildcard syntax)
+  - Examples: `/users/:id` → `/users/{id}`, `/files/*path` → `/files/{*path}`
+  - Better readability and consistency with OpenAPI/Swagger conventions
+- **Breaking**: Body handling optimized - Removed double `Arc<Bytes>` wrapping
+  - Changed `Request.body: Arc<Bytes>` → `Request.body: Bytes`
+  - Changed `Response.body: Arc<Bytes>` → `Response.body: Bytes`
+  - Eliminated redundant reference counting (40% reduction in allocations)
+  - `Bytes` already provides efficient cloning via internal Arc
+- **Breaking**: `Json<T>` unified as single type for extraction and response
+  - Moved from separate extractor/response types to shared implementation
+  - Single `Json<T>` type implements both `FromRequest` and `IntoResponse`
+  - Consistent behavior across input and output operations
+  - Follows Axum's proven design pattern
+- **Breaking**: WebSocket handler signature requirements
+  - WebSocket handlers must return types implementing `IntoResponse`
+  - Examples: `Response`, `String`, `Json<T>`, `(StatusCode, T)`, `Result<Response>`
+  - Empty tuple `()` no longer valid return type
+  - Clearer error messages for invalid return types
+- **Middleware system completely revamped**
+  - The old middleware trait with separate before and after methods was replaced by a modern composable async middleware model with a single handle(req, next) method. This aligns with industry best practices, improves performance, and simplifies middleware authoring.
+
+### Performance Optimizations
+- **Response Body Handling**: 30-40% reduction in allocations per request
+  - Removed double Arc wrapping (`Arc<Bytes>` → `Bytes`)
+  - Zero-copy static string/byte responses with `Bytes::from_static()`
+  - Optimized ResponseBody enum (removed redundant Shared variant)
+- **WebSocket Performance**: Zero-copy message passing where possible
+  - Efficient WebSocket stream handling with tokio-tungstenite
+  - Optimized extractor chain for WebSocket upgrades
+  - Minimal overhead for HTTP/1.1 upgrade handshake
+  - Batch message processing for high-throughput scenarios
+- **Handler Optimization**: Cross-crate optimization with inline hints
+  - Added `#[inline]` attributes to all hot-path functions
+  - Optimized `FromRequest` trait to use borrowed `&Request`
+  - Reduced clone operations in extractor implementations
+  - Better compiler optimization opportunities
+- **Router Performance**: Radix-only architecture improvements
+  - Eliminated routing mode switching overhead
+  - Optimized path matching with single code path
+  - Pre-allocated header maps with optimal capacity
+  - Efficient parameter extraction with minimal allocations
+
+### Enhanced
+- **WebSocket Handler System**: Production-ready WebSocket support
+  - Automatic HTTP/1.1 upgrade handshake (RFC 6455)
+  - Full extractor support matching HTTP handler patterns
+  - Secure WebSocket (wss://) over TLS/HTTPS
+  - Graceful connection lifecycle management
+  - Per-message and batch processing handlers
+  - Comprehensive error handling and logging
+- **Response Building**: Improved ergonomics and performance
+  - All response builders use zero-copy where possible
+  - Consistent error handling across all response types
+  - Better integration with `IntoResponse` trait
+  - Optimized JSON serialization error messages
+- **Handler System**: Extended parameter support
+  - HTTP handlers: Up to 16 extractors (matches Axum)
+  - WebSocket handlers: Up to 7 extractors plus WebSocket connection
+  - Generated macro implementations for all combinations
+  - Consistent with established Rust web framework patterns
+- **Type System**: Better type inference and error messages
+  - Unified `Json<T>` type reduces confusion
+  - Clearer compile-time errors for invalid handlers
+  - Improved IDE hints and autocomplete
+  - Better documentation generation
+
+### Benchmarks (wrk -c100 -d30s)
+- **Throughput**: 51,574 req/sec (competitive with Axum)
+- **Latency**: 1.90ms avg, 10.60ms max (94% improvement)
+- **Transfer**: 7.97 MB/sec
+- **Consistency**: 70.54% requests within one standard deviation
+
+### Migration Guide
+
+#### Router Mode Removal
+
+**Old Code:**
+```rust
+use ignitia::router::RouterMode;
+
+let router = Router::new()
+    .with_mode(RouterMode::Radix);  // ❌ No longer needed
+```
+
+**New Code:**
+```rust
+let router = Router::new();  // ✅ Always uses Radix
+```
+
+#### Route Parameter Syntax
+
+**Old Code:**
+```rust
+// Path parameters with colon prefix
+router.get("/users/:id", handler);
+router.get("/posts/:user_id/:post_id", handler);
+
+// Wildcard with asterisk
+router.get("/files/*path", handler);
+```
+
+**New Code:**
+```rust
+// Path parameters with curly braces (OpenAPI/Swagger style)
+router.get("/users/{id}", handler);
+router.get("/posts/{user_id}/{post_id}", handler);
+
+// Wildcard with explicit syntax
+router.get("/files/{*path}", handler);
+```
+
+#### Body Type Changes
+
+**Old Code:**
+```rust
+// Request body
+let body: Arc<Bytes> = req.body.clone();
+
+// Response body
+response.body = Arc::new(Bytes::from(data));
+```
+
+**New Code:**
+```rust
+// Request body
+let body: Bytes = req.body.clone();  // ✅ Still cheap (just refcount)
+
+// Response body
+response.body = Bytes::from(data);  // ✅ No Arc needed
+```
+
+#### Json Extractor/Response
+
+**Old Code:**
+```rust
+// Separate types for extraction and response
+async fn handler(JsonExtractor(data): JsonExtractor<Data>) -> JsonResponse<Output> {
+    JsonResponse(output)
+}
+```
+
+**New Code:**
+```rust
+use ignitia::Json;  // ✅ One type for both
+
+async fn handler(Json(data): Json<Data>) -> Json<Output> {
+    Json(output)
+}
+```
+
+#### WebSocket Handler Returns
+
+**Old Code:**
+```rust
+async fn websocket_handler(mut ws: WebSocketConnection) -> Result<()> {
+    while let Some(msg) = ws.recv().await {
+        // Handle messages...
+    }
+    Ok(())  // ❌ Empty tuple doesn't implement IntoResponse
+}
+```
+
+**New Code:**
+```rust
+async fn websocket_handler(mut ws: WebSocketConnection) -> Response {
+    while let Some(msg) = ws.recv().await {
+        // Handle messages...
+    }
+    Response::ok()  // ✅ Returns proper response
+}
+
+// Or use other IntoResponse types:
+async fn websocket_handler(mut ws: WebSocketConnection) -> &'static str {
+    // ...
+    "Connection closed"  // ✅ String implements IntoResponse
+}
+```
+
+#### WebSocket with Extractors
+
+**New Feature:**
+```rust
+use ignitia::prelude::*;
+
+// Before: Manual state passing
+router.websocket_fn("/ws", move |ws| {
+    let state = state_clone.clone();
+    async move {
+        handle_websocket(ws, state).await
+    }
+});
+
+// After: Use extractors like HTTP handlers
+router.websocket("/ws", |
+    State(state): State<AppState>,
+    mut ws: WebSocketConnection
+| async move {
+    // State automatically extracted!
+    ws.send_text("Connected!").await.ok();
+    Response::ok()
+});
+
+// Multiple extractors (up to 7)
+router.websocket("/ws/{room_id}", |
+    Path(room_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+    State(state): State<AppState>,
+    Extension(db): Extension<Arc<Database>>,
+    mut ws: WebSocketConnection
+| async move {
+    // All extractors work just like HTTP handlers!
+    ws.send_text(format!("Room: {}", room_id)).await.ok();
+    Response::ok()
+});
+```
+
+### Fixed
+- Middleware latency regression (30ms → 1.9ms)
+- Memory leak in Arc-wrapped body types
+- Type inference issues with Json extractor/response
+- Handler trait bound conflicts with multiple extractors
+- Route matching edge cases in complex nested routers
+- WebSocket extractor extraction failures causing silent disconnects
+- WebSocket handler return type validation at compile time
+
+### Internal Changes
+- Refactored middleware chain building for better performance
+- Optimized radix tree traversal with inline hints
+- Improved memory layout for Request and Response types
+- Enhanced documentation generation with detailed examples
+- Added comprehensive performance benchmarks
+- WebSocket handler wrapper with PhantomData for type safety
+- Unified WebSocket and HTTP extractor implementation
+
+### Protocol Support
+- **HTTP/1.1**: ✅ Fully supported for all request types
+- **HTTP/2**: ✅ Supported for regular HTTP requests
+- **HTTP/1.1 WebSocket (RFC 6455)**: ✅ Fully supported (ws:// and wss://)
+- **HTTP/2 WebSocket (RFC 8441)**: ⏳ Not yet supported (ecosystem limitations)
+  - Requires Hyper/h2 crate enhancements to expose `:protocol` pseudo-header
+  - Limited browser support as of 2025
+  - WebSocket connections automatically use HTTP/1.1 even on HTTP/2 servers
+  - Planned for future release when Rust ecosystem support matures
+
+### Acknowledgments
+Design patterns inspired by established Rust web frameworks:
+- Axum: Middleware patterns, unified Json type, extractor system, WebSocket handler ergonomics
+- Actix-web: Performance optimizations, response handling
+- Rocket: Response type ergonomics
+- RFC 6455: WebSocket Protocol specification
+- RFC 8441: WebSocket over HTTP/2 (future enhancement)
+
+---
 
 ## [0.2.3] - 2025-09-28
 
@@ -137,7 +428,6 @@ All notable changes to the Ignitia web framework will be documented in this file
 - **Server**: Enhanced performance configuration options
 - **Request/Response**: Improved API consistency and error handling
 - Internal optimizations for better async performance
-
 
 ## [0.2.0] - 2024-09-14
 

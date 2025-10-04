@@ -1,8 +1,9 @@
 use http::Method;
 use ignitia::handler::extractor::State;
+use ignitia::response::IntoResponse;
 use ignitia::{
-    async_trait, Body, Cookie, Cookies, Error, Extension, LayeredHandler, Middleware, Request,
-    Response, Result, Router, SameSite, Server,
+    middleware::Next, Body, Cookie, Cookies, Error, LayeredHandler, Middleware, Request, Response,
+    Result, Router, SameSite, Server,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -58,26 +59,12 @@ impl UserDB {
     }
 }
 
-// UserDB Extension Middleware - Injects UserDB into requests
-// struct UserDBMiddleware {
-//     user_db: UserDB,
-// }
-
-// impl UserDBMiddleware {
-//     fn new(user_db: UserDB) -> Self {
-//         Self { user_db }
-//     }
-// }
-
-// #[async_trait]
-// impl Middleware for UserDBMiddleware {
-//     async fn before(&self, req: &mut ignitia::Request) -> Result<()> {
-//         req.insert_extension(self.user_db.clone());
-//         Ok(())
-//     }
-// }
+// ============================================================================
+// MIDDLEWARE - Updated with Next Pattern
+// ============================================================================
 
 // Authentication Middleware - Checks if user is logged in
+#[derive(Clone)]
 struct AuthMiddleware {
     protected_paths: Vec<String>,
 }
@@ -103,39 +90,48 @@ impl AuthMiddleware {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Middleware for AuthMiddleware {
-    async fn before(&self, req: &mut ignitia::Request) -> Result<()> {
+    async fn handle(&self, req: Request, next: Next) -> Response {
         let path = req.uri.path();
 
         // Only check auth for protected paths
         if !self.requires_auth(path) {
-            return Ok(());
+            return next.run(req).await;
         }
 
-        // Get UserDB from extensions
-        let user_db = req
-            .get_extension::<UserDB>()
-            .ok_or_else(|| Error::Internal("UserDB extension not found".to_string()))?;
+        // Get UserDB from state/extensions
+        let user_db = match req.get_extension::<UserDB>() {
+            Some(db) => db,
+            None => {
+                return Error::Internal("UserDB extension not found".to_string()).into_response();
+            }
+        };
 
         // Check for session cookie
-        let username = req.cookie("session_user").ok_or_else(|| {
-            println!("🔒 Authentication required for {}", path);
-            Error::Unauthorized("Invalid session".to_string())
-        })?;
+        let username = match req.cookie("session_user") {
+            Some(u) => u,
+            None => {
+                println!("🔒 Authentication required for {}", path);
+                return Error::Unauthorized("Invalid session".to_string()).into_response();
+            }
+        };
 
         // Validate user exists in database
         if user_db.get_user(&username).is_none() {
             println!("❌ Invalid session for user: {}", username);
-            return Err(Error::Unauthorized("Invalid user".to_string()));
+            return Error::Unauthorized("Invalid user".to_string()).into_response();
         }
 
         println!("✅ Authenticated user: {} accessing {}", username, path);
-        Ok(())
+
+        // User is authenticated, proceed
+        next.run(req).await
     }
 }
 
 // Authorization Middleware - Checks user roles
+#[derive(Clone)]
 struct RoleMiddleware {
     role_paths: HashMap<String, String>, // path -> required_role
 }
@@ -153,32 +149,65 @@ impl RoleMiddleware {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Middleware for RoleMiddleware {
-    async fn before(&self, req: &mut ignitia::Request) -> Result<()> {
+    async fn handle(&self, req: Request, next: Next) -> Response {
         let path = req.uri.path();
 
         // Check if this path requires a specific role
         if let Some(required_role) = self.role_paths.get(path) {
             // Get UserDB from extensions
-            let user_db = req
-                .get_extension::<UserDB>()
-                .ok_or_else(|| Error::Internal("UserDB extension not found".to_string()))?;
+            let user_db = match req.get_extension::<UserDB>() {
+                Some(db) => db,
+                None => {
+                    return Error::Internal("UserDB extension not found".to_string())
+                        .into_response();
+                }
+            };
 
-            let username = req
-                .cookie("session_user")
-                .ok_or_else(|| Error::Unauthorized("Invalid session".to_string()))?;
+            let username = match req.cookie("session_user") {
+                Some(u) => u,
+                None => {
+                    return Error::Unauthorized("Invalid session".to_string()).into_response();
+                }
+            };
 
-            let user = user_db
-                .get_user(&username)
-                .ok_or_else(|| Error::Unauthorized("Invalid user".to_string()))?;
+            let user = match user_db.get_user(&username) {
+                Some(u) => u,
+                None => {
+                    return Error::Unauthorized("Invalid user".to_string()).into_response();
+                }
+            };
 
             if user.role != *required_role {
                 println!(
                     "🚫 Access denied: {} (role: {}) tried to access {} (requires: {})",
                     username, user.role, path, required_role
                 );
-                return Ok(()); // Let it pass, handler will show access denied page
+                // Return forbidden response
+                return Response::html(
+                    r#"
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>🚫 Access Denied</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; margin: 40px; max-width: 600px; margin: 40px auto; }
+                            .error { background: #f8d7da; padding: 20px; border-radius: 10px; color: #721c24; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="error">
+                            <h1>🚫 Access Denied</h1>
+                            <p>You need administrator privileges to access this page.</p>
+                            <p>This check was performed by role middleware using the Next pattern!</p>
+                        </div>
+                        <a href="/dashboard" style="background: #007acc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">← Back to Dashboard</a>
+                    </body>
+                    </html>
+                "#,
+                )
+                .with_status(http::StatusCode::FORBIDDEN);
             }
 
             println!(
@@ -186,20 +215,24 @@ impl Middleware for RoleMiddleware {
                 username, user.role, path
             );
         }
-        Ok(())
+
+        // Role check passed or not required
+        next.run(req).await
     }
 }
 
 // Request Logger Middleware
+#[derive(Clone)]
 struct RequestLoggerMiddleware;
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Middleware for RequestLoggerMiddleware {
-    async fn before(&self, req: &mut ignitia::Request) -> Result<()> {
+    async fn handle(&self, req: Request, next: Next) -> Response {
         let user = req
             .cookie("session_user")
             .map(|u| format!("user={}", u))
             .unwrap_or_else(|| "anonymous".to_string());
+
         println!(
             "📋 {} {} {:?} ({})",
             req.method,
@@ -207,20 +240,23 @@ impl Middleware for RequestLoggerMiddleware {
             req.version,
             user
         );
-        Ok(())
-    }
 
-    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
-        println!("📤 Response: {}", res.status.as_u16());
-        Ok(())
+        // Process request
+        let response = next.run(req).await;
+
+        println!("📤 Response: {}", response.status.as_u16());
+
+        response
     }
 }
+
+// ============================================================================
+// MAIN APPLICATION
+// ============================================================================
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-
-    // let user_db = UserDB::new();
 
     let user_db = UserDB::new();
 
@@ -228,24 +264,19 @@ async fn main() -> Result<()> {
     let auth_middleware =
         AuthMiddleware::new().protect_paths(vec!["/dashboard", "/profile", "/admin"]);
 
-    let state_router = Router::new().get("/", home).state(user_db.clone());
-
-    // let role_middleware = RoleMiddleware::new().require_role("/admin", "admin");
-
+    // Build router with Next-pattern middleware
     let router = Router::new()
-        // Apply global middleware
+        // Apply global middleware (executed in order)
         .middleware(RequestLoggerMiddleware)
-        // .middleware(UserDBMiddleware::new(user_db))
         .middleware(auth_middleware)
-        // .middleware(role_middleware)
         // Public routes (no auth required)
+        .get("/", home)
         .get("/login", login_form)
         .post("/login", login_process)
         // Protected routes (auth middleware will handle authentication)
         .get("/dashboard", dashboard)
         .get("/profile", profile)
-        // Admin-only routes (both auth and role middleware will apply)
-        // .get("/admin", admin_panel)
+        // Admin-only route with per-route middleware
         .route_with_layered(
             "/admin",
             Method::GET,
@@ -254,18 +285,20 @@ async fn main() -> Result<()> {
         )
         // Logout (public)
         .get("/logout", logout)
-        .state(user_db.clone())
-        .nest("/", state_router);
+        // Inject UserDB as application state
+        .state(user_db);
 
     let addr: SocketAddr = "127.0.0.1:3009".parse().unwrap();
     let server = Server::new(router, addr);
 
     println!("🔐 Login Demo with Middleware running on http://{}", addr);
     println!("🛡️  Middleware Features:");
-    println!("   ✅ Extension-based dependency injection");
+    println!("   ✅ Axum-style Next pattern middleware");
+    println!("   ✅ State-based dependency injection");
     println!("   ✅ Authentication middleware for protected routes");
     println!("   ✅ Role-based authorization middleware");
     println!("   ✅ Request logging middleware");
+    println!("   ✅ Per-route middleware with LayeredHandler");
     println!("👤 Test accounts:");
     println!("   admin / admin123 (admin role)");
     println!("   user / user123 (user role)");
@@ -273,6 +306,10 @@ async fn main() -> Result<()> {
     server.ignitia().await.unwrap();
     Ok(())
 }
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
 
 // Helper function to parse form data
 fn parse_form_data(body: &[u8]) -> Result<HashMap<String, String>> {
@@ -290,7 +327,10 @@ fn parse_form_data(body: &[u8]) -> Result<HashMap<String, String>> {
     Ok(form_data)
 }
 
-// Simplified handlers using extractors - no more manual auth checks!
+// ============================================================================
+// HANDLER FUNCTIONS
+// ============================================================================
+
 async fn home(cookies: Cookies, State(db): State<UserDB>) -> Result<Response> {
     // Check if user is logged in (this is just for display, not security)
     let current_user = cookies.get("session_user").map(|s| s.clone());
@@ -338,33 +378,24 @@ async fn home(cookies: Cookies, State(db): State<UserDB>) -> Result<Response> {
         <!DOCTYPE html>
         <html>
         <head>
-            <title>🔐 Login Demo with Middleware & Extensions</title>
+            <title>🔐 Login Demo with Next Middleware</title>
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 40px; max-width: 800px; margin: 40px auto; }}
                 h1 {{ color: #333; }}
                 .test-accounts {{ background: #e7f3ff; padding: 20px; border-radius: 10px; margin: 20px 0; }}
                 .middleware-info {{ background: #f0f8ff; padding: 20px; border-radius: 10px; margin: 20px 0; }}
-                .extension-info {{ background: #e8f5e8; padding: 20px; border-radius: 10px; margin: 20px 0; }}
             </style>
         </head>
         <body>
-            <h1>🔐 Mini Web Framework - Login with Middleware & Extensions</h1>
+            <h1>🔐 Login Demo - Axum-Style Next Middleware</h1>
             {}
-            <div class="extension-info">
-                <h3>🧩 Extension System:</h3>
-                <ul>
-                    <li><strong>UserDB Injection:</strong> Automatically injected into requests via middleware</li>
-                    <li><strong>Type-Safe Extraction:</strong> Handlers use Extension&lt;UserDB&gt; extractor</li>
-                    <li><strong>Clean Architecture:</strong> No closure captures or manual state passing</li>
-                </ul>
-            </div>
             <div class="middleware-info">
-                <h3>🛡️ Middleware Protection:</h3>
+                <h3>🛡️ Middleware Protection (Next Pattern):</h3>
                 <ul>
                     <li><strong>Authentication Middleware:</strong> Protects /dashboard, /profile, /admin</li>
-                    <li><strong>Role Middleware:</strong> /admin requires 'admin' role</li>
+                    <li><strong>Role Middleware:</strong> /admin requires 'admin' role (per-route)</li>
                     <li><strong>Request Logger:</strong> Logs all requests with user info</li>
-                    <li><strong>Extension Middleware:</strong> Injects UserDB into all requests</li>
+                    <li><strong>Next Pattern:</strong> Clean middleware chaining like Axum</li>
                 </ul>
             </div>
             <div class="test-accounts">
@@ -376,13 +407,13 @@ async fn home(cookies: Cookies, State(db): State<UserDB>) -> Result<Response> {
             </div>
             <h3>🛠️ Features Demonstrated:</h3>
             <ul>
-                <li>✅ Extension-based dependency injection</li>
+                <li>✅ Axum-style Next pattern middleware</li>
+                <li>✅ State-based dependency injection</li>
                 <li>✅ Authentication middleware (automatic session checking)</li>
                 <li>✅ Role-based authorization middleware</li>
+                <li>✅ Per-route middleware with LayeredHandler</li>
                 <li>✅ Request logging middleware</li>
-                <li>✅ Path-specific middleware application</li>
                 <li>✅ Clean handler functions with extractors</li>
-                <li>✅ Automatic 401/403 handling</li>
                 <li>✅ Type-safe state management</li>
             </ul>
         </body>
@@ -444,7 +475,7 @@ async fn login_form(cookies: Cookies) -> Result<Response> {
     Ok(Response::html(html))
 }
 
-async fn login_process(body: Body, Extension(db): Extension<UserDB>) -> Result<Response> {
+async fn login_process(body: Body, State(db): State<UserDB>) -> Result<Response> {
     let form_data = parse_form_data(&body)?;
     let username = form_data.get("username").unwrap_or(&"".to_string()).clone();
     let password = form_data.get("password").unwrap_or(&"".to_string()).clone();
@@ -467,20 +498,12 @@ async fn login_process(body: Body, Extension(db): Extension<UserDB>) -> Result<R
             .http_only()
             .same_site(SameSite::Lax);
 
-        // Create role cookie (for authorization)
-        let role_cookie = Cookie::new("user_role", &user.role)
-            .path("/")
-            .max_age(3600)
-            .http_only()
-            .same_site(SameSite::Lax);
-
         let response = Response::html(format!(
             r#"
             <h1>✅ Login Successful!</h1>
             <p>Welcome, <strong>{}</strong>!</p>
             <p>Role: <strong>{}</strong></p>
-            <p>Middleware will now protect your session automatically!</p>
-            <p>Extension system provides clean dependency injection!</p>
+            <p>Next middleware will now protect your session automatically!</p>
             <p>Redirecting to dashboard...</p>
             <script>
                 setTimeout(function() {{
@@ -492,7 +515,7 @@ async fn login_process(body: Body, Extension(db): Extension<UserDB>) -> Result<R
             user.username, user.role
         ));
 
-        Ok(response.add_cookie(session_cookie).add_cookie(role_cookie))
+        Ok(response.add_cookie(session_cookie))
     } else {
         Ok(Response::html(
             r#"
@@ -504,11 +527,10 @@ async fn login_process(body: Body, Extension(db): Extension<UserDB>) -> Result<R
     }
 }
 
-// Simplified dashboard - no manual auth checks needed!
-async fn dashboard(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<Response> {
+async fn dashboard(cookies: Cookies, State(db): State<UserDB>) -> Result<Response> {
     // Middleware guarantees we have a valid session here
-    let username = cookies.get("session_user").unwrap().clone(); // Safe to unwrap
-    let user = db.get_user(&username).unwrap(); // Safe to unwrap
+    let username = cookies.get("session_user").unwrap().clone();
+    let user = db.get_user(&username).unwrap();
 
     let html = format!(
         r#"
@@ -521,7 +543,6 @@ async fn dashboard(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result
                 .dashboard {{ max-width: 800px; margin: 0 auto; }}
                 .user-info {{ background: #d4edda; padding: 20px; border-radius: 10px; margin: 20px 0; }}
                 .middleware-info {{ background: #f0f8ff; padding: 20px; border-radius: 10px; margin: 20px 0; }}
-                .extension-info {{ background: #e8f5e8; padding: 20px; border-radius: 10px; margin: 20px 0; }}
                 .actions {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 20px 0; }}
                 .actions a {{ display: block; padding: 15px; text-align: center; text-decoration: none; border-radius: 5px; color: white; }}
                 .btn-primary {{ background: #007acc; }}
@@ -532,18 +553,13 @@ async fn dashboard(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result
         </head>
         <body>
             <div class="dashboard">
-                <h1>📊 Dashboard (Protected by Middleware)</h1>
+                <h1>📊 Dashboard (Protected by Next Middleware)</h1>
 
                 <div class="middleware-info">
-                    <h3>🛡️ Middleware Protection Active</h3>
+                    <h3>🛡️ Next Pattern Protection Active</h3>
                     <p>This page is automatically protected by authentication middleware!</p>
+                    <p>Middleware used <code>next.run(req).await</code> to proceed.</p>
                     <p>No manual session checks needed in the handler.</p>
-                </div>
-
-                <div class="extension-info">
-                    <h3>🧩 Extension System Active</h3>
-                    <p>UserDB automatically injected via Extension&lt;UserDB&gt; extractor!</p>
-                    <p>Clean, type-safe dependency management.</p>
                 </div>
 
                 <div class="user-info">
@@ -552,7 +568,6 @@ async fn dashboard(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result
                     <p><strong>Email:</strong> {}</p>
                     <p><strong>Role:</strong> {}</p>
                     <p><strong>Session:</strong> ✅ Validated by middleware</p>
-                    <p><strong>Data Source:</strong> ✅ Extension-injected UserDB</p>
                 </div>
 
                 <div class="actions">
@@ -561,10 +576,6 @@ async fn dashboard(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result
                     <a href="/" class="btn-success">🏠 Home</a>
                     <a href="/logout" class="btn-danger">🚪 Logout</a>
                 </div>
-
-                <h3>🔒 Protected Content</h3>
-                <p>This page is automatically protected by middleware.</p>
-                <p>Only authenticated users can access this content.</p>
             </div>
         </body>
         </html>
@@ -582,9 +593,7 @@ async fn dashboard(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result
     Ok(Response::html(html))
 }
 
-// Simplified profile - no manual auth checks needed!
-async fn profile(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<Response> {
-    // Middleware guarantees we have a valid session here
+async fn profile(cookies: Cookies, State(db): State<UserDB>) -> Result<Response> {
     let username = cookies.get("session_user").unwrap().clone();
     let user = db.get_user(&username).unwrap();
 
@@ -598,27 +607,20 @@ async fn profile(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<R
                 body {{ font-family: Arial, sans-serif; margin: 40px; max-width: 600px; margin: 40px auto; }}
                 .profile {{ background: #f8f9fa; padding: 30px; border-radius: 10px; }}
                 .middleware-info {{ background: #f0f8ff; padding: 20px; border-radius: 10px; margin: 20px 0; }}
-                .extension-info {{ background: #e8f5e8; padding: 20px; border-radius: 10px; margin: 20px 0; }}
             </style>
         </head>
         <body>
-            <h1>👤 User Profile (Protected by Middleware)</h1>
+            <h1>👤 User Profile (Protected by Next Middleware)</h1>
 
             <div class="middleware-info">
-                <p><strong>🛡️ Protection:</strong> This page is automatically protected by authentication middleware.</p>
-            </div>
-
-            <div class="extension-info">
-                <p><strong>🧩 Extension System:</strong> UserDB automatically injected for clean data access.</p>
+                <p><strong>🛡️ Protection:</strong> Middleware called <code>next.run()</code> after validation.</p>
             </div>
 
             <div class="profile">
                 <h2>{}</h2>
                 <p><strong>Email:</strong> {}</p>
                 <p><strong>Role:</strong> {}</p>
-                <p><strong>Account Status:</strong> ✅ Active</p>
-                <p><strong>Session:</strong> ✅ Validated by middleware</p>
-                <p><strong>Data Source:</strong> ✅ Extension-injected UserDB</p>
+                <p><strong>Session:</strong> ✅ Validated by Next middleware</p>
             </div>
 
             <div style="text-align: center; margin-top: 20px;">
@@ -633,39 +635,9 @@ async fn profile(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<R
     Ok(Response::html(html))
 }
 
-// Admin panel with role-based access (handled by middleware)
-async fn admin_panel(cookies: Cookies, Extension(db): Extension<UserDB>) -> Result<Response> {
-    // Middleware guarantees we have a valid session here
+async fn admin_panel(cookies: Cookies, State(db): State<UserDB>) -> Result<Response> {
     let username = cookies.get("session_user").unwrap().clone();
     let user = db.get_user(&username).unwrap();
-
-    // Role middleware should have handled this, but let's double-check for UI
-    if user.role != "admin" {
-        return Ok(Response::html(
-            r#"
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>🚫 Access Denied</title>
-                <style>
-                    body { font-family: Arial, sans-serif; margin: 40px; max-width: 600px; margin: 40px auto; }
-                    .error { background: #f8d7da; padding: 20px; border-radius: 10px; color: #721c24; }
-                </style>
-            </head>
-            <body>
-                <div class="error">
-                    <h1>🚫 Access Denied</h1>
-                    <p>You need administrator privileges to access this page.</p>
-                    <p>Current role: <strong>user</strong></p>
-                    <p>Required role: <strong>admin</strong></p>
-                    <p>This should have been caught by role middleware!</p>
-                </div>
-                <a href="/dashboard" style="background: #007acc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">← Back to Dashboard</a>
-            </body>
-            </html>
-        "#,
-        ));
-    }
 
     let html = format!(
         r#"
@@ -678,20 +650,16 @@ async fn admin_panel(cookies: Cookies, Extension(db): Extension<UserDB>) -> Resu
                 .admin-panel {{ background: #fff3cd; padding: 20px; border-radius: 10px; margin: 20px 0; }}
                 .user-stats {{ background: #d1ecf1; padding: 20px; border-radius: 10px; margin: 20px 0; }}
                 .middleware-info {{ background: #f0f8ff; padding: 20px; border-radius: 10px; margin: 20px 0; }}
-                .extension-info {{ background: #e8f5e8; padding: 20px; border-radius: 10px; margin: 20px 0; }}
             </style>
         </head>
         <body>
-            <h1>⚙️ Admin Panel (Protected by Role Middleware)</h1>
+            <h1>⚙️ Admin Panel (Protected by Per-Route Middleware)</h1>
 
             <div class="middleware-info">
-                <p><strong>🛡️ Double Protection:</strong> This page is protected by both authentication AND role middleware.</p>
-                <p>Only users with 'admin' role can access this area.</p>
-            </div>
-
-            <div class="extension-info">
-                <p><strong>🧩 Extension System:</strong> UserDB automatically injected for seamless data access.</p>
-                <p>No manual state management or dependency injection needed!</p>
+                <p><strong>🛡️ LayeredHandler + RoleMiddleware:</strong></p>
+                <p>This route uses per-route middleware with the Next pattern!</p>
+                <p>Global auth middleware + route-specific role middleware.</p>
+                <p>Both use <code>next.run()</code> to chain execution.</p>
             </div>
 
             <p>Welcome to the admin panel, <strong>{}</strong>!</p>
@@ -703,13 +671,6 @@ async fn admin_panel(cookies: Cookies, Extension(db): Extension<UserDB>) -> Resu
                     <li>Admin Users: {}</li>
                     <li>Regular Users: {}</li>
                 </ul>
-            </div>
-
-            <div class="admin-panel">
-                <h3>🔧 Admin Actions</h3>
-                <p>This is where admin-only functionality would go.</p>
-                <p>Access is automatically controlled by role middleware.</p>
-                <p>Data access is seamlessly handled by the extension system.</p>
             </div>
 
             <div style="text-align: center; margin-top: 20px;">
@@ -744,8 +705,7 @@ async fn logout() -> Result<Response> {
                 <h1>👋 Logged Out</h1>
                 <p>You have been successfully logged out.</p>
                 <p>Your session cookies have been cleared.</p>
-                <p>Middleware will no longer recognize you as authenticated.</p>
-                <p>Extension system provided clean session management!</p>
+                <p>Next middleware will no longer recognize you as authenticated.</p>
             </div>
             <div style="text-align: center; margin-top: 20px;">
                 <a href="/" style="background: #007acc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">← Back to Home</a>
@@ -755,8 +715,5 @@ async fn logout() -> Result<Response> {
     "#,
     );
 
-    // Clear session cookies
-    Ok(response
-        .remove_cookie("session_user")
-        .remove_cookie("user_role"))
+    Ok(response.remove_cookie("session_user"))
 }

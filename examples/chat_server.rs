@@ -613,7 +613,10 @@ async fn serve_chat_ui() -> Result<Response> {
 
 // Enhanced WebSocket handler with proper timeout and heartbeat management
 #[cfg(feature = "websocket")]
-async fn handle_chat_websocket(ws: WebSocketConnection, state: ChatState) -> Result<()> {
+async fn handle_chat_websocket(
+    State(state): State<ChatState>,
+    ws: WebSocketConnection,
+) -> Response {
     let mut username: Option<String> = None;
     let mut broadcast_rx = state.broadcaster.subscribe();
     let mut last_activity = Instant::now();
@@ -839,7 +842,7 @@ async fn handle_chat_websocket(ws: WebSocketConnection, state: ChatState) -> Res
         "🔌 WebSocket handler completed (processed {} messages)",
         message_count
     );
-    Ok(())
+    Response::ok()
 }
 
 // Non-WebSocket fallback
@@ -864,10 +867,9 @@ async fn main() -> Result<()> {
     #[cfg(feature = "websocket")]
     {
         let state_clone = state.clone();
-        router = router.websocket_fn("/ws", move |ws| {
-            let state = state_clone.clone();
-            async move { handle_chat_websocket(ws, state).await }
-        });
+        router = router
+            .state(state_clone)
+            .websocket("/ws", handle_chat_websocket);
         info!("✅ WebSocket support enabled with enhanced timeout management");
     }
 

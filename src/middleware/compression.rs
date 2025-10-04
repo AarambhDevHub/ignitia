@@ -68,8 +68,6 @@
 //!     ]);
 //! ```
 
-use std::sync::Arc;
-
 use crate::middleware::Middleware;
 use crate::{Request, Response, Result};
 use async_compression::tokio::write::{BrotliEncoder, GzipEncoder};
@@ -77,6 +75,8 @@ use bytes::Bytes;
 use http::{header, HeaderValue};
 use tokio::io::AsyncWriteExt;
 use tracing::debug;
+
+use super::Next;
 
 /// Compression level configuration for the compression algorithms.
 ///
@@ -571,20 +571,7 @@ impl Encoding {
 
 #[async_trait::async_trait]
 impl Middleware for CompressionMiddleware {
-    /// Processes the request and negotiates compression encoding.
-    ///
-    /// This method parses the client's `Accept-Encoding` header and determines
-    /// the best available compression algorithm. The result is stored for use
-    /// in the `after` phase.
-    ///
-    /// # Parameters
-    ///
-    /// * `req` - The HTTP request to process
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` on success, or an error if processing fails.
-    async fn before(&self, req: &mut Request) -> Result<()> {
+    async fn handle(&self, mut req: Request, next: Next) -> Response {
         // Parse Accept-Encoding and store preferred encoding in response headers
         let accept_encoding = req.header("accept-encoding");
 
@@ -597,29 +584,8 @@ impl Middleware for CompressionMiddleware {
             debug!("Negotiated encoding: {}", encoding.as_str());
         }
 
-        Ok(())
-    }
+        let mut res = next.run(req.clone()).await;
 
-    /// Processes the response and applies compression if appropriate.
-    ///
-    /// This method is called after the handler has generated the response.
-    /// It compresses the response body if all conditions are met:
-    ///
-    /// 1. Response size is above the configured threshold
-    /// 2. Content type is compressible
-    /// 3. Client accepts at least one supported encoding
-    /// 4. Response doesn't already have Content-Encoding header
-    /// 5. Compression actually reduces the size
-    ///
-    /// # Parameters
-    ///
-    /// * `req` - The HTTP request (for accessing stored compression decision)
-    /// * `res` - The HTTP response to potentially compress
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` on success, or an error if compression fails.
-    async fn after(&self, req: &Request, res: &mut Response) -> Result<()> {
         // Skip if response is too small
 
         if res.body.len() < self.threshold {
@@ -627,13 +593,13 @@ impl Middleware for CompressionMiddleware {
                 "Response too small for compression: {} bytes",
                 res.body.len()
             );
-            return Ok(());
+            return res;
         }
 
         // Skip if already compressed
         if res.headers.contains_key(header::CONTENT_ENCODING) {
             debug!("Response already has Content-Encoding header");
-            return Ok(());
+            return res;
         }
 
         // Check if content type is compressible
@@ -644,7 +610,7 @@ impl Middleware for CompressionMiddleware {
 
         if !self.is_compressible(content_type) {
             debug!("Content type not compressible: {:?}", content_type);
-            return Ok(());
+            return res;
         }
 
         // ✅ Get negotiated encoding from REQUEST headers (where it was stored)
@@ -662,19 +628,28 @@ impl Middleware for CompressionMiddleware {
                 } else if self.enable_gzip {
                     Encoding::Gzip
                 } else {
-                    return Ok(());
+                    return res;
                 }
             }
         };
 
         // Compress the response body
         let original_size = res.body.len();
-        let compressed_body = self.compress_data(&res.body, encoding).await?;
+        let compressed_body = match self.compress_data(&res.body, encoding).await {
+            Ok(body) => body,
+            Err(e) => {
+                debug!(
+                    "Compression failed: {}, returning uncompressed",
+                    e.to_string()
+                );
+                return res; // Return original response on compression error
+            }
+        };
         let compressed_size = compressed_body.len();
 
         // Only use compressed version if it's actually smaller
         if compressed_size < original_size {
-            res.body = Arc::new(compressed_body);
+            res.body = compressed_body;
             res.headers.insert(
                 header::CONTENT_ENCODING,
                 HeaderValue::from_static(encoding.as_str()),
@@ -695,7 +670,7 @@ impl Middleware for CompressionMiddleware {
             );
         }
 
-        Ok(())
+        res
     }
 }
 

@@ -8,7 +8,7 @@ Add Ignitia to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ignitia = "0.2.3"
+ignitia = "0.2.4"
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 ```
@@ -17,7 +17,7 @@ For additional features, add them to your dependency:
 
 ```toml
 [dependencies]
-ignitia = { version = "0.2.3", features = ["websocket", "tls"] }
+ignitia = { version = "0.2.4", features = ["websocket", "tls"] }
 ```
 
 Available features:
@@ -84,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
 
         // Route with path parameters
-        .get("/users/:id", |Path(id): Path<u32>| async move {
+        .get("/users/{id}", |Path(id): Path<u32>| async move {
             Ok(Response::json(User {
                 id,
                 name: "John Doe".to_string(),
@@ -134,7 +134,7 @@ struct UserQuery {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let router = Router::new()
         // Path parameters
-        .get("/users/:id", |Path(id): Path<u32>| async move {
+        .get("/users/{id}", |Path(id): Path<u32>| async move {
             Ok(Response::text(format!("User ID: {}", id)))
         })
 
@@ -161,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
 
         // Multiple extractors
-        .post("/complex/:id", |
+        .post("/complex/{id}", |
             Path(id): Path<u32>,
             Query(params): Query<HashMap<String, String>>,
             Json(body): Json<serde_json::Value>,
@@ -308,7 +308,7 @@ Enable real-time communication with WebSockets:
 
 ```toml
 [dependencies]
-ignitia = { version = "0.2.3", features = ["websocket"] }
+ignitia = { version = "0.2.4", features = ["websocket"] }
 ```
 
 ```rust

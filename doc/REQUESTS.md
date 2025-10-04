@@ -109,14 +109,14 @@ use ignitia::{Router, Path};
 
 let router = Router::new()
     // Single parameter
-    .get("/users/:id", |Path(id): Path<u32>| async move {
+    .get("/users/{id}", |Path(id): Path<u32>| async move {
         Ok(Response::json(serde_json::json!({
             "user_id": id
         }))?)
     })
 
     // Multiple parameters
-    .get("/users/:user_id/posts/:post_id",
+    .get("/users/{user_id}/posts/{post_id}",
         |Path((user_id, post_id)): Path<(u32, u32)>| async move {
             Ok(Response::json(serde_json::json!({
                 "user_id": user_id,
@@ -126,7 +126,7 @@ let router = Router::new()
     )
 
     // Custom struct for parameters
-    .get("/api/:version/users/:id", |Path(params): Path<ApiParams>| async move {
+    .get("/api/{version}/users/{id}", |Path(params): Path<ApiParams>| async move {
         Ok(Response::json(params)?)
     });
 
@@ -969,10 +969,10 @@ async fn user_handler(
 fn create_router() -> Router {
     Router::new()
         .get("/users", user_handler)
-        .get("/users/:id", user_handler)
+        .get("/users/{id}", user_handler)
         .post("/users", user_handler)
-        .put("/users/:id", user_handler)
-        .delete("/users/:id", user_handler)
+        .put("/users/{id}", user_handler)
+        .delete("/users/{id}", user_handler)
 }
 ```
 

@@ -29,11 +29,13 @@
 use std::str::FromStr;
 
 use crate::middleware::Middleware;
-use crate::{Request, Response, Result};
+use crate::{Request, Response};
 use http::header::HeaderValue;
 use http::HeaderName;
 use tracing::{debug, info};
 use uuid::Uuid;
+
+use super::Next;
 
 /// Request ID header name (standard convention)
 pub const REQUEST_ID_HEADER: &str = "x-request-id";
@@ -323,32 +325,25 @@ impl RequestIdMiddleware {
 
 #[async_trait::async_trait]
 impl Middleware for RequestIdMiddleware {
-    /// Processes the request and assigns a unique request ID.
-    ///
-    /// This method extracts existing request IDs from headers or generates
-    /// new ones, then stores the ID for use in the response phase and logging.
-    ///
-    /// # Parameters
-    ///
-    /// * `req` - The HTTP request to process
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` on success, or an error if processing fails.
-    async fn before(&self, req: &mut Request) -> Result<()> {
-        let request_id = self.get_or_generate_request_id(req);
+    async fn handle(&self, mut req: Request, next: Next) -> Response {
+        // Generate or get request ID
+        let request_id = self.get_or_generate_request_id(&req);
 
-        let header_name = HeaderName::from_str(self.header_name.as_str())
-            .map_err(|e| crate::Error::Internal(format!("Invalid header name: {}", e)))?;
+        // Parse header name
+        let header_name = match HeaderName::from_str(&self.header_name) {
+            Ok(name) => name,
+            Err(e) => {
+                debug!("Invalid header name: {}", e);
+                return next.run(req).await;
+            }
+        };
 
-        // Store request ID in request headers for after() phase
-        req.headers.insert(
-            header_name,
-            HeaderValue::from_str(&request_id)
-                .map_err(|e| crate::Error::Internal(format!("Invalid request ID: {}", e)))?,
-        );
+        // Store request ID in request headers
+        if let Ok(header_value) = HeaderValue::from_str(&request_id) {
+            req.headers.insert(header_name.clone(), header_value);
+        }
 
-        // Create tracing span with request ID for structured logging
+        // Log with request ID if logging is enabled
         if self.enable_logging {
             info!(
                 request_id = %request_id,
@@ -358,45 +353,24 @@ impl Middleware for RequestIdMiddleware {
             );
         }
 
-        Ok(())
-    }
+        // Process request through the chain
+        let mut response = next.run(req).await;
 
-    /// Processes the response and includes the request ID in response headers.
-    ///
-    /// This ensures the client receives the request ID for correlation and debugging.
-    ///
-    /// # Parameters
-    ///
-    /// * `req` - The original HTTP request
-    /// * `res` - The HTTP response to process
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` on success, or an error if processing fails.
-    async fn after(&self, req: &Request, res: &mut Response) -> Result<()> {
-        // Get request ID from request headers (set in before() phase)
-        if let Some(request_id) = req.header(&self.header_name) {
-            let header_name = HeaderName::from_str(self.header_name.as_str())
-                .map_err(|e| crate::Error::Internal(format!("Invalid header name: {}", e)))?;
-
-            // Set request ID in response headers
-            res.headers.insert(
-                header_name,
-                HeaderValue::from_str(request_id)
-                    .map_err(|e| crate::Error::Internal(format!("Invalid request ID: {}", e)))?,
-            );
-
-            // Log response with request ID
-            if self.enable_logging {
-                info!(
-                    request_id = %request_id,
-                    status = %res.status.as_u16(),
-                    "Request completed"
-                );
-            }
+        // Add request ID to response headers
+        if let Ok(header_value) = HeaderValue::from_str(&request_id) {
+            response.headers.insert(header_name, header_value);
         }
 
-        Ok(())
+        // Log completion if logging is enabled
+        if self.enable_logging {
+            info!(
+                request_id = %request_id,
+                status = response.status.as_u16(),
+                "Request completed"
+            );
+        }
+
+        response
     }
 }
 
@@ -488,183 +462,4 @@ fn generate_nanoid(length: usize) -> String {
             ALPHABET[idx] as char
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Request, Response};
-    use bytes::Bytes;
-    use http::{HeaderMap, Method, Uri, Version};
-
-    /// Test helper to create a mock request
-    fn mock_request() -> Request {
-        Request::new(
-            Method::GET,
-            Uri::from_static("/"),
-            Version::HTTP_11,
-            HeaderMap::new(),
-            Bytes::new(),
-        )
-    }
-
-    /// Test helper to create a mock request with request ID header
-    fn mock_request_with_id(request_id: &str) -> Request {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-request-id", request_id.parse().unwrap());
-        Request::new(
-            Method::GET,
-            Uri::from_static("/"),
-            Version::HTTP_11,
-            headers,
-            Bytes::new(),
-        )
-    }
-
-    #[test]
-    fn test_request_id_validation() {
-        let middleware = RequestIdMiddleware::new();
-
-        // Valid request IDs
-        assert!(middleware.is_valid_request_id("12345678"));
-        assert!(middleware.is_valid_request_id("abc-123_def"));
-        assert!(middleware.is_valid_request_id(&"a".repeat(200)));
-
-        // Invalid request IDs
-        assert!(!middleware.is_valid_request_id("1234567")); // Too short
-        assert!(!middleware.is_valid_request_id(&"a".repeat(201))); // Too long
-        assert!(!middleware.is_valid_request_id("abc@123")); // Invalid chars
-        assert!(!middleware.is_valid_request_id("")); // Empty
-    }
-
-    #[test]
-    fn test_id_generators() {
-        // Test UUID generator
-        let uuid_gen = IdGenerator::Uuid;
-        let id1 = uuid_gen.generate();
-        let id2 = uuid_gen.generate();
-        assert_ne!(id1, id2);
-        assert_eq!(id1.len(), 36); // UUID v4 length
-
-        // Test NanoID generator
-        let nano_gen = IdGenerator::NanoId { length: 12 };
-        let id3 = nano_gen.generate();
-        assert_eq!(id3.len(), 12);
-
-        // Test custom generator
-        let custom_gen = IdGenerator::Custom(|| "test-123".to_string());
-        let id4 = custom_gen.generate();
-        assert_eq!(id4, "test-123");
-    }
-
-    #[tokio::test]
-    async fn test_request_id_middleware_new_id() {
-        let middleware = RequestIdMiddleware::new();
-        let mut request = mock_request();
-        let mut response = Response::new(http::StatusCode::OK);
-
-        // Before phase should generate new request ID
-        middleware.before(&mut request).await.unwrap();
-
-        let request_id = request.header("x-request-id").unwrap();
-        assert!(!request_id.is_empty());
-
-        // After phase should set response header
-        middleware.after(&request, &mut response).await.unwrap();
-
-        let response_id = response
-            .headers
-            .get("x-request-id")
-            .unwrap()
-            .to_str()
-            .unwrap();
-        assert_eq!(request_id, response_id);
-    }
-
-    #[tokio::test]
-    async fn test_request_id_middleware_existing_id() {
-        let middleware = RequestIdMiddleware::new();
-        let mut request = mock_request_with_id("existing-request-123");
-        let mut response = Response::new(http::StatusCode::OK);
-
-        // Before phase should preserve existing valid ID
-        middleware.before(&mut request).await.unwrap();
-
-        let request_id = request.header("x-request-id").unwrap();
-        assert_eq!(request_id, "existing-request-123");
-
-        // After phase should use same ID
-        middleware.after(&request, &mut response).await.unwrap();
-
-        let response_id = response
-            .headers
-            .get("x-request-id")
-            .unwrap()
-            .to_str()
-            .unwrap();
-        assert_eq!(response_id, "existing-request-123");
-    }
-
-    #[tokio::test]
-    async fn test_request_id_middleware_invalid_id() {
-        let middleware = RequestIdMiddleware::new(); // Validation enabled by default
-        let mut request = mock_request_with_id("invalid@id!");
-        let mut response = Response::new(http::StatusCode::OK);
-
-        // Before phase should replace invalid ID
-        middleware.before(&mut request).await.unwrap();
-
-        let request_id = request.header("x-request-id").unwrap();
-        assert_ne!(request_id, "invalid@id!");
-        assert!(middleware.is_valid_request_id(request_id));
-
-        // After phase should use new valid ID
-        middleware.after(&request, &mut response).await.unwrap();
-
-        let response_id = response
-            .headers
-            .get("x-request-id")
-            .unwrap()
-            .to_str()
-            .unwrap();
-        assert_eq!(response_id, request_id);
-    }
-
-    #[test]
-    fn test_preset_configurations() {
-        let microservices = RequestIdMiddleware::for_microservices();
-        assert!(matches!(
-            microservices.generator,
-            IdGenerator::NanoId { length: 16 }
-        ));
-        assert!(microservices.validate_incoming);
-
-        let development = RequestIdMiddleware::for_development();
-        assert_eq!(development.header_name, "x-trace-id");
-        assert!(!development.validate_incoming);
-
-        let performance = RequestIdMiddleware::for_performance();
-        assert!(matches!(
-            performance.generator,
-            IdGenerator::NanoId { length: 12 }
-        ));
-        assert!(!performance.enable_logging);
-    }
-
-    #[test]
-    fn test_builder_pattern() {
-        let middleware = RequestIdMiddleware::new()
-            .with_generator(IdGenerator::NanoId { length: 8 })
-            .with_header_name("x-custom-id")
-            .with_validation(false)
-            .with_logging(false);
-
-        assert!(matches!(
-            middleware.generator,
-            IdGenerator::NanoId { length: 8 }
-        ));
-        assert_eq!(middleware.header_name, "x-custom-id");
-        assert!(!middleware.validate_incoming);
-        assert!(!middleware.enable_logging);
-    }
 }

@@ -152,7 +152,7 @@ async fn set_cookies(_req: Request) -> Result<Response> {
 
 async fn get_cookies(req: Request) -> Result<Response> {
     let cookies = req.cookies();
-    Response::json(cookies.all())
+    Ok(Response::json(cookies.all()))
 }
 
 async fn set_secure_cookie(_req: Request) -> Result<Response> {

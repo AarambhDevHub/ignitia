@@ -173,8 +173,8 @@ pub use connection::WebSocketConnection;
 #[cfg(feature = "websocket")]
 #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub use handler::{
-    websocket_batch_handler, websocket_handler, websocket_message_handler, BatchMessageHandler,
-    OptimizedMessageHandler, WebSocketHandler,
+    universal_ws_handler, websocket_batch_handler, websocket_handler, websocket_message_handler,
+    BatchMessageHandler, OptimizedMessageHandler, UniversalWebSocketHandler, WebSocketHandler,
 };
 #[cfg(feature = "websocket")]
 #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]

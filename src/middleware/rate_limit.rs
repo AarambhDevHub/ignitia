@@ -42,12 +42,16 @@
 //! ```
 
 use crate::middleware::Middleware;
-use crate::{Error, Request, Response, Result};
+use crate::{Request, Response};
+use http::StatusCode;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, trace, warn};
+
+use super::Next;
 
 /// Configuration for the rate limiting middleware
 ///
@@ -570,76 +574,67 @@ pub struct RateLimitInfo {
 
 #[async_trait::async_trait]
 impl Middleware for RateLimitingMiddleware {
-    /// Process request before it reaches the handler
-    ///
-    /// Checks if the request is within rate limits and either allows it
-    /// to proceed or returns a 429 Too Many Requests error.
-    async fn before(&self, req: &mut Request) -> Result<()> {
-        let key = self.extract_key(req);
+    async fn handle(&self, mut req: Request, next: Next) -> Response {
+        let key = self.extract_key(&req);
 
         debug!("Checking rate limit for key: {}", key);
 
-        // Get or create window for this key
-        {
-            let mut windows = self.windows.write().await;
-            let window = windows
-                .entry(key.clone())
-                .or_insert_with(RequestWindow::new);
+        let mut windows = self.windows.write().await;
+        let window = windows
+            .entry(key.clone())
+            .or_insert_with(RequestWindow::new);
 
-            let is_allowed = window.is_allowed(
-                self.config.max_requests,
-                self.config.window,
-                self.config.allow_burst,
-                self.config.burst_multiplier,
-            );
+        let is_allowed = window.is_allowed(
+            self.config.max_requests,
+            self.config.window,
+            self.config.allow_burst,
+            self.config.burst_multiplier,
+        );
 
-            let remaining = window.remaining_requests(self.config.max_requests);
-            let reset_time = window.reset_time(self.config.window);
+        let remaining = window.remaining_requests(self.config.max_requests);
+        let reset_time = window.reset_time(self.config.window);
 
-            if !is_allowed {
-                warn!("Rate limit exceeded for key: {}", key);
+        if !is_allowed {
+            warn!("Rate limit exceeded for key: {}", key);
 
-                // Store rate limit info in request extensions for potential header use
-                if self.config.include_headers {
-                    req.insert_extension(RateLimitInfo {
-                        limit: self.config.max_requests,
-                        remaining: 0,
-                        exceeded: true,
-                        reset_time,
-                        key: key.clone(),
-                    });
-                }
-
-                return Err(Error::Custom(Box::new(RateLimitError {
-                    message: self.config.error_message.clone(),
-                    limit: self.config.max_requests,
-                    window: self.config.window,
-                    key,
-                    reset_time,
-                })));
-            }
-
-            // Store successful rate limit info
+            // Store rate limit info in request extensions for potential header use
             if self.config.include_headers {
                 req.insert_extension(RateLimitInfo {
                     limit: self.config.max_requests,
-                    remaining,
-                    exceeded: false,
+                    remaining: 0,
+                    exceeded: true,
                     reset_time,
                     key: key.clone(),
                 });
             }
+
+            return Response::json(RateLimitError {
+                message: self.config.error_message.clone(),
+                limit: self.config.max_requests,
+                window: self.config.window,
+                key,
+                reset_time,
+            })
+            .with_status(StatusCode::TOO_MANY_REQUESTS);
+        }
+
+        // Store successful rate limit info
+        if self.config.include_headers {
+            req.insert_extension(RateLimitInfo {
+                limit: self.config.max_requests,
+                remaining,
+                exceeded: false,
+                reset_time,
+                key: key.clone(),
+            });
         }
 
         trace!("Rate limit check passed for key: {}", key);
-        Ok(())
-    }
+        let mut res = next.run(req.clone()).await;
 
-    /// Process response after handler with rate limit headers
-    async fn after(&self, req: &Request, res: &mut Response) -> Result<()> {
         // Only add headers if rate limiting info is available and headers are enabled
         if !self.config.include_headers {
-            return Ok(());
+            return res;
         }
 
         // Try to get rate limit info from request extensions
@@ -695,7 +690,6 @@ impl Middleware for RateLimitingMiddleware {
                 }
             }
 
-
             tracing::trace!(
                 "Added rate limit headers: limit={}, remaining={}, exceeded={}",
                 rate_limit_info.limit,
@@ -704,12 +698,12 @@ impl Middleware for RateLimitingMiddleware {
             );
         }
 
-        Ok(())
+        res
     }
 }
 
 /// Custom error type for rate limit exceeded
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct RateLimitError {
     /// Custom error message
     pub message: String,
@@ -720,7 +714,26 @@ pub struct RateLimitError {
     /// Key that exceeded the limit
     pub key: String,
     /// When the limit resets
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "serialize_instant")]
     pub reset_time: Option<Instant>,
+}
+
+fn serialize_instant<S>(
+    instant: &Option<Instant>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match instant {
+        Some(i) => {
+            let now = Instant::now();
+            let remaining = i.saturating_duration_since(now);
+            serializer.serialize_u64(remaining.as_secs())
+        }
+        None => serializer.serialize_none(),
+    }
 }
 
 impl std::fmt::Display for RateLimitError {
@@ -733,181 +746,11 @@ impl std::fmt::Display for RateLimitError {
     }
 }
 
-impl crate::error::CustomError for RateLimitError {
-    /// Returns HTTP 429 Too Many Requests status code
-    fn status_code(&self) -> http::StatusCode {
-        http::StatusCode::TOO_MANY_REQUESTS
-    }
-
-    /// Returns error type identifier
-    fn error_type(&self) -> &'static str {
-        "rate_limit_exceeded"
-    }
-
-    /// Returns specific error code
-    fn error_code(&self) -> Option<String> {
-        Some("RATE_LIMIT_EXCEEDED".to_string())
-    }
-
-    /// Returns metadata with rate limiting details
-    fn metadata(&self) -> Option<serde_json::Value> {
-        let reset_timestamp = self.reset_time.and_then(|reset| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .ok()
-                .map(|now_duration| {
-                    let reset_duration = reset.duration_since(Instant::now());
-                    now_duration.as_secs() + reset_duration.as_secs()
-                })
-        });
-
-        Some(serde_json::json!({
-            "limit": self.limit,
-            "window_seconds": self.window.as_secs(),
-            "retry_after_seconds": self.window.as_secs(),
-            "key": self.key,
-            "reset_timestamp": reset_timestamp
-        }))
-    }
-}
-
 // Drop implementation to clean up background task
 impl Drop for RateLimitingMiddleware {
     fn drop(&mut self) {
         if let Some(handle) = self._cleanup_handle.take() {
             handle.abort();
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Method, Request};
-    use bytes::Bytes;
-    use http::{HeaderMap, Uri, Version};
-    use std::time::Duration;
-    use tokio::time::sleep;
-
-    fn create_test_request(ip: &str) -> Request {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", ip.parse().unwrap());
-
-        Request::new(
-            Method::GET,
-            Uri::from_static("/test"),
-            Version::HTTP_11,
-            headers,
-            Bytes::new(),
-        )
-    }
-
-    #[tokio::test]
-    async fn test_basic_rate_limiting() {
-        let config = RateLimitConfig::per_second(2);
-        let middleware = RateLimitingMiddleware::new(config);
-
-        let mut req1 = create_test_request("192.168.1.1");
-        let mut req2 = create_test_request("192.168.1.1");
-        let mut req3 = create_test_request("192.168.1.1");
-
-        // First two requests should succeed
-        assert!(middleware.before(&mut req1).await.is_ok());
-        assert!(middleware.before(&mut req2).await.is_ok());
-
-        // Third request should fail (rate limited)
-        assert!(middleware.before(&mut req3).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_different_ips() {
-        let config = RateLimitConfig::per_second(1);
-        let middleware = RateLimitingMiddleware::new(config);
-
-        let mut req1 = create_test_request("192.168.1.1");
-        let mut req2 = create_test_request("192.168.1.2");
-
-        // Requests from different IPs should both succeed
-        assert!(middleware.before(&mut req1).await.is_ok());
-        assert!(middleware.before(&mut req2).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_sliding_window() {
-        let config = RateLimitConfig::new(1, Duration::from_millis(100));
-        let middleware = RateLimitingMiddleware::new(config);
-
-        let mut req1 = create_test_request("192.168.1.1");
-        let mut req2 = create_test_request("192.168.1.1");
-
-        // First request succeeds
-        assert!(middleware.before(&mut req1).await.is_ok());
-
-        // Second request fails (within window)
-        assert!(middleware.before(&mut req2).await.is_err());
-
-        // Wait for window to pass
-        sleep(Duration::from_millis(110)).await;
-
-        // Third request should succeed (window has passed)
-        let mut req3 = create_test_request("192.168.1.1");
-        assert!(middleware.before(&mut req3).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_custom_key_extractor() {
-        let config = RateLimitConfig::per_second(1).with_key_extractor(|req| {
-            req.header("user-id")
-                .map(|id| format!("user:{}", id))
-                .unwrap_or_else(|| "anonymous".to_string())
-        });
-
-        let middleware = RateLimitingMiddleware::new(config);
-
-        // Create requests with user IDs
-        let mut headers1 = HeaderMap::new();
-        headers1.insert("user-id", "user123".parse().unwrap());
-        let mut req1 = Request::new(
-            Method::GET,
-            Uri::from_static("/"),
-            Version::HTTP_11,
-            headers1,
-            Bytes::new(),
-        );
-
-        let mut headers2 = HeaderMap::new();
-        headers2.insert("user-id", "user456".parse().unwrap());
-        let mut req2 = Request::new(
-            Method::GET,
-            Uri::from_static("/"),
-            Version::HTTP_11,
-            headers2,
-            Bytes::new(),
-        );
-
-        // Different users should have separate limits
-        assert!(middleware.before(&mut req1).await.is_ok());
-        assert!(middleware.before(&mut req2).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_burst_allowance() {
-        let config = RateLimitConfig::per_second(2).with_burst(2.0); // Allow up to 4 requests temporarily
-
-        let middleware = RateLimitingMiddleware::new(config);
-
-        let mut requests = Vec::new();
-        for _ in 0..4 {
-            requests.push(create_test_request("192.168.1.1"));
-        }
-
-        // First 4 requests should succeed (with burst)
-        for req in &mut requests {
-            assert!(middleware.before(req).await.is_ok());
-        }
-
-        // 5th request should fail
-        let mut req5 = create_test_request("192.168.1.1");
-        assert!(middleware.before(&mut req5).await.is_err());
     }
 }

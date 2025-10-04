@@ -1,6 +1,6 @@
 // examples/custom_error_with_middleware.rs
 
-use ignitia::*;
+use ignitia::{middleware::Next, *};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
@@ -73,12 +73,12 @@ struct UserId {
 // Simpler handlers - errors are handled by middleware
 async fn get_user_handler(Path(user): Path<UserId>) -> Result<Response> {
     let user = UserService::get_user(user.id)?;
-    Response::json(&user)
+    Ok(Response::json(&user))
 }
 
 async fn create_user_handler(Json(req): Json<CreateUserRequest>) -> Result<Response> {
     let user = UserService::create_user(req)?;
-    Response::json(&user)
+    Ok(Response::json(&user))
 }
 
 async fn simulate_500_error() -> Result<Response> {
@@ -98,11 +98,13 @@ struct RequestIdMiddleware;
 
 #[async_trait::async_trait]
 impl Middleware for RequestIdMiddleware {
-    async fn before(&self, req: &mut Request) -> Result<()> {
+    async fn handle(&self, mut req: Request, next: Next) -> Response {
         // Add a request ID extension
         let request_id = uuid::Uuid::new_v4().to_string();
         req.insert_extension(request_id);
-        Ok(())
+
+        // Call the next middleware or handler
+        next.run(req).await
     }
 }
 
@@ -115,41 +117,6 @@ async fn main() -> Result<()> {
         // Add request ID middleware first
         .middleware(RequestIdMiddleware)
 
-        // Add comprehensive error handling middleware
-        .middleware(
-            ErrorHandlerMiddleware::new()
-                .with_details(true)              // Include detailed error info
-                .with_stack_trace(true)          // Include stack traces in debug
-                .with_logging(true)              // Log all errors
-                .with_error_log_threshold(500)   // Log 5xx as errors, 4xx as warnings
-                .with_custom_error_page(
-                    StatusCode::NOT_FOUND,
-                    r#"
-                    <html>
-                        <head><title>404 - Page Not Found</title></head>
-                        <body>
-                            <h1>🔍 Oops! Page not found</h1>
-                            <p>The page you're looking for doesn't exist.</p>
-                            <a href="/">Go Home</a>
-                        </body>
-                    </html>
-                    "#.to_string()
-                )
-                .with_custom_error_page(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    r#"
-                    <html>
-                        <head><title>500 - Server Error</title></head>
-                        <body>
-                            <h1>💥 Something went wrong</h1>
-                            <p>We're experiencing technical difficulties. Please try again later.</p>
-                            <a href="/">Go Home</a>
-                        </body>
-                    </html>
-                    "#.to_string()
-                )
-        )
-
         // Add CORS and logging middleware
         .middleware(LoggerMiddleware)
         .middleware(CorsMiddleware::new()
@@ -159,14 +126,14 @@ async fn main() -> Result<()> {
         )
 
         // Routes - errors are automatically handled by middleware
-        .get("/users/:id", get_user_handler)
+        .get("/users/{id}", get_user_handler)
         .post("/users", create_user_handler)
         .get("/500-error", simulate_500_error)
         .get("/validation-error", simulate_validation_error)
         .get("/rate-limit", simulate_rate_limit)
 
         // API routes that return JSON errors
-        .get("/api/users/:id", get_user_handler)
+        .get("/api/users/{id}", get_user_handler)
         .post("/api/users", create_user_handler)
 
         // Root handler

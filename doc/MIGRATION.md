@@ -10,6 +10,7 @@ This guide helps you migrate to Ignitia from other Rust web frameworks and navig
   - [From Rocket](#from-rocket)
   - [From Warp](#from-warp)
 - [Ignitia Version Migrations](#ignitia-version-migrations)
+  - [v0.2.3 to v0.2.4](#v023-to-v024)
   - [v0.1.x to v0.2.x](#v01x-to-v02x)
 - [Common Migration Patterns](#common-migration-patterns)
 - [Breaking Changes](#breaking-changes)
@@ -49,27 +50,26 @@ async fn get_user(path: web::Path<u32>) -> Result<String> {
 }
 ```
 
-**After (Ignitia):**
+**After (Ignitia v0.2.4+):**
 ```rust
-use ignitia::{Router, Server, Response, Path};
-use std::net::SocketAddr;
+use ignitia::prelude::*;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let router = Router::new()
         .get("/", hello)
-        .get("/users/:id", get_user);
+        .get("/users/{id}", get_user);
 
-    let addr: SocketAddr = "127.0.0.1:8080".parse()?;
+    let addr = "127.0.0.1:8080".parse()?;
     Server::new(router, addr).ignitia().await
 }
 
-async fn hello() -> ignitia::Result<Response> {
-    Ok(Response::text("Hello World!"))
+async fn hello() -> &'static str {
+    "Hello World!"
 }
 
-async fn get_user(Path(id): Path<u32>) -> ignitia::Result<Response> {
-    Ok(Response::text(format!("User ID: {}", id)))
+async fn get_user(Path(id): Path<u32>) -> String {
+    format!("User ID: {}", id)
 }
 ```
 
@@ -84,35 +84,19 @@ App::new()
     .wrap(actix_cors::Cors::default())
 ```
 
-**After (Ignitia):**
+**After (Ignitia v0.2.4+):**
 ```rust
-use ignitia::{Router, LoggerMiddleware, CorsMiddleware};
+use ignitia::prelude::*;
 
 Router::new()
-    .middleware(LoggerMiddleware)
-    .middleware(CorsMiddleware::new().allow_any_origin())
+    .middleware(LoggerMiddleware::new())
+    .middleware(CorsMiddleware::new().build()?)
 ```
 
 #### JSON Handling
 
 **Before (Actix-web):**
 ```rust
-use actix_web::{web, Result};
-use serde::{Deserialize, Serialize};
-
-#[derive(Deserialize)]
-struct CreateUser {
-    name: String,
-    email: String,
-}
-
-#[derive(Serialize)]
-struct User {
-    id: u32,
-    name: String,
-    email: String,
-}
-
 async fn create_user(user: web::Json<CreateUser>) -> Result<web::Json<User>> {
     let new_user = User {
         id: 1,
@@ -123,35 +107,21 @@ async fn create_user(user: web::Json<CreateUser>) -> Result<web::Json<User>> {
 }
 ```
 
-**After (Ignitia):**
+**After (Ignitia v0.2.4+):**
 ```rust
-use ignitia::{Json, Response, Result};
-use serde::{Deserialize, Serialize};
-
-#[derive(Deserialize)]
-struct CreateUser {
-    name: String,
-    email: String,
-}
-
-#[derive(Serialize)]
-struct User {
-    id: u32,
-    name: String,
-    email: String,
-}
-
-async fn create_user(Json(user): Json<CreateUser>) -> Result<Response> {
+async fn create_user(Json(user): Json<CreateUser>) -> impl IntoResponse {
     let new_user = User {
         id: 1,
         name: user.name,
         email: user.email,
     };
-    Response::json(new_user)
+    Response::json(new_user)  // Infallible in v0.2.4+
 }
 ```
 
 ### From Axum
+
+Ignitia v0.2.4+ adopts middleware patterns inspired by Axum, making migration even smoother.
 
 #### Basic Router Setup
 
@@ -168,7 +138,7 @@ use axum::{
 async fn main() {
     let app = Router::new()
         .route("/", get(root))
-        .route("/users/:id", get(get_user))
+        .route("/users/{id}", get(get_user))
         .route("/users", post(create_user));
 
     axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
@@ -178,69 +148,80 @@ async fn main() {
 }
 ```
 
-**After (Ignitia):**
+**After (Ignitia v0.2.4+):**
 ```rust
-use ignitia::{Router, Server, Response, Path, Json};
-use std::net::SocketAddr;
+use ignitia::prelude::*;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let router = Router::new()
         .get("/", root)
-        .get("/users/:id", get_user)
+        .get("/users/{id}", get_user)
         .post("/users", create_user);
 
-    let addr: SocketAddr = "127.0.0.1:8080".parse()?;
+    let addr = "127.0.0.1:8080".parse()?;
     Server::new(router, addr).ignitia().await
 }
 ```
 
-#### State Management
+#### Middleware (Axum-compatible in v0.2.4)
 
-**Before (Axum):**
+**Axum:**
 ```rust
-use axum::{extract::State, Extension};
-use std::sync::Arc;
+use axum::{
+    middleware::{self, Next},
+    response::Response,
+    http::Request,
+};
 
-#[derive(Clone)]
-struct AppState {
-    db: Database,
+async fn my_middleware(req: Request<Body>, next: Next<Body>) -> Response {
+    println!("Request: {}", req.uri());
+    next.run(req).await
 }
 
-let shared_state = Arc::new(AppState {
-    db: Database::new(),
+let app = Router::new()
+    .route("/", get(handler))
+    .layer(middleware::from_fn(my_middleware));
+```
+
+**Ignitia v0.2.4+ (Same Pattern!):**
+```rust
+use ignitia::prelude::*;
+use ignitia::middleware::from_fn;
+
+let my_middleware = from_fn(|req, next| async move {
+    println!("Request: {}", req.uri.path());
+    next.run(req).await
 });
+
+let router = Router::new()
+    .get("/", handler)
+    .middleware(my_middleware);
+```
+
+#### State Management
+
+**Axum:**
+```rust
+async fn list_users(State(state): State<Arc<AppState>>) -> Json<Vec<User>> {
+    // Use state
+}
 
 let app = Router::new()
     .route("/users", get(list_users))
     .with_state(shared_state);
-
-async fn list_users(State(state): State<Arc<AppState>>) -> Json<Vec<User>> {
-    // Use state.db
-}
 ```
 
-**After (Ignitia):**
+**Ignitia v0.2.4+:**
 ```rust
-use ignitia::{Router, State, Json};
-
-#[derive(Clone)]
-struct AppState {
-    db: Database,
+async fn list_users(State(state): State<AppState>) -> impl IntoResponse {
+    // Use state
+    Response::json(users)
 }
-
-let app_state = AppState {
-    db: Database::new(),
-};
 
 let router = Router::new()
     .state(app_state)
     .get("/users", list_users);
-
-async fn list_users(State(state): State<AppState>) -> ignitia::Result<Response> {
-    // Use state.db
-    Response::json(users)
-}
 ```
 
 ### From Rocket
@@ -267,26 +248,26 @@ fn rocket() -> _ {
 }
 ```
 
-**After (Ignitia):**
+**After (Ignitia v0.2.4+):**
 ```rust
-use ignitia::{Router, Server, Response, Path};
+use ignitia::prelude::*;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let router = Router::new()
         .get("/", index)
-        .get("/users/:id", get_user);
+        .get("/users/{id}", get_user);
 
     let addr = "127.0.0.1:8080".parse()?;
     Server::new(router, addr).ignitia().await
 }
 
-async fn index() -> ignitia::Result<Response> {
-    Ok(Response::text("Hello, world!"))
+async fn index() -> &'static str {
+    "Hello, world!"
 }
 
-async fn get_user(Path(id): Path<u32>) -> ignitia::Result<Response> {
-    Ok(Response::text(format!("User ID: {}", id)))
+async fn get_user(Path(id): Path<u32>) -> String {
+    format!("User ID: {}", id)
 }
 ```
 
@@ -294,34 +275,16 @@ async fn get_user(Path(id): Path<u32>) -> ignitia::Result<Response> {
 
 **Before (Rocket):**
 ```rust
-use rocket::serde::{Deserialize, Serialize, json::Json};
-
-#[derive(Deserialize)]
-#[serde(crate = "rocket::serde")]
-struct User {
-    name: String,
-    email: String,
-}
-
 #[post("/users", data = "<user>")]
 fn create_user(user: Json<User>) -> Json<User> {
     Json(user.into_inner())
 }
 ```
 
-**After (Ignitia):**
+**After (Ignitia v0.2.4+):**
 ```rust
-use ignitia::{Json, Response, Result};
-use serde::{Deserialize, Serialize};
-
-#[derive(Deserialize, Serialize)]
-struct User {
-    name: String,
-    email: String,
-}
-
-async fn create_user(Json(user): Json<User>) -> Result<Response> {
-    Response::json(user)
+async fn create_user(Json(user): Json<User>) -> impl IntoResponse {
+    Response::json(user)  // Infallible
 }
 ```
 
@@ -333,39 +296,295 @@ async fn create_user(Json(user): Json<User>) -> Result<Response> {
 ```rust
 use warp::Filter;
 
-#[tokio::main]
-async fn main() {
-    let hello = warp::path!("hello" / String)
-        .map(|name| format!("Hello, {}!", name));
+let hello = warp::path!("hello" / String)
+    .map(|name| format!("Hello, {}!", name));
 
-    let routes = warp::get()
-        .and(hello);
+let routes = warp::get().and(hello);
 
-    warp::serve(routes)
-        .run(([127, 0, 0, 1], 3030))
-        .await;
-}
+warp::serve(routes)
+    .run((, 3030))
+    .await;
 ```
 
-**After (Ignitia):**
+**After (Ignitia v0.2.4+):**
 ```rust
-use ignitia::{Router, Server, Response, Path};
+use ignitia::prelude::*;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let router = Router::new()
-        .get("/hello/:name", hello);
+let router = Router::new()
+    .get("/hello/{name}", hello);
 
-    let addr = "127.0.0.1:8080".parse()?;
-    Server::new(router, addr).ignitia().await
-}
-
-async fn hello(Path(name): Path<String>) -> ignitia::Result<Response> {
-    Ok(Response::text(format!("Hello, {}!", name)))
-}
+Server::new(router, "127.0.0.1:8080".parse()?).ignitia().await
 ```
 
 ## Ignitia Version Migrations
+
+### v0.2.3 to v0.2.4
+
+**This is a major update with breaking changes.** Ignitia v0.2.4 introduces a new middleware system inspired by Axum and several ergonomic improvements.
+
+#### Breaking Changes Summary
+
+1. **Middleware API**: Changed from `before/after` to `handle(req, next)`
+2. **Handler Trait**: Renamed to `UniversalHandler`
+3. **Response API**: `Response::json()` now returns `Response` directly (not `Result`)
+4. **Removed Middleware**: `AuthMiddleware` and `ErrorHandlerMiddleware` removed
+5. **New Feature**: `IntoResponse` trait for automatic error conversion
+
+#### 1. Middleware API Migration
+
+**Old (v0.2.3):**
+```rust
+use async_trait::async_trait;
+
+#[async_trait]
+impl Middleware for MyMiddleware {
+    async fn before(&self, req: &mut Request) -> Result<()> {
+        // Modify request
+        req.headers.insert("X-Custom", "value".parse().unwrap());
+        Ok(())
+    }
+
+    async fn after(&self, req: &Request, res: &mut Response) -> Result<()> {
+        // Modify response
+        res.headers.insert("X-Processed", "true".parse().unwrap());
+        Ok(())
+    }
+}
+```
+
+**New (v0.2.4+, Axum-inspired):**
+```rust
+impl Middleware for MyMiddleware {
+    async fn handle(&self, mut req: Request, next: Next) -> Response {
+        // Modify request
+        req.headers.insert("X-Custom", "value".parse().unwrap());
+
+        // Call next middleware/handler
+        let mut response = next.run(req).await;
+
+        // Modify response
+        response.headers.insert("X-Processed", "true".parse().unwrap());
+
+        response
+    }
+}
+```
+
+**Using from_fn (Recommended for simple cases):**
+```rust
+use ignitia::middleware::from_fn;
+
+let my_middleware = from_fn(|mut req, next| async move {
+    req.headers.insert("X-Custom", "value".parse().unwrap());
+    let mut response = next.run(req).await;
+    response.headers.insert("X-Processed", "true".parse().unwrap());
+    response
+});
+
+router.middleware(my_middleware)
+```
+
+#### 2. Response API Migration
+
+**Old (v0.2.3):**
+```rust
+async fn handler() -> Result<Response> {
+    let data = MyData { field: "value" };
+    Ok(Response::json(data)?)  // Double Result
+}
+```
+
+**New (v0.2.4+):**
+```rust
+async fn handler() -> Result<Response> {
+    let data = MyData { field: "value" };
+    Ok(Response::json(data))  // Single Result, infallible
+}
+
+// Or even simpler with IntoResponse:
+async fn handler() -> impl IntoResponse {
+    let data = MyData { field: "value" };
+    Response::json(data)  // No Result wrapper needed!
+}
+```
+
+#### 3. Error Handling Migration
+
+**Old (v0.2.3):**
+```rust
+// Required ErrorHandlerMiddleware
+let router = Router::new()
+    .middleware(ErrorHandlerMiddleware::new())
+    .get("/users/{id}", get_user);
+
+async fn get_user(Path(id): Path<u64>) -> Result<Response> {
+    let user = database::find_user(id)
+        .await
+        .map_err(|_| Error::not_found("User not found"))?;
+
+    Ok(Response::json(user)?)
+}
+```
+
+**New (v0.2.4+):**
+```rust
+// No error middleware needed - automatic via IntoResponse
+let router = Router::new()
+    .get("/users/{id}", get_user);
+
+async fn get_user(Path(id): Path<u64>) -> Result<Response> {
+    let user = database::find_user(id)
+        .await
+        .ok_or_else(|| Error::not_found("User not found"))?;
+
+    Ok(Response::json(user))  // Errors auto-convert to responses
+}
+```
+
+#### 4. Auth Middleware Migration
+
+**Old (v0.2.3):**
+```rust
+let router = Router::new()
+    .middleware(AuthMiddleware::new(secret_key))
+    .get("/admin", admin_handler);
+```
+
+**New (v0.2.4+):**
+```rust
+use ignitia::middleware::from_fn;
+
+let auth_middleware = from_fn(|req, next| async move {
+    if let Some(token) = req.headers.get("Authorization") {
+        if verify_token(token) {
+            return next.run(req).await;
+        }
+    }
+    Response::new().with_status(StatusCode::UNAUTHORIZED)
+});
+
+let router = Router::new()
+    .middleware(auth_middleware)
+    .get("/admin", admin_handler);
+```
+
+#### 5. Handler Signature Updates
+
+**Old (v0.2.3):**
+```rust
+// Implementing Handler trait
+impl Handler for MyHandler {
+    async fn handle(&self, req: Request) -> Result<Response> {
+        Ok(Response::json(data)?)
+    }
+}
+```
+
+**New (v0.2.4+):**
+```rust
+// UniversalHandler automatically implemented for functions
+async fn my_handler() -> impl IntoResponse {
+    Response::json(data)
+}
+
+// Or with extractors
+async fn my_handler(
+    Path(id): Path<u64>,
+    Json(body): Json<CreateData>
+) -> Result<impl IntoResponse> {
+    Ok(Response::json(data))
+}
+```
+
+#### 6. Complete Migration Example
+
+**Before (v0.2.3):**
+```rust
+use ignitia::prelude::*;
+
+#[async_trait]
+struct LoggingMiddleware;
+
+#[async_trait]
+impl Middleware for LoggingMiddleware {
+    async fn before(&self, req: &mut Request) -> Result<()> {
+        println!("Request: {}", req.uri);
+        Ok(())
+    }
+
+    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
+        println!("Response: {}", res.status);
+        Ok(())
+    }
+}
+
+async fn get_user(Path(id): Path<u64>) -> Result<Response> {
+    let user = fetch_user(id).await?;
+    Ok(Response::json(user)?)
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let router = Router::new()
+        .middleware(LoggingMiddleware)
+        .middleware(ErrorHandlerMiddleware::new())
+        .middleware(AuthMiddleware::new(secret))
+        .get("/users/{id}", get_user);
+
+    Server::new(router, "127.0.0.1:8080".parse()?).ignitia().await
+}
+```
+
+**After (v0.2.4+):**
+```rust
+use ignitia::prelude::*;
+use ignitia::middleware::from_fn;
+
+async fn get_user(Path(id): Path<u64>) -> Result<Response> {
+    let user = fetch_user(id).await?;
+    Ok(Response::json(user))  // Infallible now!
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Logging middleware using from_fn
+    let logging = from_fn(|req, next| async move {
+        println!("Request: {}", req.uri.path());
+        let response = next.run(req).await;
+        println!("Response: {}", response.status);
+        response
+    });
+
+    // Auth middleware using from_fn
+    let auth = from_fn(|req, next| async move {
+        if let Some(token) = req.headers.get("Authorization") {
+            if verify_token(token) {
+                return next.run(req).await;
+            }
+        }
+        Response::new().with_status(StatusCode::UNAUTHORIZED)
+    });
+
+    let router = Router::new()
+        .middleware(logging)
+        .middleware(auth)  // No ErrorHandlerMiddleware needed!
+        .get("/users/{id}", get_user);
+
+    Server::new(router, "127.0.0.1:8080".parse()?).ignitia().await
+}
+```
+
+#### Migration Checklist for v0.2.4
+
+- [ ] Update `Cargo.toml` to version `0.2.4`
+- [ ] Replace `#[async_trait]` middleware with `handle(req, next)` pattern
+- [ ] Remove `?` from all `Response::json()` calls
+- [ ] Remove `ErrorHandlerMiddleware` usage
+- [ ] Replace `AuthMiddleware` with `from_fn` implementation
+- [ ] Update custom middleware to use `handle` method
+- [ ] Change handler returns to use `impl IntoResponse` where beneficial
+- [ ] Test all endpoints thoroughly
+- [ ] Update tests to match new API
 
 ### v0.1.x to v0.2.x
 
@@ -380,8 +599,6 @@ async fn hello(Path(name): Path<String>) -> ignitia::Result<Response> {
 
 **v0.1.x:**
 ```rust
-use ignitia::{Request, Response, Result};
-
 async fn handler(req: Request) -> Result<Response> {
     Ok(Response::text("Hello"))
 }
@@ -389,15 +606,13 @@ async fn handler(req: Request) -> Result<Response> {
 
 **v0.2.x:**
 ```rust
-use ignitia::{Response, Result};
-
 async fn handler() -> Result<Response> {
     Ok(Response::text("Hello"))
 }
 
 // Or with extractors
-async fn handler_with_json(Json(data): Json<MyData>) -> Result<Response> {
-    Ok(Response::json(data)?)
+async fn handler(Json(data): Json<MyData>) -> Result<Response> {
+    Ok(Response::json(data))
 }
 ```
 
@@ -405,13 +620,10 @@ async fn handler_with_json(Json(data): Json<MyData>) -> Result<Response> {
 
 **v0.1.x:**
 ```rust
-use ignitia::websocket::{WebSocketHandler, WebSocketConnection, Message};
-
 struct MyHandler;
 
 impl WebSocketHandler for MyHandler {
     async fn handle_connection(&self, ws: WebSocketConnection) -> Result<()> {
-        // Manual message loop
         while let Some(msg) = ws.recv().await {
             ws.send(Message::text("Echo")).await?;
         }
@@ -422,18 +634,11 @@ impl WebSocketHandler for MyHandler {
 
 **v0.2.x:**
 ```rust
-use ignitia::websocket::{websocket_handler, WebSocketConnection, Message};
-
-let handler = websocket_handler(|ws: WebSocketConnection| async move {
+let handler = websocket_handler(|ws| async move {
     while let Some(msg) = ws.recv().await {
         ws.send(Message::text("Echo")).await?;
     }
     Ok(())
-});
-
-// Or use the message handler for individual messages
-let message_handler = websocket_message_handler(|ws: WebSocketConnection, msg: Message| async move {
-    ws.send(Message::text("Echo")).await
 });
 ```
 
@@ -441,8 +646,6 @@ let message_handler = websocket_message_handler(|ws: WebSocketConnection, msg: M
 
 **v0.1.x:**
 ```rust
-use ignitia::{Server, Router};
-
 let server = Server::new(router, addr)
     .enable_http2(true)
     .run().await?;
@@ -450,13 +653,10 @@ let server = Server::new(router, addr)
 
 **v0.2.x:**
 ```rust
-use ignitia::{Server, Router, ServerConfig, Http2Config};
-
 let config = ServerConfig {
     http2: Http2Config {
         enabled: true,
         max_concurrent_streams: Some(1000),
-        initial_connection_window_size: Some(1024 * 1024),
         ..Default::default()
     },
     ..Default::default()
@@ -469,67 +669,66 @@ let server = Server::new(router, addr)
 
 ## Common Migration Patterns
 
-### Error Handling
+### Error Handling (v0.2.4+)
 
-Most frameworks use custom error types. Ignitia provides comprehensive error handling:
-
+**Using IntoResponse:**
 ```rust
-use ignitia::{Error, Result, Response};
-
-// Convert from other error types
-async fn handler() -> Result<Response> {
+async fn handler() -> Result<impl IntoResponse, Error> {
     let data = some_operation()
+        .await
         .map_err(|e| Error::internal(format!("Operation failed: {}", e)))?;
 
-    Ok(Response::json(data)?)
+    Ok(Response::json(data))
 }
 
-// Custom error types
-use ignitia::define_error;
-
-define_error! {
-    MyError {
-        NotFound(http::StatusCode::NOT_FOUND, "not_found"),
-        Validation(http::StatusCode::BAD_REQUEST, "validation_error"),
-    }
-}
-
-async fn handler() -> Result<Response> {
-    Err(MyError::NotFound("User not found".into()).into())
+// Errors automatically convert to HTTP responses
+async fn handler2() -> Result<Response> {
+    Err(Error::not_found("Resource not found"))  // Auto-converts to 404
 }
 ```
 
-### Middleware Conversion
+### Middleware Conversion (v0.2.4+)
 
-Convert middleware from other frameworks:
-
+**Simple Middleware:**
 ```rust
-use ignitia::{Middleware, Request, Response, Result};
+use ignitia::middleware::from_fn;
 
-struct CustomMiddleware {
-    config: String,
+let simple = from_fn(|req, next| async move {
+    println!("Before handler");
+    let response = next.run(req).await;
+    println!("After handler");
+    response
+});
+```
+
+**Complex Middleware:**
+```rust
+struct ComplexMiddleware {
+    config: Arc<Config>,
 }
 
-#[async_trait::async_trait]
-impl Middleware for CustomMiddleware {
-    async fn before(&self, req: &mut Request) -> Result<()> {
-        // Process request
-        Ok(())
-    }
+impl Middleware for ComplexMiddleware {
+    async fn handle(&self, req: Request, next: Next) -> Response {
+        // Pre-processing
+        if !self.validate_request(&req) {
+            return Response::new()
+                .with_status(StatusCode::BAD_REQUEST);
+        }
 
-    async fn after(&self, req: &Request, res: &mut Response) -> Result<()> {
-        // Process response
-        Ok(())
+        // Execute handler
+        let mut response = next.run(req).await;
+
+        // Post-processing
+        response.headers.insert("X-Custom", "value".parse().unwrap());
+
+        response
     }
 }
 ```
 
 ### State Management
 
-Migrate application state:
-
 ```rust
-use ignitia::{Router, State};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -550,39 +749,26 @@ let router = Router::new()
 
 async fn get_data(State(state): State<AppState>) -> Result<Response> {
     let data = state.db.fetch_data().await?;
-    Response::json(data)
+    Ok(Response::json(data))
 }
 ```
 
 ## Breaking Changes
 
+### v0.2.4 Breaking Changes
+
+1. **Middleware Trait**: Changed from `before/after` to `handle(req, next)`
+2. **Response API**: `Response::json()` is now infallible
+3. **Handler Trait**: Renamed to `UniversalHandler`
+4. **Removed Middleware**: `AuthMiddleware` and `ErrorHandlerMiddleware`
+5. **Error Handling**: Automatic via `IntoResponse` trait
+
 ### v0.2.3 Breaking Changes
 
-1. **Handler Signatures**: Direct request parameter removed in favor of extractors
-2. **WebSocket API**: Simplified handler creation functions
-3. **Middleware Trait**: Updated method signatures for better performance
-4. **Error Types**: Consolidated error handling system
-
-### Migration Steps
-
-1. **Update Dependencies**:
-   ```toml
-   [dependencies]
-   ignitia = "0.2.3"
-   ```
-
-2. **Update Handler Functions**:
-   - Remove `Request` parameter
-   - Use extractors for request data
-   - Update return types if needed
-
-3. **Update WebSocket Handlers**:
-   - Use new handler creation functions
-   - Update message handling patterns
-
-4. **Update Middleware**:
-   - Implement new middleware trait methods
-   - Update method signatures
+1. **Handler Signatures**: Direct request parameter removed
+2. **WebSocket API**: Simplified handler creation
+3. **Middleware Trait**: Updated method signatures
+4. **Error Types**: Consolidated error system
 
 ## Migration Checklist
 
@@ -593,18 +779,19 @@ async fn get_data(State(state): State<AppState>) -> Result<Response> {
 - [ ] Document current API endpoints
 - [ ] Set up test environment
 - [ ] Backup current codebase
+- [ ] Read CHANGELOG for your target version
 
-### During Migration
+### During Migration (v0.2.4)
 
-- [ ] Update `Cargo.toml` dependencies
-- [ ] Migrate basic server setup
-- [ ] Convert route definitions
-- [ ] Update handler signatures
-- [ ] Migrate middleware
-- [ ] Convert state management
-- [ ] Update error handling
-- [ ] Migrate WebSocket handlers (if applicable)
-- [ ] Update configuration
+- [ ] Update `Cargo.toml` to `ignitia = "0.2.4"`
+- [ ] Replace all `#[async_trait]` middleware implementations
+- [ ] Update middleware from `before/after` to `handle(req, next)`
+- [ ] Remove `?` from `Response::json()` calls
+- [ ] Remove `ErrorHandlerMiddleware` usage
+- [ ] Replace `AuthMiddleware` with `from_fn`
+- [ ] Update handler return types to use `impl IntoResponse`
+- [ ] Convert custom middleware to new pattern
+- [ ] Update tests for new API
 
 ### Post-Migration
 
@@ -617,55 +804,78 @@ async fn get_data(State(state): State<AppState>) -> Result<Response> {
 
 ## Troubleshooting
 
-### Common Issues
+### Common Issues (v0.2.4)
 
-#### Handler Compilation Errors
+#### "Method `before` not found" Error
 
-**Issue**: Handler functions not compiling with new signatures.
+**Issue**: Old middleware implementation.
 
-**Solution**: Use extractors instead of direct `Request` parameter:
-
+**Solution**: Update to new `handle` method:
 ```rust
-// Instead of
-async fn handler(req: Request) -> Result<Response> {
-    let body = req.body;
-    // ...
+impl Middleware for MyMiddleware {
+    async fn handle(&self, req: Request, next: Next) -> Response {
+        // Your logic here
+        next.run(req).await
+    }
 }
+```
 
-// Use
-async fn handler(Body(body): Body) -> Result<Response> {
-    // ...
-}
+#### "Expected Result, found Response" Error
+
+**Issue**: `Response::json()` no longer returns `Result`.
+
+**Solution**: Remove the `?` operator:
+```rust
+// Old
+Ok(Response::json(data)?)
+
+// New
+Ok(Response::json(data))
+```
+
+#### "ErrorHandlerMiddleware not found" Error
+
+**Issue**: Middleware removed in v0.2.4.
+
+**Solution**: Remove it - errors now auto-convert via `IntoResponse`:
+```rust
+// Old
+router.middleware(ErrorHandlerMiddleware::new())
+
+// New - just remove it!
+router  // Errors handle automatically
+```
+
+#### "AuthMiddleware not found" Error
+
+**Issue**: Middleware removed in v0.2.4.
+
+**Solution**: Use `from_fn` to create custom auth:
+```rust
+let auth = from_fn(|req, next| async move {
+    if let Some(token) = req.headers.get("Authorization") {
+        if verify_token(token) {
+            return next.run(req).await;
+        }
+    }
+    Response::new().with_status(StatusCode::UNAUTHORIZED)
+});
+
+router.middleware(auth)
 ```
 
 #### Middleware Not Working
 
-**Issue**: Custom middleware not being called.
+**Issue**: Middleware not being called.
 
-**Solution**: Ensure proper trait implementation:
-
+**Solution**: Ensure proper `handle` implementation:
 ```rust
-use async_trait::async_trait;
-
-#[async_trait]
 impl Middleware for MyMiddleware {
-    // Implement required methods
-}
-```
-
-#### WebSocket Connection Issues
-
-**Issue**: WebSocket handlers not receiving messages.
-
-**Solution**: Use the correct handler pattern:
-
-```rust
-let handler = websocket_handler(|ws| async move {
-    while let Some(msg) = ws.recv().await {
-        // Handle message
+    async fn handle(&self, req: Request, next: Next) -> Response {
+        // Must call next.run() for handler to execute
+        next.run(req).await
     }
-    Ok(())
-});
+}
 ```
 
 #### State Not Available
@@ -673,27 +883,28 @@ let handler = websocket_handler(|ws| async move {
 **Issue**: State extractor failing in handlers.
 
 **Solution**: Ensure state is properly registered:
-
 ```rust
 let router = Router::new()
-    .state(my_state)  // Register state
+    .state(my_state)  // Must register before routes
     .get("/endpoint", handler);
 ```
 
 ### Performance Considerations
 
-1. **Connection Pooling**: Migrate database connections to use Ignitia's state management
-2. **Middleware Order**: Optimize middleware order for better performance
-3. **HTTP/2 Configuration**: Tune HTTP/2 settings for your use case
-4. **Memory Usage**: Review memory allocations in handlers
+1. **Connection Pooling**: Use Ignitia's state management for database connections
+2. **Middleware Order**: Optimize for early rejection (auth → validation → handler)
+3. **HTTP/2 Configuration**: Tune settings for your use case
+4. **from_fn Performance**: Zero-cost abstraction, use freely
 
 ### Getting Help
 
 - Check the [documentation](./README.md)
+- Review [CHANGELOG.md](./CHANGELOG.md) for version details
 - Review [examples](./EXAMPLES.md)
+- Check [MIDDLEWARE_GUIDE.md](./MIDDLEWARE_GUIDE.md)
 - Submit issues on GitHub
 - Join community discussions
 
 ***
 
-This migration guide should help you transition smoothly to Ignitia. For specific use cases not covered here, please refer to the framework documentation or reach out to the community for assistance.
+This migration guide covers all major version transitions in Ignitia. For specific use cases not covered here, please refer to the framework documentation or reach out to the community for assistance.

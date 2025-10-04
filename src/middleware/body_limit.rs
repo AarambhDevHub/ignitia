@@ -22,9 +22,12 @@
 //! ```
 
 use crate::middleware::Middleware;
-use crate::{Error, Request, Result};
+use crate::{Request, Response};
 use http::StatusCode;
+use serde::Serialize;
 use tracing::warn;
+
+use super::Next;
 
 /// Body Size Limit Middleware
 ///
@@ -273,16 +276,12 @@ impl BodySizeLimitMiddleware {
 
 #[async_trait::async_trait]
 impl Middleware for BodySizeLimitMiddleware {
-    /// Check request body size before processing
-    ///
-    /// This method is called before the request handler and will reject requests
-    /// that exceed the configured size limit.
-    async fn before(&self, req: &mut Request) -> Result<()> {
+    async fn handle(&self, req: Request, next: Next) -> Response {
         let body_size = req.body.len();
 
         // Fast path: if body size is within limit, continue
         if body_size <= self.max_size {
-            return Ok(());
+            return next.run(req).await;
         }
 
         // Log the rejection if enabled
@@ -309,12 +308,13 @@ impl Middleware for BodySizeLimitMiddleware {
         };
 
         // Create a custom error that will return 413 Payload Too Large
-        Err(Error::Custom(Box::new(PayloadTooLargeError {
+        Response::json(PayloadTooLargeError {
             message,
             current_size: body_size,
             max_size: self.max_size,
             include_metadata: self.include_size_info,
-        })))
+        })
+        .with_status(StatusCode::BAD_REQUEST)
     }
 }
 
@@ -322,7 +322,7 @@ impl Middleware for BodySizeLimitMiddleware {
 ///
 /// This error type implements the CustomError trait to provide detailed
 /// error information including metadata about the size limits.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct PayloadTooLargeError {
     message: String,
     current_size: usize,
@@ -333,37 +333,6 @@ struct PayloadTooLargeError {
 impl std::fmt::Display for PayloadTooLargeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)
-    }
-}
-
-impl crate::error::CustomError for PayloadTooLargeError {
-    fn status_code(&self) -> StatusCode {
-        StatusCode::PAYLOAD_TOO_LARGE // 413
-    }
-
-    fn error_type(&self) -> &'static str {
-        "payload_too_large"
-    }
-
-    fn error_code(&self) -> Option<String> {
-        Some("BODY_SIZE_LIMIT_EXCEEDED".to_string())
-    }
-
-    fn metadata(&self) -> Option<serde_json::Value> {
-        if !self.include_metadata {
-            return None;
-        }
-
-        Some(serde_json::json!({
-            "current_size_bytes": self.current_size,
-            "max_size_bytes": self.max_size,
-            "current_size_formatted": BodySizeLimitMiddleware::format_size(self.current_size),
-            "max_size_formatted": BodySizeLimitMiddleware::format_size(self.max_size),
-            "exceeded_by_bytes": self.current_size.saturating_sub(self.max_size),
-            "exceeded_by_formatted": BodySizeLimitMiddleware::format_size(
-                self.current_size.saturating_sub(self.max_size)
-            )
-        }))
     }
 }
 

@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
 
     let router = Router::new()
         .get("/", serve_index)
-        .get("/*path", serve_file); // This now works!
+        .get("/{*path}", serve_file);
 
     let addr: SocketAddr = "127.0.0.1:3003".parse().unwrap();
     let server = Server::new(router, addr);

@@ -1,614 +1,504 @@
-//! # WebSocket Handler System
+//! WebSocket Handler System with Universal Extractor Support
 //!
-//! This module provides a flexible and efficient WebSocket handler system that supports
-//! multiple handler patterns for different use cases. The handler system is built around
-//! the `WebSocketHandler` trait which provides a unified interface for WebSocket message
-//! processing while allowing for various optimization strategies.
+//! This module provides a flexible WebSocket handler system that supports:
+//! - Multiple extractor parameters (State, Path, Query, Headers, etc.)
+//! - Any return type that implements `IntoResponse`
+//! - Zero-copy performance optimizations
+//! - Type-safe parameter extraction
 //!
-//! ## Handler Types
+//! # Examples
 //!
-//! The module offers several handler types optimized for different scenarios:
-//!
-//! - **Simple Handlers**: Basic connection-level handling with full control
-//! - **Message Handlers**: Optimized per-message processing
-//! - **Batch Handlers**: Efficient bulk message processing
-//!
-//! ## Architecture
-//!
-//! The handler system uses an async trait-based architecture that provides:
-//!
-//! - **Flexibility**: Multiple handler patterns for different use cases
-//! - **Performance**: Optimized implementations for high-throughput scenarios
-//! - **Simplicity**: Easy-to-use convenience functions for common patterns
-//! - **Error Handling**: Comprehensive error handling and recovery
-//!
-//! ## Handler Patterns
-//!
-//! ### 1. Connection Handler
-//!
-//! The most basic handler that gives you full control over the WebSocket connection:
+//! ## Basic WebSocket Handler (No Extractors)
 //!
 //! ```
-//! use ignitia::websocket::{websocket_handler, WebSocketConnection, Message};
+//! use ignitia::prelude::*;
 //!
-//! let handler = websocket_handler(|ws: WebSocketConnection| async move {
-//!     // Send welcome message
-//!     ws.send_text("Welcome to the server!".to_string()).await?;
-//!
-//!     // Handle messages in a loop
-//!     while let Some(message) = ws.recv().await {
-//!         match message {
+//! router.websocket("/ws", |mut ws: WebSocketConnection| async move {
+//!     while let Some(msg) = ws.recv().await {
+//!         match msg {
 //!             Message::Text(text) => {
-//!                 println!("Received: {}", text);
-//!                 ws.send_text(format!("Echo: {}", text)).await?;
-//!             }
-//!             Message::Binary(data) => {
-//!                 println!("Received {} bytes", data.len());
-//!                 ws.send_bytes(data).await?;
-//!             }
-//!             Message::Close(_) => {
-//!                 println!("Connection closed");
-//!                 break;
-//!             }
-//!             _ => {}
-//!         }
-//!     }
-//!
-//!     Ok(())
-//! });
-//! ```
-//!
-//! ### 2. Message Handler
-//!
-//! Optimized for processing individual messages with automatic connection management:
-//!
-//! ```
-//! use ignitia::websocket::{websocket_message_handler, WebSocketConnection, Message};
-//!
-//! let handler = websocket_message_handler(|ws: WebSocketConnection, message: Message| async move {
-//!     match message {
-//!         Message::Text(text) => {
-//!             let response = format!("Processed: {}", text.to_uppercase());
-//!             ws.send_text(response).await?;
-//!         }
-//!         Message::Binary(data) => {
-//!             // Process binary data
-//!             let processed = data.iter().map(|b| b.wrapping_add(1)).collect::<Vec<u8>>();
-//!             ws.send_bytes(bytes::Bytes::from(processed)).await?;
-//!         }
-//!         _ => {}
-//!     }
-//!     Ok(())
-//! });
-//! ```
-//!
-//! ### 3. Batch Handler
-//!
-//! Efficient for high-throughput scenarios where messages can be processed in batches:
-//!
-//! ```
-//! use ignitia::websocket::{websocket_batch_handler, WebSocketConnection, Message};
-//!
-//! let handler = websocket_batch_handler(
-//!     |ws: WebSocketConnection, messages: Vec<Message>| async move {
-//!         println!("Processing batch of {} messages", messages.len());
-//!
-//!         let mut responses = Vec::new();
-//!         for message in messages {
-//!             if let Message::Text(text) = message {
-//!                 responses.push(Message::text(format!("Batch processed: {}", text)));
-//!             }
-//!         }
-//!
-//!         if !responses.is_empty() {
-//!             ws.send_batch(responses).await?;
-//!         }
-//!
-//!         Ok(())
-//!     },
-//!     10,   // batch size
-//!     100,  // timeout in milliseconds
-//! );
-//! ```
-//!
-//! ## Advanced Usage
-//!
-//! ### Custom Handler Implementation
-//!
-//! ```
-//! use ignitia::websocket::{WebSocketHandler, WebSocketConnection, Message};
-//! use std::collections::HashMap;
-//! use std::sync::Arc;
-//! use tokio::sync::Mutex;
-//!
-//! struct ChatHandler {
-//!     rooms: Arc<Mutex<HashMap<String, Vec<WebSocketConnection>>>>,
-//! }
-//!
-//! impl ChatHandler {
-//!     fn new() -> Self {
-//!         Self {
-//!             rooms: Arc::new(Mutex::new(HashMap::new())),
-//!         }
-//!     }
-//! }
-//!
-//! #[async_trait::async_trait]
-//! impl WebSocketHandler for ChatHandler {
-//!     async fn handle_connection(&self, websocket: WebSocketConnection) -> ignitia::Result<()> {
-//!         // Join default room
-//!         {
-//!             let mut rooms = self.rooms.lock().await;
-//!             rooms.entry("general".to_string())
-//!                  .or_insert_with(Vec::new)
-//!                  .push(websocket.clone());
-//!         }
-//!
-//!         // Handle messages
-//!         while let Some(message) = websocket.recv().await {
-//!             match message {
-//!                 Message::Text(text) => {
-//!                     // Broadcast to all clients in the room
-//!                     let rooms = self.rooms.lock().await;
-//!                     if let Some(clients) = rooms.get("general") {
-//!                         for client in clients {
-//!                             let _ = client.send_text(text.clone()).await;
-//!                         }
-//!                     }
-//!                 }
-//!                 Message::Close(_) => break,
-//!                 _ => {}
-//!             }
-//!         }
-//!
-//!         // Remove from room on disconnect
-//!         // (In a real implementation, you'd need to track and remove the specific connection)
-//!         Ok(())
-//!     }
-//! }
-//! ```
-//!
-//! ## Performance Considerations
-//!
-//! - **Connection Handlers**: Best for complex logic that needs full connection control
-//! - **Message Handlers**: Optimal for simple per-message processing
-//! - **Batch Handlers**: Most efficient for high-throughput scenarios
-//! - **Custom Handlers**: Maximum flexibility but require careful resource management
-//!
-//! ## Error Handling
-//!
-//! All handlers should implement proper error handling:
-//!
-//! ```
-//! use ignitia::websocket::{websocket_handler, WebSocketConnection, Message};
-//!
-//! let handler = websocket_handler(|ws: WebSocketConnection| async move {
-//!     while let Some(message) = ws.recv().await {
-//!         match message {
-//!             Message::Text(text) => {
-//!                 // Process message with error handling
-//!                 if let Err(e) = process_message(&text).await {
-//!                     tracing::error!("Failed to process message: {}", e);
-//!
-//!                     // Send error response to client
-//!                     let error_msg = format!("Error: {}", e);
-//!                     if let Err(send_err) = ws.send_text(error_msg).await {
-//!                         tracing::error!("Failed to send error response: {}", send_err);
-//!                         break; // Connection is likely broken
-//!                     }
-//!                 }
+//!                 ws.send_text(format!("Echo: {}", text)).await.ok();
 //!             }
 //!             Message::Close(_) => break,
 //!             _ => {}
 //!         }
 //!     }
-//!     Ok(())
+//!     Response::ok()
 //! });
+//! ```
 //!
-//! async fn process_message(text: &str) -> Result<(), Box<dyn std::error::Error>> {
-//!     // Your message processing logic here
-//!     if text.is_empty() {
-//!         return Err("Empty message not allowed".into());
-//!     }
-//!     Ok(())
+//! ## WebSocket with State Extractor
+//!
+//! ```
+//! use ignitia::prelude::*;
+//! use std::sync::Arc;
+//! use tokio::sync::RwLock;
+//!
+//! #[derive(Clone)]
+//! struct AppState {
+//!     connections: Arc<RwLock<Vec<String>>>,
 //! }
+//!
+//! router
+//!     .state(AppState {
+//!         connections: Arc::new(RwLock::new(Vec::new())),
+//!     })
+//!     .websocket("/ws", |
+//!         State(state): State<AppState>,
+//!         mut ws: WebSocketConnection
+//!     | async move {
+//!         // Access shared state
+//!         state.connections.write().await.push("new_user".to_string());
+//!
+//!         ws.send_text("Connected!").await.ok();
+//!
+//!         while let Some(msg) = ws.recv().await {
+//!             // Handle messages...
+//!         }
+//!
+//!         "Connection closed"
+//!     });
+//! ```
+//!
+//! ## WebSocket with Path Parameters
+//!
+//! ```
+//! use ignitia::prelude::*;
+//! use serde::Deserialize;
+//!
+//! #[derive(Deserialize)]
+//! struct RoomParams {
+//!     room_id: String,
+//! }
+//!
+//! router.websocket("/ws/room/:room_id", |
+//!     Path(params): Path<RoomParams>,
+//!     mut ws: WebSocketConnection
+//! | async move {
+//!     ws.send_text(format!("Welcome to room: {}", params.room_id)).await.ok();
+//!
+//!     while let Some(msg) = ws.recv().await {
+//!         // Handle messages in this specific room...
+//!     }
+//!
+//!     Json(serde_json::json!({ "status": "completed" }))
+//! });
+//! ```
+//!
+//! ## WebSocket with Multiple Extractors
+//!
+//! ```
+//! use ignitia::prelude::*;
+//!
+//! router.websocket("/ws/:user_id", |
+//!     Path(path): Path<HashMap<String, String>>,
+//!     Query(query): Query<HashMap<String, String>>,
+//!     State(state): State<AppState>,
+//!     Headers(headers): Headers,
+//!     mut ws: WebSocketConnection
+//! | async move {
+//!     let user_id = &path["user_id"];
+//!     let token = query.get("token");
+//!
+//!     // Validate token from query params
+//!     if token.is_none() {
+//!         return Response::unauthorized("Token required");
+//!     }
+//!
+//!     // Send welcome message
+//!     ws.send_text(format!("Authenticated as {}", user_id)).await.ok();
+//!
+//!     while let Some(msg) = ws.recv().await {
+//!         // Handle authenticated messages...
+//!     }
+//!
+//!     (StatusCode::OK, "Session ended")
+//! });
 //! ```
 
 use super::connection::WebSocketConnection;
 use super::message::Message;
-use crate::Result;
+use crate::handler::extractor::FromRequest;
+use crate::response::IntoResponse;
+use crate::{Request, Response};
 use std::future::Future;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Type alias for boxed futures used in WebSocket handlers.
-///
-/// This type represents an async computation that returns a `Result<()>` and can be
-/// sent across thread boundaries. It's used internally by the handler system to
-/// manage asynchronous operations.
+/// Type alias for boxed futures
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// The core trait for WebSocket message handling.
+// ============================================================================
+// Core WebSocket Handler Trait
+// ============================================================================
+
+/// Core WebSocket handler trait that receives both request context and WebSocket connection.
 ///
-/// This trait defines the interface for handling WebSocket connections and provides
-/// optional hooks for connection lifecycle events. Implementors can choose to override
-/// only the methods they need, making it flexible for various use cases.
+/// This trait is implemented automatically for functions that match the signature
+/// requirements through the `UniversalWebSocketHandler` trait.
 ///
-/// ## Lifecycle Methods
+/// # Implementation Note
 ///
-/// The trait provides several lifecycle hooks:
-///
-/// - `handle_connection`: Main connection handling method (required)
-/// - `on_connect`: Called when a connection is established (optional)
-/// - `on_message`: Called for each incoming message (optional)
-/// - `on_disconnect`: Called when a connection closes (optional)
-///
-/// ## Implementation Examples
-///
-/// ### Simple Echo Handler
-///
-/// ```
-/// use ignitia::websocket::{WebSocketHandler, WebSocketConnection, Message};
-///
-/// struct EchoHandler;
-///
-/// #[async_trait::async_trait]
-/// impl WebSocketHandler for EchoHandler {
-///     async fn handle_connection(&self, websocket: WebSocketConnection) -> ignitia::Result<()> {
-///         while let Some(message) = websocket.recv().await {
-///             match message {
-///                 Message::Text(text) => {
-///                     websocket.send_text(format!("Echo: {}", text)).await?;
-///                 }
-///                 Message::Close(_) => break,
-///                 _ => {}
-///             }
-///         }
-///         Ok(())
-///     }
-/// }
-/// ```
-///
-/// ### Stateful Handler
-///
-/// ```
-/// use ignitia::websocket::{WebSocketHandler, WebSocketConnection, Message};
-/// use std::sync::atomic::{AtomicU64, Ordering};
-///
-/// struct CounterHandler {
-///     message_count: AtomicU64,
-/// }
-///
-/// impl CounterHandler {
-///     fn new() -> Self {
-///         Self {
-///             message_count: AtomicU64::new(0),
-///         }
-///     }
-/// }
-///
-/// #[async_trait::async_trait]
-/// impl WebSocketHandler for CounterHandler {
-///     async fn on_connect(&self, websocket: &WebSocketConnection) -> ignitia::Result<()> {
-///         websocket.send_text("Connected! Send me messages to count them.".to_string()).await
-///     }
-///
-///     async fn handle_connection(&self, websocket: WebSocketConnection) -> ignitia::Result<()> {
-///         self.on_connect(&websocket).await?;
-///
-///         while let Some(message) = websocket.recv().await {
-///             if let Message::Text(_) = message {
-///                 let count = self.message_count.fetch_add(1, Ordering::Relaxed) + 1;
-///                 let response = format!("Message #{}: Received!", count);
-///                 websocket.send_text(response).await?;
-///             } else if let Message::Close(_) = message {
-///                 break;
-///             }
-///         }
-///
-///         self.on_disconnect(&websocket, Some("Client disconnected")).await
-///     }
-///
-///     async fn on_disconnect(
-///         &self,
-///         _websocket: &WebSocketConnection,
-///         reason: Option<&str>,
-///     ) -> ignitia::Result<()> {
-///         let total = self.message_count.load(Ordering::Relaxed);
-///         println!("Connection closed ({}). Total messages processed: {}",
-///                  reason.unwrap_or("unknown"), total);
-///         Ok(())
-///     }
-/// }
-/// ```
+/// You typically don't implement this trait directly. Instead, use the
+/// `UniversalWebSocketHandler` trait which provides automatic conversion.
 #[async_trait::async_trait]
 pub trait WebSocketHandler: Send + Sync {
-    /// Handles a WebSocket connection for its entire lifetime.
-    ///
-    /// This is the primary method that must be implemented by all WebSocket handlers.
-    /// It receives a `WebSocketConnection` and is responsible for managing the
-    /// connection until it closes or encounters an error.
+    /// Handle a WebSocket connection with full request context.
     ///
     /// # Parameters
     ///
-    /// - `websocket`: The WebSocket connection to handle
+    /// * `req` - The HTTP request that initiated the WebSocket upgrade
+    /// * `websocket` - The established WebSocket connection
     ///
     /// # Returns
     ///
-    /// - `Ok(())` when the connection closes normally
-    /// - `Err(Error)` if an error occurs during handling
-    ///
-    /// # Implementation Guidelines
-    ///
-    /// - Use a loop to continuously receive messages
-    /// - Handle different message types appropriately
-    /// - Break the loop on `Message::Close` or errors
-    /// - Perform any cleanup before returning
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use ignitia::websocket::{WebSocketHandler, WebSocketConnection, Message};
-    ///
-    /// struct MyHandler;
-    ///
-    /// #[async_trait::async_trait]
-    /// impl WebSocketHandler for MyHandler {
-    ///     async fn handle_connection(&self, websocket: WebSocketConnection) -> ignitia::Result<()> {
-    ///         // Send initial message
-    ///         websocket.send_text("Welcome!".to_string()).await?;
-    ///
-    ///         // Process messages
-    ///         while let Some(message) = websocket.recv().await {
-    ///             match message {
-    ///                 Message::Text(text) => {
-    ///                     // Echo the message
-    ///                     websocket.send_text(text).await?;
-    ///                 }
-    ///                 Message::Close(_) => {
-    ///                     println!("Connection closing");
-    ///                     break;
-    ///                 }
-    ///                 _ => {} // Handle other message types as needed
-    ///             }
-    ///         }
-    ///
-    ///         Ok(())
-    ///     }
-    /// }
-    /// ```
-    async fn handle_connection(&self, websocket: WebSocketConnection) -> Result<()>;
-
-    /// Called when a message is received (optional hook).
-    ///
-    /// This method provides a convenient hook for handling individual messages
-    /// without implementing the full connection loop. It's called automatically
-    /// by some handler implementations.
-    ///
-    /// # Parameters
-    ///
-    /// - `websocket`: Reference to the WebSocket connection
-    /// - `message`: The received message
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())` if the message was processed successfully
-    /// - `Err(Error)` if an error occurred during processing
-    ///
-    /// # Default Implementation
-    ///
-    /// The default implementation does nothing and returns `Ok(())`.
-    async fn on_message(&self, _websocket: &WebSocketConnection, _message: Message) -> Result<()> {
-        Ok(())
-    }
-
-    /// Called when a connection is established (optional hook).
-    ///
-    /// This method can be used to perform initialization tasks when a new
-    /// WebSocket connection is established, such as sending welcome messages
-    /// or setting up connection-specific state.
-    ///
-    /// # Parameters
-    ///
-    /// - `websocket`: Reference to the newly established WebSocket connection
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())` if initialization was successful
-    /// - `Err(Error)` if an error occurred during initialization
-    ///
-    /// # Default Implementation
-    ///
-    /// The default implementation does nothing and returns `Ok(())`.
-    async fn on_connect(&self, _websocket: &WebSocketConnection) -> Result<()> {
-        Ok(())
-    }
-
-    /// Called when a connection is closed (optional hook).
-    ///
-    /// This method can be used to perform cleanup tasks when a WebSocket
-    /// connection is closed, such as logging, updating statistics, or
-    /// cleaning up connection-specific resources.
-    ///
-    /// # Parameters
-    ///
-    /// - `websocket`: Reference to the closing WebSocket connection
-    /// - `reason`: Optional reason for the disconnection
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())` if cleanup was successful
-    /// - `Err(Error)` if an error occurred during cleanup
-    ///
-    /// # Default Implementation
-    ///
-    /// The default implementation does nothing and returns `Ok(())`.
-    async fn on_disconnect(
-        &self,
-        _websocket: &WebSocketConnection,
-        _reason: Option<&str>,
-    ) -> Result<()> {
-        Ok(())
-    }
+    /// A `Response` indicating the result of the WebSocket session
+    async fn handle(&self, req: Request, websocket: WebSocketConnection) -> Response;
 }
 
-/// Function-based WebSocket handler type.
-///
-/// This type represents a WebSocket handler implemented as a function that takes
-/// a `WebSocketConnection` and returns a future. It's used internally by the
-/// convenience functions to create handlers from closures.
-pub type WebSocketHandlerFn =
-    Arc<dyn Fn(WebSocketConnection) -> BoxFuture<'static, Result<()>> + Send + Sync>;
+// ============================================================================
+// Universal Handler Trait (with Extractor Support)
+// ============================================================================
 
+/// Universal WebSocket handler trait that supports automatic parameter extraction.
+///
+/// This trait enables handlers to accept extracted parameters like `State<T>`,
+/// `Path<T>`, `Query<T>`, etc., before receiving the WebSocket connection.
+///
+/// # Type Parameter
+///
+/// * `T` - Phantom type parameter used for extractor type resolution
+///
+/// # Automatic Implementation
+///
+/// This trait is automatically implemented for functions with 0-7 extractors
+/// plus a `WebSocketConnection` parameter, thanks to the macro below.
 #[async_trait::async_trait]
-impl WebSocketHandler for WebSocketHandlerFn {
-    async fn handle_connection(&self, websocket: WebSocketConnection) -> Result<()> {
-        (self)(websocket).await
-    }
+pub trait UniversalWebSocketHandler<T>: Clone + Send + Sync + 'static {
+    /// Call the handler with request and WebSocket connection.
+    ///
+    /// Extractors are processed internally before calling the actual handler function.
+    async fn call(&self, req: Request, websocket: WebSocketConnection) -> Response;
 }
 
-/// Creates a WebSocket handler from a function or closure.
+/// Convert a `UniversalWebSocketHandler` to a trait object `WebSocketHandler`.
 ///
-/// This is the most flexible way to create a WebSocket handler. The function
-/// receives a `WebSocketConnection` and has full control over the connection
-/// lifecycle. This is ideal for complex logic that needs fine-grained control.
+/// This function wraps handlers in a type-erased trait object for storage in the router.
 ///
 /// # Parameters
 ///
-/// - `f`: A function or closure that takes a `WebSocketConnection` and returns a future
+/// * `handler` - Any type implementing `UniversalWebSocketHandler<T>`
 ///
 /// # Returns
 ///
-/// A `WebSocketHandlerFn` that can be used with the router
+/// An `Arc<dyn WebSocketHandler>` that can be stored in the router
 ///
-/// # Type Parameters
-///
-/// - `F`: The function type (inferred from the closure)
-/// - `Fut`: The future type returned by the function (inferred)
-///
-/// # Examples
-///
-/// ### Simple Echo Server
+/// # Example
 ///
 /// ```
-/// use ignitia::websocket::{websocket_handler, WebSocketConnection, Message};
+/// let handler = |ws: WebSocketConnection| async move {
+///     // Handler implementation
+///     Response::ok()
+/// };
 ///
-/// let handler = websocket_handler(|ws: WebSocketConnection| async move {
-///     while let Some(message) = ws.recv().await {
-///         match message {
-///             Message::Text(text) => {
-///                 ws.send_text(format!("Echo: {}", text)).await?;
-///             }
-///             Message::Close(_) => break,
-///             _ => {}
-///         }
-///     }
-///     Ok(())
-/// });
+/// let wrapped = universal_ws_handler(handler);
 /// ```
-///
-/// ### JSON API Handler
-///
-/// ```
-/// use ignitia::websocket::{websocket_handler, WebSocketConnection, Message};
-/// use serde::{Deserialize, Serialize};
-///
-/// #[derive(Deserialize)]
-/// struct Request {
-///     action: String,
-///     data: serde_json::Value,
-/// }
-///
-/// #[derive(Serialize)]
-/// struct Response {
-///     success: bool,
-///     result: serde_json::Value,
-/// }
-///
-/// let handler = websocket_handler(|ws: WebSocketConnection| async move {
-///     while let Some(message) = ws.recv().await {
-///         match message {
-///             Message::Text(text) => {
-///                 if let Ok(request) = serde_json::from_str::<Request>(&text) {
-///                     let response = match request.action.as_str() {
-///                         "ping" => Response {
-///                             success: true,
-///                             result: serde_json::json!({"message": "pong"}),
-///                         },
-///                         _ => Response {
-///                             success: false,
-///                             result: serde_json::json!({"error": "Unknown action"}),
-///                         },
-///                     };
-///
-///                     ws.send_json(&response).await?;
-///                 }
-///             }
-///             Message::Close(_) => break,
-///             _ => {}
-///         }
-///     }
-///     Ok(())
-/// });
-/// ```
-///
-/// ### Connection State Management
-///
-/// ```
-/// use ignitia::websocket::{websocket_handler, WebSocketConnection, Message};
-/// use std::sync::atomic::{AtomicU32, Ordering};
-/// use std::sync::Arc;
-///
-/// let connection_counter = Arc::new(AtomicU32::new(0));
-///
-/// let handler = websocket_handler(move |ws: WebSocketConnection| {
-///     let counter = Arc::clone(&connection_counter);
-///     async move {
-///         let conn_id = counter.fetch_add(1, Ordering::Relaxed);
-///         println!("New connection: {}", conn_id);
-///
-///         ws.send_text(format!("Welcome! Your connection ID is {}", conn_id)).await?;
-///
-///         while let Some(message) = ws.recv().await {
-///             match message {
-///                 Message::Text(text) => {
-///                     let response = format!("[{}] Received: {}", conn_id, text);
-///                     ws.send_text(response).await?;
-///                 }
-///                 Message::Close(_) => break,
-///                 _ => {}
-///             }
-///         }
-///
-///         println!("Connection {} closed", conn_id);
-///         Ok(())
-///     }
-/// });
-/// ```
-pub fn websocket_handler<F, Fut>(f: F) -> WebSocketHandlerFn
+pub fn universal_ws_handler<H, T>(handler: H) -> Arc<dyn WebSocketHandler>
 where
-    F: Fn(WebSocketConnection) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<()>> + Send + 'static,
+    H: UniversalWebSocketHandler<T>,
+    T: Send + Sync + 'static,
 {
-    Arc::new(move |ws| Box::pin(f(ws)))
+    Arc::new(WebSocketHandlerWrapper {
+        handler,
+        _phantom: PhantomData,
+    })
 }
 
-/// Handler for processing messages in batches.
+/// Internal wrapper that converts `UniversalWebSocketHandler` to `WebSocketHandler`.
 ///
-/// This handler collects incoming messages into batches and processes them together,
-/// which can be more efficient for high-throughput scenarios. It automatically
-/// handles batching logic, timeout management, and connection cleanup.
+/// This struct uses `PhantomData` to maintain type information for the generic
+/// parameter `T` without actually storing it at runtime (zero-cost abstraction).
+struct WebSocketHandlerWrapper<H, T> {
+    handler: H,
+    _phantom: PhantomData<T>,
+}
+
+#[async_trait::async_trait]
+impl<H, T> WebSocketHandler for WebSocketHandlerWrapper<H, T>
+where
+    H: UniversalWebSocketHandler<T>,
+    T: Send + Sync + 'static,
+{
+    async fn handle(&self, req: Request, websocket: WebSocketConnection) -> Response {
+        self.handler.call(req, websocket).await
+    }
+}
+
+// ============================================================================
+// Extractor Implementations (0-7 parameters)
+// ============================================================================
+
+/// Implementation for handlers with no extractors (just WebSocket connection).
 ///
-/// # Type Parameters
+/// # Example
 ///
-/// - `F`: The batch processing function type
+/// ```
+/// router.websocket("/ws", |mut ws: WebSocketConnection| async move {
+///     ws.send_text("Hello!").await.ok();
+///     Response::ok()
+/// });
+/// ```
+#[async_trait::async_trait]
+impl<F, Fut, R> UniversalWebSocketHandler<()> for F
+where
+    F: Fn(WebSocketConnection) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse,
+{
+    async fn call(&self, _req: Request, websocket: WebSocketConnection) -> Response {
+        let result = self(websocket).await;
+        result.into_response()
+    }
+}
+
+/// Macro to generate implementations for handlers with 1-7 extractors.
 ///
-/// # Fields
+/// This macro generates code that:
+/// 1. Extracts each parameter from the request using `FromRequest`
+/// 2. Returns early with an error response if extraction fails
+/// 3. Calls the handler with all extracted parameters plus WebSocket
+/// 4. Converts the handler's return value to a `Response`
 ///
-/// - `handler`: The batch processing function
-/// - `batch_size`: Maximum number of messages per batch
-/// - `batch_timeout`: Maximum time to wait for a full batch
+/// # Generated Implementations
+///
+/// For each number of parameters (1-7), generates an implementation like:
+///
+/// ```
+/// impl<F, Fut, T1, T2, R> UniversalWebSocketHandler<(T1, T2)> for F
+/// where
+///     F: Fn(T1, T2, WebSocketConnection) -> Fut + Clone + Send + Sync + 'static,
+///     Fut: Future<Output = R> + Send + 'static,
+///     R: IntoResponse,
+///     T1: FromRequest + Send,
+///     T2: FromRequest + Send,
+/// {
+///     async fn call(&self, req: Request, websocket: WebSocketConnection) -> Response {
+///         let t1 = match T1::from_request(&req) {
+///             Ok(val) => val,
+///             Err(error_response) => return error_response.into_response(),
+///         };
+///         let t2 = match T2::from_request(&req) {
+///             Ok(val) => val,
+///             Err(error_response) => return error_response.into_response(),
+///         };
+///
+///         let result = self(t1, t2, websocket).await;
+///         result.into_response()
+///     }
+/// }
+/// ```
+macro_rules! impl_ws_handler {
+    ($($ty:ident),+) => {
+        #[async_trait::async_trait]
+        impl<F, Fut, $($ty,)+ R> UniversalWebSocketHandler<($($ty,)+)> for F
+        where
+            F: Fn($($ty,)+ WebSocketConnection) -> Fut + Clone + Send + Sync + 'static,
+            Fut: Future<Output = R> + Send + 'static,
+            R: IntoResponse,
+            $($ty: FromRequest + Send,)+
+        {
+            async fn call(&self, req: Request, websocket: WebSocketConnection) -> Response {
+                // Extract each parameter in order
+                $(
+                    let $ty = match $ty::from_request(&req) {
+                        Ok(val) => val,
+                        Err(error_response) => return error_response.into_response(),
+                    };
+                )+
+
+                // Call handler with extracted parameters and websocket
+                let result = self($($ty,)+ websocket).await;
+                result.into_response()
+            }
+        }
+    };
+}
+
+// Generate implementations for 1-7 extractors
+impl_ws_handler!(T1);
+impl_ws_handler!(T1, T2);
+impl_ws_handler!(T1, T2, T3);
+impl_ws_handler!(T1, T2, T3, T4);
+impl_ws_handler!(T1, T2, T3, T4, T5);
+impl_ws_handler!(T1, T2, T3, T4, T5, T6);
+impl_ws_handler!(T1, T2, T3, T4, T5, T6, T7);
+
+// ============================================================================
+// Helper Functions (Backward Compatibility)
+// ============================================================================
+
+/// Legacy function pointer type for WebSocket handlers.
+///
+/// # Deprecation Note
+///
+/// This type is maintained for backward compatibility. New code should use
+/// `UniversalWebSocketHandler` instead.
+pub type WebSocketHandlerFn =
+    Arc<dyn Fn(WebSocketConnection) -> BoxFuture<'static, Response> + Send + Sync>;
+
+/// Create a WebSocket handler from a function.
+///
+/// This is a convenience function that wraps a closure or function pointer
+/// into a handler compatible with the router.
+///
+/// # Example
+///
+/// ```
+/// let handler = websocket_handler(|mut ws: WebSocketConnection| async move {
+///     ws.send_text("Hello!").await.ok();
+///     Response::ok()
+/// });
+///
+/// router.websocket("/ws", handler);
+/// ```
+pub fn websocket_handler<F, Fut, R>(f: F) -> impl UniversalWebSocketHandler<()>
+where
+    F: Fn(WebSocketConnection) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse,
+{
+    f
+}
+
+// ============================================================================
+// Advanced: Message-Based Handlers
+// ============================================================================
+
+/// Optimized handler that processes individual messages with automatic loop.
+///
+/// This handler type automatically manages the message receive loop and calls
+/// your function for each incoming message until the connection closes.
+///
+/// # Example
+///
+/// ```
+/// use ignitia::prelude::*;
+///
+/// let handler = websocket_message_handler(|ws: WebSocketConnection, msg: Message| async move {
+///     match msg {
+///         Message::Text(text) => {
+///             ws.send_text(format!("Received: {}", text)).await.ok();
+///             Response::ok()
+///         }
+///         Message::Binary(data) => {
+///             ws.send_binary(data).await.ok();
+///             Response::ok()
+///         }
+///         _ => Response::ok()
+///     }
+/// });
+///
+/// router.websocket("/ws/messages", handler);
+/// ```
+pub struct OptimizedMessageHandler<F> {
+    handler: Arc<F>,
+}
+
+impl<F> OptimizedMessageHandler<F> {
+    /// Create a new message handler from a function.
+    pub fn new(handler: F) -> Self {
+        Self {
+            handler: Arc::new(handler),
+        }
+    }
+}
+
+impl<F> Clone for OptimizedMessageHandler<F> {
+    fn clone(&self) -> Self {
+        Self {
+            handler: Arc::clone(&self.handler),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl<F, Fut, R> UniversalWebSocketHandler<()> for OptimizedMessageHandler<F>
+where
+    F: Fn(WebSocketConnection, Message) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse,
+{
+    async fn call(&self, _req: Request, websocket: WebSocketConnection) -> Response {
+        while let Some(message) = websocket.recv().await {
+            match message {
+                Message::Close(_) => break,
+                _ => {
+                    let result = (self.handler)(websocket.clone(), message).await;
+                    let response = result.into_response();
+
+                    // If handler returns error response, close connection
+                    if !response.status.is_success() {
+                        tracing::debug!("WebSocket handler returned error, closing connection");
+                        let _ = websocket.close(None).await;
+                        return response;
+                    }
+                }
+            }
+        }
+        Response::ok()
+    }
+}
+
+/// Create a message handler that processes each message individually.
+///
+/// # Parameters
+///
+/// * `f` - Function that takes `(WebSocketConnection, Message)` and returns any `IntoResponse`
+///
+/// # Returns
+///
+/// An `OptimizedMessageHandler` that can be used with the router
+pub fn websocket_message_handler<F, Fut, R>(f: F) -> OptimizedMessageHandler<F>
+where
+    F: Fn(WebSocketConnection, Message) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse,
+{
+    OptimizedMessageHandler::new(f)
+}
+
+// ============================================================================
+// Advanced: Batch Message Handler
+// ============================================================================
+
+/// Handler that processes messages in batches for improved throughput.
+///
+/// This is useful for high-volume WebSocket connections where processing
+/// messages individually would be inefficient.
+///
+/// # Example
+///
+/// ```
+/// use ignitia::prelude::*;
+///
+/// let handler = websocket_batch_handler(
+///     |ws: WebSocketConnection, messages: Vec<Message>| async move {
+///         tracing::info!("Processing {} messages", messages.len());
+///
+///         for msg in messages {
+///             // Process batch...
+///         }
+///
+///         Response::ok()
+///     },
+///     100,    // batch_size: process up to 100 messages at once
+///     1000    // timeout_ms: flush batch after 1 second
+/// );
+///
+/// router.websocket("/ws/batch", handler);
+/// ```
 pub struct BatchMessageHandler<F> {
     handler: Arc<F>,
     batch_size: usize,
@@ -616,36 +506,13 @@ pub struct BatchMessageHandler<F> {
 }
 
 impl<F> BatchMessageHandler<F> {
-    /// Creates a new batch message handler.
+    /// Create a new batch message handler.
     ///
     /// # Parameters
     ///
-    /// - `handler`: Function that processes message batches
-    /// - `batch_size`: Maximum number of messages to collect before processing
-    /// - `batch_timeout`: Maximum time to wait for messages before processing a partial batch
-    ///
-    /// # Returns
-    ///
-    /// A new `BatchMessageHandler` instance
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use ignitia::websocket::{BatchMessageHandler, WebSocketConnection, Message};
-    /// use std::time::Duration;
-    ///
-    /// let handler = BatchMessageHandler::new(
-    ///     |ws: WebSocketConnection, messages: Vec<Message>| async move {
-    ///         println!("Processing {} messages", messages.len());
-    ///         for message in messages {
-    ///             // Process each message in the batch
-    ///         }
-    ///         Ok(())
-    ///     },
-    ///     50,  // batch size
-    ///     Duration::from_millis(100),  // timeout
-    /// );
-    /// ```
+    /// * `handler` - Function to process message batches
+    /// * `batch_size` - Maximum number of messages per batch
+    /// * `batch_timeout` - Maximum time to wait before flushing batch
     pub fn new(handler: F, batch_size: usize, batch_timeout: Duration) -> Self {
         Self {
             handler: Arc::new(handler),
@@ -655,43 +522,55 @@ impl<F> BatchMessageHandler<F> {
     }
 }
 
+impl<F> Clone for BatchMessageHandler<F> {
+    fn clone(&self) -> Self {
+        Self {
+            handler: Arc::clone(&self.handler),
+            batch_size: self.batch_size,
+            batch_timeout: self.batch_timeout,
+        }
+    }
+}
+
 #[async_trait::async_trait]
-impl<F, Fut> WebSocketHandler for BatchMessageHandler<F>
+impl<F, Fut, R> UniversalWebSocketHandler<()> for BatchMessageHandler<F>
 where
     F: Fn(WebSocketConnection, Vec<Message>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<()>> + Send + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse,
 {
-    async fn handle_connection(&self, websocket: WebSocketConnection) -> Result<()> {
+    async fn call(&self, _req: Request, websocket: WebSocketConnection) -> Response {
         let mut message_batch = Vec::with_capacity(self.batch_size);
 
         loop {
             match websocket.recv().await {
-                Some(Message::Close(_)) => {
-                    break;
-                }
+                Some(Message::Close(_)) => break,
                 Some(message) => {
                     message_batch.push(message);
 
-                    // Process batch when it reaches the target size
                     if message_batch.len() >= self.batch_size {
-                        if let Err(e) =
+                        let result =
                             (self.handler)(websocket.clone(), std::mem::take(&mut message_batch))
-                                .await
-                        {
-                            tracing::debug!("WebSocket batch handler error: {}", e);
-                            break;
+                                .await;
+
+                        let response = result.into_response();
+                        if !response.status.is_success() {
+                            tracing::debug!("WebSocket batch handler error, closing");
+                            let _ = websocket.close(None).await;
+                            return response;
                         }
                         message_batch = Vec::with_capacity(self.batch_size);
                     }
                 }
                 None => {
-                    // Process any remaining messages in the batch
                     if !message_batch.is_empty() {
-                        if let Err(e) =
+                        let result =
                             (self.handler)(websocket.clone(), std::mem::take(&mut message_batch))
-                                .await
-                        {
-                            tracing::debug!("WebSocket batch handler error: {}", e);
+                                .await;
+
+                        let response = result.into_response();
+                        if !response.status.is_success() {
+                            return response;
                         }
                     }
                     break;
@@ -699,325 +578,42 @@ where
             }
         }
 
-        Ok(())
+        Response::ok()
     }
 }
 
-/// Optimized handler for processing individual messages.
-///
-/// This handler is optimized for scenarios where each message should be processed
-/// individually but you want the framework to handle the connection loop automatically.
-/// It provides better performance than the general `websocket_handler` for simple
-/// per-message processing.
-///
-/// # Type Parameters
-///
-/// - `F`: The message processing function type
-pub struct OptimizedMessageHandler<F> {
-    handler: Arc<F>,
-}
-
-impl<F> OptimizedMessageHandler<F> {
-    /// Creates a new optimized message handler.
-    ///
-    /// # Parameters
-    ///
-    /// - `handler`: Function that processes individual messages
-    ///
-    /// # Returns
-    ///
-    /// A new `OptimizedMessageHandler` instance
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use ignitia::websocket::{OptimizedMessageHandler, WebSocketConnection, Message};
-    ///
-    /// let handler = OptimizedMessageHandler::new(
-    ///     |ws: WebSocketConnection, message: Message| async move {
-    ///         match message {
-    ///             Message::Text(text) => {
-    ///                 ws.send_text(format!("Processed: {}", text)).await?;
-    ///             }
-    ///             _ => {}
-    ///         }
-    ///         Ok(())
-    ///     }
-    /// );
-    /// ```
-    pub fn new(handler: F) -> Self {
-        Self {
-            handler: Arc::new(handler),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl<F, Fut> WebSocketHandler for OptimizedMessageHandler<F>
-where
-    F: Fn(WebSocketConnection, Message) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<()>> + Send + 'static,
-{
-    async fn handle_connection(&self, websocket: WebSocketConnection) -> Result<()> {
-        while let Some(message) = websocket.recv().await {
-            match message {
-                Message::Close(_) => break,
-                _ => {
-                    if let Err(e) = (self.handler)(websocket.clone(), message).await {
-                        tracing::debug!("WebSocket message handler error: {}", e);
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Creates an optimized WebSocket handler for processing individual messages.
-///
-/// This function creates a handler that automatically manages the connection loop
-/// and calls your function for each received message. It's more efficient than
-/// `websocket_handler` for simple per-message processing scenarios.
+/// Create a batch message handler with specified batch size and timeout.
 ///
 /// # Parameters
 ///
-/// - `f`: Function that processes individual messages
+/// * `f` - Function that processes a batch of messages
+/// * `batch_size` - Maximum messages per batch before flushing
+/// * `timeout_ms` - Maximum milliseconds to wait before flushing partial batch
 ///
-/// # Returns
-///
-/// An `OptimizedMessageHandler` that can be used with the router
-///
-/// # Type Parameters
-///
-/// - `F`: The function type (inferred from the closure)
-/// - `Fut`: The future type returned by the function (inferred)
-///
-/// # Examples
-///
-/// ### Simple Message Processor
+/// # Example
 ///
 /// ```
-/// use ignitia::websocket::{websocket_message_handler, WebSocketConnection, Message};
-///
-/// let handler = websocket_message_handler(|ws: WebSocketConnection, message: Message| async move {
-///     match message {
-///         Message::Text(text) => {
-///             let uppercase = text.to_uppercase();
-///             ws.send_text(uppercase).await?;
-///         }
-///         Message::Binary(data) => {
-///             // Process binary data
-///             let processed = data.iter().map(|b| b.wrapping_mul(2)).collect::<Vec<u8>>();
-///             ws.send_bytes(bytes::Bytes::from(processed)).await?;
-///         }
-///         _ => {}
-///     }
-///     Ok(())
-/// });
-/// ```
-///
-/// ### Message Counter
-///
-/// ```
-/// use ignitia::websocket::{websocket_message_handler, WebSocketConnection, Message};
-/// use std::sync::atomic::{AtomicU64, Ordering};
-/// use std::sync::Arc;
-///
-/// let counter = Arc::new(AtomicU64::new(0));
-///
-/// let handler = websocket_message_handler(move |ws: WebSocketConnection, message: Message| {
-///     let counter = Arc::clone(&counter);
-///     async move {
-///         if let Message::Text(_) = message {
-///             let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
-///             let response = format!("Message count: {}", count);
-///             ws.send_text(response).await?;
-///         }
-///         Ok(())
-///     }
-/// });
-/// ```
-///
-/// ### JSON Message Validator
-///
-/// ```
-/// use ignitia::websocket::{websocket_message_handler, WebSocketConnection, Message};
-/// use serde_json::Value;
-///
-/// let handler = websocket_message_handler(|ws: WebSocketConnection, message: Message| async move {
-///     if let Message::Text(text) = message {
-///         match serde_json::from_str::<Value>(&text) {
-///             Ok(json) => {
-///                 let response = format!("Valid JSON received: {}", json);
-///                 ws.send_text(response).await?;
-///             }
-///             Err(e) => {
-///                 let error = format!("Invalid JSON: {}", e);
-///                 ws.send_text(error).await?;
-///             }
-///         }
-///     }
-///     Ok(())
-/// });
-/// ```
-pub fn websocket_message_handler<F, Fut>(f: F) -> impl WebSocketHandler
-where
-    F: Fn(WebSocketConnection, Message) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<()>> + Send + 'static,
-{
-    OptimizedMessageHandler::new(f)
-}
-
-/// Creates a WebSocket handler for efficient batch message processing.
-///
-/// This function creates a handler that collects messages into batches and processes
-/// them together, which is more efficient for high-throughput scenarios. Messages
-/// are batched by size or timeout, whichever comes first.
-///
-/// # Parameters
-///
-/// - `f`: Function that processes message batches
-/// - `batch_size`: Maximum number of messages to collect before processing
-/// - `timeout_ms`: Maximum time in milliseconds to wait before processing a partial batch
-///
-/// # Returns
-///
-/// A `BatchMessageHandler` that can be used with the router
-///
-/// # Type Parameters
-///
-/// - `F`: The function type (inferred from the closure)
-/// - `Fut`: The future type returned by the function (inferred)
-///
-/// # Performance Benefits
-///
-/// - Reduces per-message processing overhead
-/// - Enables bulk operations (database inserts, API calls, etc.)
-/// - Better resource utilization for high-volume scenarios
-/// - Automatic timeout handling prevents message starvation
-///
-/// # Examples
-///
-/// ### Basic Batch Processing
-///
-/// ```
-/// use ignitia::websocket::{websocket_batch_handler, WebSocketConnection, Message};
-///
 /// let handler = websocket_batch_handler(
-///     |ws: WebSocketConnection, messages: Vec<Message>| async move {
-///         println!("Processing batch of {} messages", messages.len());
-///
-///         let mut responses = Vec::new();
-///         for message in messages {
-///             if let Message::Text(text) = message {
-///                 responses.push(Message::text(format!("Processed: {}", text)));
-///             }
+///     |ws, messages| async move {
+///         // Process up to 50 messages at once
+///         for msg in messages {
+///             // Handle message...
 ///         }
-///
-///         if !responses.is_empty() {
-///             ws.send_batch(responses).await?;
-///         }
-///
-///         Ok(())
+///         Response::ok()
 ///     },
-///     10,   // Process 10 messages at a time
-///     100,  // Or wait 100ms for partial batches
+///     50,      // Batch size
+///     100      // Timeout in milliseconds
 /// );
 /// ```
-///
-/// ### Database Bulk Insert
-///
-/// ```
-/// use ignitia::websocket::{websocket_batch_handler, WebSocketConnection, Message};
-/// use serde::{Deserialize, Serialize};
-///
-/// #[derive(Deserialize)]
-/// struct LogEntry {
-///     timestamp: String,
-///     level: String,
-///     message: String,
-/// }
-///
-/// let handler = websocket_batch_handler(
-///     |ws: WebSocketConnection, messages: Vec<Message>| async move {
-///         let mut log_entries = Vec::new();
-///
-///         for message in messages {
-///             if let Message::Text(text) = message {
-///                 if let Ok(entry) = serde_json::from_str::<LogEntry>(&text) {
-///                     log_entries.push(entry);
-///                 }
-///             }
-///         }
-///
-///         if !log_entries.is_empty() {
-///             // Perform bulk database insert
-///             match bulk_insert_logs(&log_entries).await {
-///                 Ok(count) => {
-///                     let response = format!("Inserted {} log entries", count);
-///                     ws.send_text(response).await?;
-///                 }
-///                 Err(e) => {
-///                     let error = format!("Database error: {}", e);
-///                     ws.send_text(error).await?;
-///                 }
-///             }
-///         }
-///
-///         Ok(())
-///     },
-///     50,   // Process up to 50 log entries at once
-///     1000, // Or wait 1 second for partial batches
-/// );
-///
-/// async fn bulk_insert_logs(entries: &[LogEntry]) -> Result<usize, Box<dyn std::error::Error>> {
-///     // Your database bulk insert logic here
-///     Ok(entries.len())
-/// }
-/// ```
-///
-/// ### Analytics Event Processing
-///
-/// ```
-/// use ignitia::websocket::{websocket_batch_handler, WebSocketConnection, Message};
-/// use std::collections::HashMap;
-///
-/// let handler = websocket_batch_handler(
-///     |ws: WebSocketConnection, messages: Vec<Message>| async move {
-///         let mut event_counts: HashMap<String, u32> = HashMap::new();
-///
-///         // Count events by type
-///         for message in messages {
-///             if let Message::Text(text) = message {
-///                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-///                     if let Some(event_type) = json.get("type").and_then(|v| v.as_str()) {
-///                         *event_counts.entry(event_type.to_string()).or_insert(0) += 1;
-///                     }
-///                 }
-///             }
-///         }
-///
-///         // Send aggregated results
-///         if !event_counts.is_empty() {
-///             let summary = serde_json::to_string(&event_counts)?;
-///             ws.send_text(format!("Event summary: {}", summary)).await?;
-///         }
-///
-///         Ok(())
-///     },
-///     25,   // Process 25 events at a time
-///     500,  // Or wait 500ms for aggregation
-/// );
-/// ```
-pub fn websocket_batch_handler<F, Fut>(
+pub fn websocket_batch_handler<F, Fut, R>(
     f: F,
     batch_size: usize,
     timeout_ms: u64,
-) -> impl WebSocketHandler
+) -> BatchMessageHandler<F>
 where
     F: Fn(WebSocketConnection, Vec<Message>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<()>> + Send + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse,
 {
     BatchMessageHandler::new(f, batch_size, Duration::from_millis(timeout_ms))
 }

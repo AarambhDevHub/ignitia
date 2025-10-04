@@ -592,8 +592,8 @@ impl WebSocketConnection {
     ///     ws.close().await
     /// }
     /// ```
-    pub async fn close(&self) -> Result<()> {
-        self.send(Message::Close(None)).await
+    pub async fn close(&self, frame: Option<CloseFrame>) -> Result<()> {
+        self.send(Message::Close(frame)).await
     }
 
     /// Closes the WebSocket connection with a specific close code and reason.

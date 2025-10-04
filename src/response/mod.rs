@@ -421,9 +421,11 @@
 pub mod builder;
 pub mod status;
 
-use std::sync::Arc;
+pub mod into_response;
 
-use crate::error::Result;
+// Re-export IntoResponse
+pub use into_response::{Html, IntoResponse};
+
 use bytes::Bytes;
 use http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode};
 use serde::Serialize;
@@ -494,7 +496,7 @@ pub struct Response {
     /// HTTP response headers
     pub headers: HeaderMap,
     /// Response body as bytes
-    pub body: Arc<Bytes>,
+    pub body: Bytes,
     /// Cache control information
     pub cache_control: Option<CacheControl>, // Add this field
 }
@@ -680,7 +682,7 @@ impl Response {
         Self {
             status,
             headers: HeaderMap::new(),
-            body: Arc::new(Bytes::new()),
+            body: Bytes::new(),
             cache_control: None,
         }
     }
@@ -769,7 +771,7 @@ impl Response {
     /// ```
     #[inline]
     pub fn with_body(mut self, body: impl Into<Bytes>) -> Self {
-        self.body = Arc::new(body.into());
+        self.body = body.into();
         self
     }
 
@@ -793,8 +795,8 @@ impl Response {
     /// assert_eq!(body.as_ref(), b"Hello, World!");
     /// ```
     #[inline]
-    pub fn body_shared(&self) -> Arc<Bytes> {
-        Arc::clone(&self.body)
+    pub fn body_shared(&self) -> &Bytes {
+        &self.body
     }
 
     /// Creates a successful response (200 OK).
@@ -924,15 +926,21 @@ impl Response {
     ///     }
     /// }
     /// ```
-    pub fn json<T: Serialize>(data: T) -> Result<Self> {
-        let body = serde_json::to_vec(&data)?;
+    pub fn json<T: Serialize>(data: T) -> Self {
+        let body = match serde_json::to_vec(&data) {
+            Ok(body) => body,
+            Err(e) => {
+                tracing::error!("JSON serialization failed: {}", e);
+                return Response::text("JSON serialization failed").with_status_code(500);
+            }
+        };
         let mut response = Self::new(StatusCode::OK);
         response.headers.insert(
             HeaderName::from_static("content-type"),
             HeaderValue::from_static("application/json"),
         );
-        response.body = Arc::new(Bytes::from(body));
-        Ok(response)
+        response.body = Bytes::from(body);
+        response
     }
 
     /// Creates a plain text response.
@@ -977,7 +985,7 @@ impl Response {
             HeaderName::from_static("content-type"),
             HeaderValue::from_static("text/plain; charset=utf-8"),
         );
-        response.body = Arc::new(Bytes::from(text.into()));
+        response.body = Bytes::from(text.into());
         response
     }
 
@@ -1063,7 +1071,7 @@ impl Response {
             HeaderName::from_static("content-type"),
             HeaderValue::from_static("text/html; charset=utf-8"),
         );
-        response.body = Arc::new(Bytes::from(html.into()));
+        response.body = Bytes::from(html.into());
         response
     }
 
@@ -1239,7 +1247,7 @@ impl Response {
             header::CONTENT_TYPE,
             HeaderValue::from_static("text/html; charset=utf-8"),
         );
-        response.body = Arc::new(bytes::Bytes::from(html_body));
+        response.body = bytes::Bytes::from(html_body);
 
         response
     }
@@ -1874,7 +1882,7 @@ impl From<Error> for Response {
                     http::header::CONTENT_TYPE,
                     http::HeaderValue::from_static("application/json"),
                 );
-                response.body = Arc::new(bytes::Bytes::from(json_body));
+                response.body = bytes::Bytes::from(json_body);
                 response
             }
             Err(_) => {
@@ -1883,7 +1891,7 @@ impl From<Error> for Response {
                     http::header::CONTENT_TYPE,
                     http::HeaderValue::from_static("text/plain; charset=utf-8"),
                 );
-                response.body = Arc::new(bytes::Bytes::from(err.to_string()));
+                response.body = bytes::Bytes::from(err.to_string());
                 response
             }
         }
@@ -1928,7 +1936,7 @@ impl Response {
             http::header::CONTENT_TYPE,
             http::HeaderValue::from_static("application/json"),
         );
-        response.body = Arc::new(bytes::Bytes::from(serde_json::to_vec(&error_response)?));
+        response.body = bytes::Bytes::from(serde_json::to_vec(&error_response)?);
         Ok(response)
     }
 
@@ -2031,7 +2039,7 @@ impl Response {
             http::header::CONTENT_TYPE,
             http::HeaderValue::from_static("application/json"),
         );
-        response.body = Arc::new(bytes::Bytes::from(serde_json::to_vec(&error_response)?));
+        response.body = bytes::Bytes::from(serde_json::to_vec(&error_response)?);
         Ok(response)
     }
 }

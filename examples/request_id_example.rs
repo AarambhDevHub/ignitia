@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
         // Basic endpoint demonstrating request correlation
         .get("/", || async {
             info!("Processing home request");
-            Ok(Response::text("Hello from Ignitia with Request ID! 🔥"))
+            Response::text("Hello from Ignitia with Request ID! 🔥")
         })
         // API endpoint that demonstrates distributed tracing
         .get("/api/users", || async {
@@ -44,10 +44,10 @@ async fn main() -> Result<()> {
         // Endpoint that demonstrates error correlation
         .get("/api/error", || async {
             info!("Simulating error scenario");
-            Err(Error::Internal("Simulated error for tracing".to_string()))
+            Error::Internal("Simulated error for tracing".to_string())
         })
         // Health check with minimal overhead
-        .get("/health", || async { Ok(Response::text("OK")) });
+        .get("/health", || async { Response::text("OK") });
 
     let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let server = Server::new(router, addr);

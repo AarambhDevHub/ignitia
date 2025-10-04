@@ -1,262 +1,87 @@
-//! # Cross-Origin Resource Sharing (CORS) Middleware
+//! CORS (Cross-Origin Resource Sharing) middleware for the Ignitia web framework.
 //!
-//! This module provides comprehensive CORS middleware for the Ignitia web framework,
-//! enabling secure cross-origin requests from web browsers. CORS is essential for
-//! modern web applications that need to make requests from one domain to another.
+//! This module provides comprehensive CORS support with flexible configuration options,
+//! allowing cross-origin requests while maintaining security. The implementation follows
+//! the CORS specification and provides both strict and permissive configurations.
 //!
-//! ## Features
+//! # Overview
 //!
-//! - **Flexible Origin Control**: Support for specific origins, multiple origins, and regex patterns
-//! - **Method Restrictions**: Configure allowed HTTP methods with secure defaults
-//! - **Header Management**: Control both request and response headers
-//! - **Automatic Preflight Handling**: Built-in OPTIONS request handling
-//! - **Credentials Support**: Secure credential handling with proper validation
-//! - **Security First**: Secure defaults with comprehensive validation
-//! - **Builder Pattern**: Fluent API for easy configuration
+//! CORS is a security feature implemented by browsers that restricts cross-origin HTTP requests.
+//! This middleware handles CORS preflight requests and adds appropriate CORS headers to responses,
+//! enabling controlled access from different origins.
 //!
-//! ## CORS Fundamentals
+//! # Features
 //!
-//! CORS (Cross-Origin Resource Sharing) is a W3C specification that allows servers
-//! to specify who can access their resources and how. Modern browsers enforce the
-//! same-origin policy, and CORS provides a way to relax these restrictions securely.
+//! - **Flexible Origin Control** - Allow specific origins, wildcards, or regex patterns
+//! - **Method Filtering** - Specify allowed HTTP methods
+//! - **Header Management** - Control allowed and exposed headers
+//! - **Credentials Support** - Enable/disable credentials (cookies, authorization headers)
+//! - **Preflight Caching** - Configure max-age for preflight requests
+//! - **Builder Pattern** - Fluent API for configuration
 //!
-//! ### Key CORS Headers
-//! - `Access-Control-Allow-Origin`: Specifies which origins can access the resource
-//! - `Access-Control-Allow-Methods`: Lists allowed HTTP methods
-//! - `Access-Control-Allow-Headers`: Lists allowed request headers
-//! - `Access-Control-Expose-Headers`: Headers that clients can access
-//! - `Access-Control-Max-Age`: How long browsers can cache preflight results
-//! - `Access-Control-Allow-Credentials`: Allows cookies/credentials in requests
+//! # Examples
 //!
-//! ### Preflight Requests
-//! For certain requests, browsers send a preflight OPTIONS request first to check
-//! if the actual request is allowed. This middleware handles these automatically.
+//! ## Permissive CORS (Development)
 //!
-//! ## Quick Start
-//!
-//! ### Basic Usage (Development)
 //! ```
-//! use ignitia::{Router, middleware::CorsMiddleware};
+//! use ignitia::prelude::*;
 //!
 //! let router = Router::new()
-//!     .middleware(CorsMiddleware::new()?)
-//!     .get("/api/data", || async {
-//!         Ok(ignitia::Response::json(&"API Data")?)
-//!     });
+//!     .middleware(CorsMiddleware::permissive())
+//!     .get("/api/data", || async { "Data" });
 //! ```
 //!
-//! ### Production Setup
-//! ```
-//! use ignitia::{Router, middleware::Cors};
+//! ## Strict CORS (Production)
 //!
-//! let cors = Cors::new()
-//!     .allowed_origin("https://myapp.com")
+//! ```
+//! use ignitia::prelude::*;
+//!
+//! let cors = CorsMiddleware::new()
+//!     .allowed_origins(&["https://example.com", "https://app.example.com"])
 //!     .allowed_methods(&[Method::GET, Method::POST])
-//!     .allowed_headers(&["Content-Type", "Authorization"])
-//!     .max_age(3600)
-//!     .build()?;
+//!     .allowed_headers(&["content-type", "authorization"])
+//!     .allow_credentials()
+//!     .max_age(3600);
 //!
 //! let router = Router::new()
 //!     .middleware(cors)
-//!     .get("/api/users", || async {
-//!         Ok(ignitia::Response::json(&"Users")?)
-//!     });
+//!     .get("/api/data", || async { "Data" });
 //! ```
 //!
-//! ## Configuration Examples
+//! ## Regex-based Origin Matching
 //!
-//! ### Multiple Origins
 //! ```
-//! use ignitia::middleware::Cors;
+//! use ignitia::prelude::*;
 //!
-//! let cors = Cors::new()
-//!     .allowed_origins(&[
-//!         "https://app1.com",
-//!         "https://app2.com",
-//!         "https://admin.myapp.com"
-//!     ])
-//!     .build()?;
-//! ```
+//! let cors = CorsMiddleware::new()
+//!     .allowed_origin_regex(r"^https://.*\.example\.com$")
+//!     .allowed_methods(&[Method::GET, Method::POST])
+//!     .max_age(7200);
 //!
-//! ### Regex Pattern Matching
-//! ```
-//! use ignitia::middleware::Cors;
-//!
-//! // Allow all subdomains of myapp.com
-//! let cors = Cors::new()
-//!     .allowed_origin_regex(r"^https://[a-zA-Z0-9-]+\.myapp\.com$")
-//!     .build()?;
+//! let router = Router::new()
+//!     .middleware(cors)
+//!     .get("/api/data", || async { "Data" });
 //! ```
 //!
-//! ### Development with Credentials
+//! ## API with Credentials
+//!
 //! ```
-//! use ignitia::middleware::Cors;
+//! use ignitia::prelude::*;
 //!
-//! let cors = Cors::new()
-//!     .allowed_origin("http://localhost:3000")
-//!     .allow_credentials()
-//!     .allowed_headers(&["Content-Type", "Authorization", "X-Requested-With"])
-//!     .build()?;
-//! ```
-//!
-//! ### API Gateway Setup
-//! ```
-//! use ignitia::middleware::Cors;
-//!
-//! let cors = Cors::secure_api(&[
-//!     "https://dashboard.myapp.com",
-//!     "https://mobile.myapp.com"
-//! ])
-//! .max_age(86400) // 24 hours
-//! .expose_headers(&["X-Total-Count", "X-Page-Count"])
-//! .build()?;
-//! ```
-//!
-//! ## Advanced Usage
-//!
-//! ### Custom Middleware for Complex Logic
-//! ```
-//! use ignitia::{Middleware, Request, Response, Result};
-//! use async_trait::async_trait;
-//! use http::header;
-//!
-//! pub struct DynamicCorsMiddleware {
-//!     allowed_origins: HashMap<String, Vec<String>>,
-//! }
-//!
-//! impl DynamicCorsMiddleware {
-//!     pub fn new() -> Self {
-//!         let mut origins = HashMap::new();
-//!         origins.insert("api".to_string(), vec![
-//!             "https://api.myapp.com".to_string()
-//!         ]);
-//!         origins.insert("admin".to_string(), vec![
-//!             "https://admin.myapp.com".to_string()
-//!         ]);
-//!
-//!         Self { allowed_origins: origins }
-//!     }
-//! }
-//!
-//! #[async_trait]
-//! impl Middleware for DynamicCorsMiddleware {
-//!     async fn after(&self, res: &mut Response) -> Result<()> {
-//!         // Implement custom origin validation logic here
-//!         Ok(())
-//!     }
-//! }
-//! ```
-//!
-//! ## Security Best Practices
-//!
-//! ### Production Security Checklist
-//! - ✅ **Never use `*` for origins** in production with sensitive data
-//! - ✅ **Specify exact origins** for production environments
-//! - ✅ **Be cautious with credentials** - never combine `*` origins with credentials
-//! - ✅ **Validate origins dynamically** for multi-tenant applications
-//! - ✅ **Use HTTPS origins only** in production
-//! - ✅ **Limit exposed headers** to only what's necessary
-//! - ✅ **Set reasonable max-age** for preflight caching
-//!
-//! ### Secure Production Example
-//! ```
-//! use ignitia::middleware::Cors;
-//!
-//! let cors = Cors::new()
-//!     .allowed_origins(&[
-//!         "https://myapp.com",
-//!         "https://www.myapp.com",
-//!         "https://mobile.myapp.com"
-//!     ])
+//! let cors = CorsMiddleware::new()
+//!     .allowed_origins(&["https://app.example.com"])
 //!     .allowed_methods(&[Method::GET, Method::POST, Method::PUT, Method::DELETE])
-//!     .allowed_headers(&["Content-Type", "Authorization"])
+//!     .allowed_headers(&["content-type", "authorization", "x-api-key"])
+//!     .expose_headers(&["x-request-id", "x-ratelimit-remaining"])
 //!     .allow_credentials()
-//!     .max_age(3600) // 1 hour
-//!     .build()?;
-//! ```
+//!     .max_age(86400);
 //!
-//! ## Troubleshooting Common Issues
-//!
-//! ### 1. Preflight Request Failures
-//! **Problem**: Browser shows CORS error on OPTIONS requests
+//! let router = Router::new()
+//!     .middleware(cors)
+//!     .post("/api/users", || async { Response::json(json!({"status": "created"})) });
 //! ```
-//! Access to XMLHttpRequest has been blocked by CORS policy:
-//! Response to preflight request doesn't pass access control check
-//! ```
-//! **Solution**: Ensure your middleware handles preflight requests properly:
-//! ```
-//! let cors = Cors::new()
-//!     .allowed_methods(&[Method::OPTIONS, Method::GET, Method::POST])
-//!     .build()?;
-//! ```
-//!
-//! ### 2. Credentials Not Working
-//! **Problem**: Cookies/authorization headers not sent with requests
-//! **Solution**: Configure both server and client correctly:
-//! ```
-//! // Server side - specific origin required
-//! let cors = Cors::new()
-//!     .allowed_origin("https://myapp.com") // Cannot be "*" with credentials
-//!     .allow_credentials()
-//!     .build()?;
-//! ```
-//! ```
-//! // Client side
-//! fetch('/api/data', {
-//!     credentials: 'include' // Include cookies
-//! });
-//! ```
-//!
-//! ### 3. Multiple Origins Not Working
-//! **Problem**: Only the first origin works
-//! **Solution**: Use the array method, not comma-separated strings:
-//! ```
-//! // ✅ Correct
-//! .allowed_origins(&["https://app1.com", "https://app2.com"])
-//!
-//! // ❌ Incorrect
-//! .allowed_origin("https://app1.com,https://app2.com")
-//! ```
-//!
-//! ### 4. Custom Headers Blocked
-//! **Problem**: Custom headers are rejected
-//! **Solution**: Add them to allowed headers:
-//! ```
-//! let cors = Cors::new()
-//!     .allowed_headers(&[
-//!         "Content-Type",
-//!         "Authorization",
-//!         "X-Custom-Header",
-//!         "X-API-Key"
-//!     ])
-//!     .build()?;
-//! ```
-//!
-//! ## Browser Compatibility
-//!
-//! CORS is supported by all modern browsers:
-//! - **Chrome**: 4+ (full support)
-//! - **Firefox**: 3.5+ (full support)
-//! - **Safari**: 4+ (full support)
-//! - **Edge**: All versions (full support)
-//! - **Internet Explorer**: 8+ (limited support, use XDomainRequest)
-//!
-//! ## Performance Considerations
-//!
-//! ### Preflight Caching
-//! Set appropriate `max_age` to reduce preflight requests:
-//! ```
-//! let cors = Cors::new()
-//!     .max_age(86400) // Cache for 24 hours
-//!     .build()?;
-//! ```
-//!
-//! ### Wildcard vs Specific Origins
-//! - Wildcard (`*`) has better performance but less security
-//! - Specific origins require origin validation on each request
-//! - Consider using regex patterns for subdomain matching
 
-use crate::middleware::Middleware;
+use crate::middleware::{Middleware, Next};
 use crate::{Request, Response, Result};
 use http::{header, Method, StatusCode};
 use regex::Regex;
@@ -264,96 +89,78 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::debug;
 
-/// CORS configuration builder following a fluent API pattern.
+/// CORS configuration builder providing flexible cross-origin resource sharing setup.
 ///
-/// This builder provides a comprehensive way to configure Cross-Origin Resource Sharing
-/// for your web application. It follows the builder pattern for easy configuration
-/// and includes validation to ensure secure defaults.
+/// This builder allows fine-grained control over CORS behavior, including origin validation,
+/// method filtering, header management, and credential handling. Use the builder pattern
+/// to construct a [`CorsMiddleware`] instance.
 ///
 /// # Examples
 ///
-/// ## Basic Configuration
 /// ```
-/// use ignitia::middleware::Cors;
+/// use ignitia::middleware::CorsMiddleware;
 /// use http::Method;
 ///
-/// let cors = Cors::new()
-///     .allowed_origin("https://myapp.com")
+/// let cors = CorsMiddleware::new()
+///     .allowed_origins(&["https://example.com"])
 ///     .allowed_methods(&[Method::GET, Method::POST])
-///     .build()?;
-/// ```
-///
-/// ## Advanced Configuration
-/// ```
-/// use ignitia::middleware::Cors;
-/// use http::Method;
-///
-/// let cors = Cors::new()
-///     .allowed_origins(&["https://app1.com", "https://app2.com"])
-///     .allowed_methods(&[Method::GET, Method::POST, Method::PUT, Method::DELETE])
-///     .allowed_headers(&["Content-Type", "Authorization", "X-Custom-Header"])
-///     .expose_headers(&["X-Total-Count"])
-///     .allow_credentials()
-///     .max_age(3600)
-///     .build()?;
+///     .allowed_headers(&["content-type"])
+///     .max_age(3600);
 /// ```
 #[derive(Clone)]
 pub struct Cors {
     inner: Arc<Inner>,
 }
 
-/// Internal CORS configuration data.
-///
-/// This struct holds the actual configuration values used by the CORS middleware.
-/// It's wrapped in an Arc for efficient cloning and shared across requests.
+/// Internal CORS configuration state.
 #[derive(Clone)]
 struct Inner {
+    /// Configured allowed origins
     allowed_origins: AllowedOrigins,
+    /// Set of allowed HTTP methods
     allowed_methods: HashSet<Method>,
+    /// Set of allowed request headers (lowercase)
     allowed_headers: HashSet<String>,
+    /// List of headers to expose to the client
     exposed_headers: Vec<String>,
+    /// Cache duration for preflight requests in seconds
     max_age: Option<u64>,
+    /// Whether credentials (cookies, auth headers) are allowed
     allow_credentials: bool,
+    /// Internal flag tracking credential support
     supports_credentials: bool,
+    /// Whether all origins are allowed (wildcard)
     allowed_origins_all: bool,
 }
 
-/// Represents the different ways origins can be specified for CORS.
-///
-/// This enum allows for flexible origin matching:
-/// - `Any`: Allows all origins (*)
-/// - `Exact`: Matches specific origins exactly
-/// - `Regex`: Uses regex patterns for complex matching scenarios
+/// Enumeration of allowed origin configurations.
 #[derive(Clone)]
 enum AllowedOrigins {
-    /// Allow all origins - equivalent to Access-Control-Allow-Origin: *
+    /// Allow any origin (wildcard)
     Any,
-    /// Allow specific origins only - matches exactly
+    /// Allow specific origins from a set
     Exact(HashSet<String>),
-    /// Allow origins matching a regex pattern - for subdomain matching
+    /// Allow origins matching a regex pattern
     Regex(Regex),
 }
 
 impl Cors {
-    /// Creates a new CORS configuration with secure defaults.
+    /// Create a new CORS configuration builder with sensible defaults.
     ///
-    /// The default configuration includes:
-    /// - **Origins**: All origins (*) - should be changed for production
+    /// Default configuration:
+    /// - **Origins**: Any origin (`*`)
     /// - **Methods**: GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD
     /// - **Headers**: content-type, authorization, x-requested-with
-    /// - **Max Age**: 24 hours (86400 seconds)
+    /// - **Max Age**: 86400 seconds (24 hours)
     /// - **Credentials**: Disabled
     ///
-    /// # Security Note
-    /// The default configuration allows all origins, which is suitable for
-    /// development but should be restricted in production environments.
-    ///
     /// # Examples
-    /// ```
-    /// use ignitia::middleware::Cors;
     ///
-    /// let cors = Cors::new();
-    /// // This creates a permissive configuration suitable for development
+    /// ```
+    /// use ignitia::middleware::CorsMiddleware;
+    ///
+    /// let cors = CorsMiddleware::new()
+    ///     .allowed_origins(&["https://example.com"]);
     /// ```
     pub fn new() -> Self {
         let mut methods = HashSet::new();
@@ -388,23 +195,19 @@ impl Cors {
         }
     }
 
-    /// Allow requests from any origin.
+    /// Allow requests from any origin (sets `Access-Control-Allow-Origin: *`).
     ///
-    /// This sets the `Access-Control-Allow-Origin` header to `*`, which allows
-    /// requests from any origin. This is convenient for development but should
-    /// be avoided in production, especially when credentials are involved.
-    ///
-    /// # Security Warning
-    /// Using `allow_any_origin()` with `allow_credentials()` is not supported
-    /// and will cause validation to fail when calling `build()`.
+    /// This is the most permissive configuration and should generally only be used
+    /// for public APIs or development. Cannot be combined with credentials.
     ///
     /// # Examples
-    /// ```
-    /// use ignitia::middleware::Cors;
     ///
-    /// let cors = Cors::new()
+    /// ```
+    /// use ignitia::middleware::CorsMiddleware;
+    ///
+    /// let cors = CorsMiddleware::new()
     ///     .allow_any_origin()
-    ///     .build()?;
+    ///     .allowed_methods(&[Method::GET, Method::POST]);
     /// ```
     pub fn allow_any_origin(mut self) -> Self {
         let inner = Arc::make_mut(&mut self.inner);
@@ -415,31 +218,21 @@ impl Cors {
 
     /// Allow requests from a specific origin.
     ///
-    /// This method adds a single origin to the list of allowed origins.
-    /// The origin must include the protocol (http:// or https://) and
-    /// should not include trailing slashes.
+    /// Can be called multiple times to allow multiple origins. The origin should include
+    /// the protocol and port (e.g., `https://example.com:8080`).
     ///
-    /// # Parameters
-    /// - `origin`: The origin URL to allow (e.g., "https://myapp.com")
+    /// # Arguments
+    ///
+    /// * `origin` - The origin URL to allow
     ///
     /// # Examples
-    /// ```
-    /// use ignitia::middleware::Cors;
     ///
-    /// let cors = Cors::new()
-    ///     .allowed_origin("https://myapp.com")
-    ///     .build()?;
     /// ```
+    /// use ignitia::middleware::CorsMiddleware;
     ///
-    /// ## Multiple Calls
-    /// You can call this method multiple times to allow multiple origins:
-    /// ```
-    /// use ignitia::middleware::Cors;
-    ///
-    /// let cors = Cors::new()
-    ///     .allowed_origin("https://app1.com")
-    ///     .allowed_origin("https://app2.com")
-    ///     .build()?;
+    /// let cors = CorsMiddleware::new()
+    ///     .allowed_origin("https://example.com")
+    ///     .allowed_origin("https://api.example.com");
     /// ```
     pub fn allowed_origin(mut self, origin: &str) -> Self {
         let inner = Arc::make_mut(&mut self.inner);
@@ -456,23 +249,23 @@ impl Cors {
 
     /// Allow requests from multiple specific origins.
     ///
-    /// This method sets the allowed origins to exactly match the provided list.
-    /// Any previously configured origins will be replaced.
+    /// Replaces any previously configured origins with the provided list.
     ///
-    /// # Parameters
-    /// - `origins`: Array of origin URLs to allow
+    /// # Arguments
+    ///
+    /// * `origins` - Slice of origin URLs to allow
     ///
     /// # Examples
-    /// ```
-    /// use ignitia::middleware::Cors;
     ///
-    /// let cors = Cors::new()
+    /// ```
+    /// use ignitia::middleware::CorsMiddleware;
+    ///
+    /// let cors = CorsMiddleware::new()
     ///     .allowed_origins(&[
-    ///         "https://myapp.com",
-    ///         "https://www.myapp.com",
-    ///         "https://mobile.myapp.com"
-    ///     ])
-    ///     .build()?;
+    ///         "https://example.com",
+    ///         "https://app.example.com",
+    ///         "https://admin.example.com",
+    ///     ]);
     /// ```
     pub fn allowed_origins(mut self, origins: &[&str]) -> Self {
         let inner = Arc::make_mut(&mut self.inner);
@@ -484,37 +277,30 @@ impl Cors {
 
     /// Allow origins matching a regular expression pattern.
     ///
-    /// This method is useful for allowing subdomains or complex origin patterns.
-    /// The regex is compiled once during configuration and cached for performance.
+    /// Useful for allowing subdomains or dynamic origin patterns. The pattern should
+    /// match the full origin URL including protocol.
     ///
-    /// # Parameters
-    /// - `pattern`: Regular expression pattern to match against origins
+    /// # Arguments
     ///
-    /// # Examples
-    /// ```
-    /// use ignitia::middleware::Cors;
-    ///
-    /// // Allow all subdomains of myapp.com
-    /// let cors = Cors::new()
-    ///     .allowed_origin_regex(r"^https://[a-zA-Z0-9-]+\.myapp\.com$")
-    ///     .build()?;
-    /// ```
-    ///
-    /// ## Common Patterns
-    /// ```
-    /// // Allow localhost with any port for development
-    /// let dev_cors = Cors::new()
-    ///     .allowed_origin_regex(r"^https?://localhost(:\d+)?$")
-    ///     .build()?;
-    ///
-    /// // Allow staging and production environments
-    /// let env_cors = Cors::new()
-    ///     .allowed_origin_regex(r"^https://(staging\.|www\.)?myapp\.com$")
-    ///     .build()?;
-    /// ```
+    /// * `pattern` - Regular expression pattern to match origins
     ///
     /// # Panics
-    /// Panics if the provided regex pattern is invalid.
+    ///
+    /// Panics if the regex pattern is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::middleware::CorsMiddleware;
+    ///
+    /// // Allow all subdomains of example.com
+    /// let cors = CorsMiddleware::new()
+    ///     .allowed_origin_regex(r"^https://.*\.example\.com$");
+    ///
+    /// // Allow localhost with any port
+    /// let cors = CorsMiddleware::new()
+    ///     .allowed_origin_regex(r"^https://localhost:\d+$");
+    /// ```
     pub fn allowed_origin_regex(mut self, pattern: &str) -> Self {
         let inner = Arc::make_mut(&mut self.inner);
         inner.allowed_origins = AllowedOrigins::Regex(
@@ -526,38 +312,33 @@ impl Cors {
 
     /// Set the allowed HTTP methods for CORS requests.
     ///
-    /// This configures which HTTP methods are allowed for cross-origin requests.
-    /// The methods are used in both preflight responses and validation.
+    /// Replaces any previously configured methods. These methods will be returned
+    /// in the `Access-Control-Allow-Methods` header for preflight requests.
     ///
-    /// # Parameters
-    /// - `methods`: Array of HTTP methods to allow
+    /// # Arguments
+    ///
+    /// * `methods` - Slice of HTTP methods to allow
     ///
     /// # Examples
+    ///
     /// ```
-    /// use ignitia::middleware::Cors;
+    /// use ignitia::middleware::CorsMiddleware;
     /// use http::Method;
     ///
     /// // Read-only API
-    /// let readonly_cors = Cors::new()
-    ///     .allowed_methods(&[Method::GET, Method::HEAD, Method::OPTIONS])
-    ///     .build()?;
+    /// let cors = CorsMiddleware::new()
+    ///     .allowed_methods(&[Method::GET, Method::HEAD, Method::OPTIONS]);
     ///
-    /// // Full REST API
-    /// let rest_cors = Cors::new()
+    /// // Full CRUD API
+    /// let cors = CorsMiddleware::new()
     ///     .allowed_methods(&[
     ///         Method::GET,
     ///         Method::POST,
     ///         Method::PUT,
     ///         Method::DELETE,
     ///         Method::PATCH,
-    ///         Method::OPTIONS
-    ///     ])
-    ///     .build()?;
+    ///     ]);
     /// ```
-    ///
-    /// # Note
-    /// OPTIONS is typically included automatically for preflight handling,
-    /// but it's good practice to include it explicitly.
     pub fn allowed_methods(mut self, methods: &[Method]) -> Self {
         let inner = Arc::make_mut(&mut self.inner);
         inner.allowed_methods = methods.iter().cloned().collect();
@@ -566,157 +347,101 @@ impl Cors {
 
     /// Set the allowed request headers for CORS requests.
     ///
-    /// This configures which headers can be used in the actual request.
-    /// These headers are validated during preflight requests and must be
-    /// explicitly allowed.
+    /// Replaces any previously configured headers. Header names are automatically
+    /// converted to lowercase for case-insensitive matching.
     ///
-    /// # Parameters
-    /// - `headers`: Array of header names to allow (case-insensitive)
+    /// # Arguments
+    ///
+    /// * `headers` - Slice of header names to allow
     ///
     /// # Examples
+    ///
     /// ```
-    /// use ignitia::middleware::Cors;
+    /// use ignitia::middleware::CorsMiddleware;
     ///
-    /// // Basic headers for most APIs
-    /// let basic_cors = Cors::new()
-    ///     .allowed_headers(&["Content-Type", "Authorization"])
-    ///     .build()?;
-    ///
-    /// // Extended headers for advanced APIs
-    /// let advanced_cors = Cors::new()
+    /// let cors = CorsMiddleware::new()
     ///     .allowed_headers(&[
-    ///         "Content-Type",
-    ///         "Authorization",
-    ///         "X-Requested-With",
-    ///         "Accept",
-    ///         "Origin",
-    ///         "X-Api-Key",
-    ///         "X-Custom-Header"
-    ///     ])
-    ///     .build()?;
+    ///         "content-type",
+    ///         "authorization",
+    ///         "x-api-key",
+    ///         "x-request-id",
+    ///     ]);
     /// ```
-    ///
-    /// # Common Headers
-    /// - `Content-Type`: Required for POST/PUT requests with JSON/form data
-    /// - `Authorization`: Required for Bearer tokens and basic auth
-    /// - `X-Requested-With`: Often required by AJAX libraries
-    /// - `Accept`: For content negotiation
     pub fn allowed_headers(mut self, headers: &[&str]) -> Self {
         let inner = Arc::make_mut(&mut self.inner);
         inner.allowed_headers = headers.iter().map(|&s| s.to_lowercase()).collect();
         self
     }
 
-    /// Set the headers that should be exposed to the client.
+    /// Set headers that should be exposed to the client.
     ///
-    /// By default, only simple response headers are accessible to JavaScript.
-    /// This method allows you to expose additional headers that the client
-    /// can read from the response.
+    /// These headers will be included in the `Access-Control-Expose-Headers` response header,
+    /// making them accessible to JavaScript on the client side.
     ///
-    /// # Parameters
-    /// - `headers`: Array of header names to expose
+    /// # Arguments
+    ///
+    /// * `headers` - Slice of header names to expose
     ///
     /// # Examples
+    ///
     /// ```
-    /// use ignitia::middleware::Cors;
+    /// use ignitia::middleware::CorsMiddleware;
     ///
-    /// // Expose pagination headers
-    /// let pagination_cors = Cors::new()
+    /// let cors = CorsMiddleware::new()
     ///     .expose_headers(&[
-    ///         "X-Total-Count",
-    ///         "X-Page-Count",
-    ///         "X-Per-Page"
-    ///     ])
-    ///     .build()?;
-    ///
-    /// // Expose rate limiting headers
-    /// let rate_limit_cors = Cors::new()
-    ///     .expose_headers(&[
-    ///         "X-RateLimit-Limit",
-    ///         "X-RateLimit-Remaining",
-    ///         "X-RateLimit-Reset"
-    ///     ])
-    ///     .build()?;
+    ///         "x-request-id",
+    ///         "x-ratelimit-remaining",
+    ///         "x-ratelimit-reset",
+    ///     ]);
     /// ```
-    ///
-    /// # Note
-    /// Simple response headers (like `Content-Type`, `Content-Length`) are
-    /// always accessible and don't need to be explicitly exposed.
     pub fn expose_headers(mut self, headers: &[&str]) -> Self {
         let inner = Arc::make_mut(&mut self.inner);
         inner.exposed_headers = headers.iter().map(|&s| s.to_string()).collect();
         self
     }
 
-    /// Set the maximum age for preflight cache in seconds.
+    /// Set the max-age for preflight request caching.
     ///
-    /// This sets how long browsers can cache the preflight response,
-    /// reducing the number of preflight requests for subsequent requests.
+    /// Determines how long (in seconds) browsers can cache the preflight response.
+    /// Longer durations reduce preflight requests but may delay configuration changes.
     ///
-    /// # Parameters
-    /// - `seconds`: Cache duration in seconds
+    /// # Arguments
+    ///
+    /// * `seconds` - Cache duration in seconds
     ///
     /// # Examples
+    ///
     /// ```
-    /// use ignitia::middleware::Cors;
+    /// use ignitia::middleware::CorsMiddleware;
     ///
     /// // Cache for 1 hour
-    /// let short_cache_cors = Cors::new()
-    ///     .max_age(3600)
-    ///     .build()?;
+    /// let cors = CorsMiddleware::new().max_age(3600);
     ///
-    /// // Cache for 24 hours (recommended for production)
-    /// let long_cache_cors = Cors::new()
-    ///     .max_age(86400)
-    ///     .build()?;
+    /// // Cache for 24 hours
+    /// let cors = CorsMiddleware::new().max_age(86400);
     ///
-    /// // Disable caching (useful for development)
-    /// let no_cache_cors = Cors::new()
-    ///     .max_age(0)
-    ///     .build()?;
+    /// // Minimal caching for development
+    /// let cors = CorsMiddleware::new().max_age(60);
     /// ```
-    ///
-    /// # Recommendations
-    /// - **Development**: 0 seconds (no caching)
-    /// - **Staging**: 1 hour (3600 seconds)
-    /// - **Production**: 24 hours (86400 seconds) or more
     pub fn max_age(mut self, seconds: u64) -> Self {
         let inner = Arc::make_mut(&mut self.inner);
         inner.max_age = Some(seconds);
         self
     }
 
-    /// Enable credentials support for CORS requests.
+    /// Enable credentials support (cookies, authorization headers, TLS certificates).
     ///
-    /// This allows cookies, authorization headers, and TLS client certificates
-    /// to be sent with cross-origin requests. When enabled, the wildcard (*)
-    /// cannot be used for origins - specific origins must be configured.
-    ///
-    /// # Security Warning
-    /// Enabling credentials increases security risk. Only enable if you need
-    /// to send cookies or authorization headers with cross-origin requests,
-    /// and always use specific origins, never wildcards.
+    /// When enabled, the `Access-Control-Allow-Credentials: true` header is sent.
+    /// Cannot be used with wildcard origins - specific origins must be configured.
     ///
     /// # Examples
-    /// ```
-    /// use ignitia::middleware::Cors;
     ///
-    /// // Secure credentials setup
-    /// let credentials_cors = Cors::new()
-    ///     .allowed_origin("https://myapp.com")  // Specific origin required
-    ///     .allow_credentials()
-    ///     .build()?;
     /// ```
+    /// use ignitia::middleware::CorsMiddleware;
     ///
-    /// ## Client-side Usage
-    /// ```
-    /// // JavaScript fetch with credentials
-    /// fetch('https://api.myapp.com/data', {
-    ///     credentials: 'include'
-    /// });
-    ///
-    /// // XMLHttpRequest with credentials
-    /// xhr.withCredentials = true;
+    /// let cors = CorsMiddleware::new()
+    ///     .allowed_origins(&["https://app.example.com"])
+    ///     .allow_credentials();
     /// ```
     pub fn allow_credentials(mut self) -> Self {
         let inner = Arc::make_mut(&mut self.inner);
@@ -725,19 +450,19 @@ impl Cors {
         self
     }
 
-    /// Disable credentials support (default behavior).
+    /// Disable credentials support.
     ///
-    /// This explicitly disables credentials support, which is the default
-    /// and more secure option. Use this method if you want to be explicit
-    /// about credentials being disabled.
+    /// This is the default behavior. Use this to explicitly disable credentials
+    /// if they were previously enabled.
     ///
     /// # Examples
-    /// ```
-    /// use ignitia::middleware::Cors;
     ///
-    /// let no_credentials_cors = Cors::new()
-    ///     .disable_credentials()
-    ///     .build()?;
+    /// ```
+    /// use ignitia::middleware::CorsMiddleware;
+    ///
+    /// let cors = CorsMiddleware::new()
+    ///     .allow_credentials()  // Enable
+    ///     .disable_credentials();  // Then disable
     /// ```
     pub fn disable_credentials(mut self) -> Self {
         let inner = Arc::make_mut(&mut self.inner);
@@ -746,53 +471,47 @@ impl Cors {
         self
     }
 
-    /// Build the CORS middleware with validation.
+    /// Build and validate the CORS middleware.
     ///
-    /// This method validates the configuration and returns a `CorsMiddleware`
-    /// instance that can be used with the router. Validation ensures that
-    /// the configuration is secure and follows CORS specifications.
+    /// Validates the configuration, ensuring no conflicting settings (e.g., credentials
+    /// with wildcard origins). Returns an error if validation fails.
     ///
     /// # Returns
-    /// - `Ok(CorsMiddleware)`: Successfully validated and built middleware
-    /// - `Err(Error)`: Configuration validation failed
     ///
-    /// # Validation Rules
-    /// - Credentials cannot be combined with wildcard origins
-    /// - At least one method must be allowed
-    /// - Regex patterns must be valid
+    /// Returns `Ok(CorsMiddleware)` if configuration is valid, or `Err` if validation fails.
+    ///
+    /// # Errors
+    ///
+    /// - Returns an error if credentials are enabled with wildcard origins
     ///
     /// # Examples
+    ///
     /// ```
-    /// use ignitia::middleware::Cors;
+    /// use ignitia::middleware::CorsMiddleware;
     ///
-    /// // This will succeed
-    /// let cors = Cors::new()
-    ///     .allowed_origin("https://myapp.com")
-    ///     .build()?;
-    ///
-    /// // This will fail - credentials with wildcard origin
-    /// let invalid_cors = Cors::new()
-    ///     .allow_any_origin()
+    /// let cors = CorsMiddleware::new()
+    ///     .allowed_origins(&["https://example.com"])
     ///     .allow_credentials()
-    ///     .build(); // Returns Err
+    ///     .build()
+    ///     .expect("Invalid CORS configuration");
     /// ```
     pub fn build(self) -> Result<CorsMiddleware> {
         self.validate()?;
         Ok(CorsMiddleware { cors: self })
     }
 
-    /// Validates the CORS configuration for security and correctness.
+    /// Validate the CORS configuration.
     ///
-    /// This method performs comprehensive validation to ensure the CORS
-    /// configuration follows security best practices and CORS specifications.
+    /// Checks for configuration conflicts and security issues.
     ///
-    /// # Validation Checks
-    /// 1. **Credentials Security**: Ensures credentials are not combined with wildcard origins
-    /// 2. **Method Coverage**: Verifies at least one method is allowed
-    /// 3. **Pattern Validity**: Confirms regex patterns are valid
+    /// # Validation Rules
     ///
-    /// # Errors
-    /// Returns `Error::Internal` with descriptive messages for configuration issues.
+    /// - Credentials cannot be used with wildcard origins
+    /// - Credentials cannot be used with `*` in the allowed origins set
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if valid, or `Err` with a descriptive error message.
     fn validate(&self) -> Result<()> {
         let inner = &self.inner;
 
@@ -818,136 +537,143 @@ impl Cors {
     }
 }
 
-/// CORS middleware implementation.
+/// CORS middleware that handles cross-origin requests.
 ///
-/// This struct implements the `Middleware` trait and handles CORS for all requests.
-/// It automatically processes preflight requests and adds appropriate CORS headers
-/// to all responses.
+/// This middleware intercepts requests, handles CORS preflight (OPTIONS) requests,
+/// and adds appropriate CORS headers to responses. Created via [`Cors::build()`]
+/// or convenience methods.
 ///
-/// # Features
-/// - Automatic preflight request handling
-/// - Origin validation for all request types
-/// - Method and header validation for preflight requests
-/// - Secure default behaviors
-/// - Comprehensive error handling
+/// # Examples
 ///
-/// # Usage
-/// The middleware is typically created using the `Cors` builder:
 /// ```
-/// use ignitia::middleware::Cors;
+/// use ignitia::prelude::*;
 ///
-/// let cors_middleware = Cors::new()
-///     .allowed_origin("https://myapp.com")
-///     .build()?;
+/// let cors = CorsMiddleware::permissive();
+///
+/// let router = Router::new()
+///     .middleware(cors)
+///     .get("/api/data", || async { "Data" });
 /// ```
+#[derive(Clone)]
 pub struct CorsMiddleware {
     cors: Cors,
 }
 
+impl CorsMiddleware {
+    /// Create a new CORS middleware builder.
+    ///
+    /// Alias for [`Cors::new()`] for convenience.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::middleware::CorsMiddleware;
+    ///
+    /// let cors = CorsMiddleware::new()
+    ///     .allowed_origins(&["https://example.com"]);
+    /// ```
+    pub fn new() -> Cors {
+        Cors::new()
+    }
+
+    /// Create a permissive CORS configuration suitable for development.
+    ///
+    /// This configuration:
+    /// - Allows any origin
+    /// - Allows all common HTTP methods
+    /// - Allows common headers
+    /// - Sets max-age to 1 hour
+    /// - Does not allow credentials
+    ///
+    /// **Warning**: Do not use in production for sensitive APIs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::prelude::*;
+    ///
+    /// let router = Router::new()
+    ///     .middleware(CorsMiddleware::permissive())
+    ///     .get("/api/data", || async { "Data" });
+    /// ```
+    pub fn permissive() -> Self {
+        Self {
+            cors: Cors::new().allow_any_origin().max_age(3600),
+        }
+    }
+
+    /// Create a strict CORS configuration for production.
+    ///
+    /// Requires explicit configuration of allowed origins. Provides sensible
+    /// defaults for other settings with security in mind.
+    ///
+    /// # Arguments
+    ///
+    /// * `origins` - Specific origins to allow
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::middleware::CorsMiddleware;
+    ///
+    /// let cors = CorsMiddleware::strict(&[
+    ///     "https://example.com",
+    ///     "https://app.example.com",
+    /// ]);
+    /// ```
+    pub fn strict(origins: &[&str]) -> Self {
+        Self {
+            cors: Cors::new()
+                .allowed_origins(origins)
+                .allowed_methods(&[Method::GET, Method::POST, Method::PUT, Method::DELETE])
+                .max_age(3600),
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl Middleware for CorsMiddleware {
-    /// Handle requests before they reach the handler.
-    ///
-    /// This method processes incoming requests to handle CORS preflight requests
-    /// (OPTIONS) and validate origins for all requests.
-    ///
-    /// # Preflight Handling
-    /// For OPTIONS requests with CORS headers, this method:
-    /// 1. Validates the request origin
-    /// 2. Checks the requested method is allowed
-    /// 3. Validates requested headers
-    /// 4. Returns appropriate preflight response or error
-    ///
-    /// # Parameters
-    /// - `req`: Mutable reference to the incoming request
-    ///
-    /// # Returns
-    /// - `Ok(())`: Request can proceed normally
-    /// - `Err(PreflightResponse)`: Preflight response should be sent
-    /// - `Err(Error)`: Request should be rejected
-    async fn before(&self, req: &mut Request) -> Result<()> {
+    async fn handle(&self, req: Request, next: Next) -> Response {
         // Handle preflight OPTIONS requests
         if req.method == Method::OPTIONS {
-            if self.is_preflight_request(req) {
-                return self.handle_preflight(req).await;
+            if self.is_preflight_request(&req) {
+                return self.handle_preflight(&req);
             }
         }
 
-        Ok(())
-    }
-
-    /// Add CORS headers to responses.
-    ///
-    /// This method is called after the request handler has processed the request
-    /// and generated a response. It adds the necessary CORS headers to allow
-    /// the browser to access the response.
-    ///
-    /// # Headers Added
-    /// - `Access-Control-Allow-Origin`: Based on configuration
-    /// - `Access-Control-Expose-Headers`: If configured
-    /// - `Access-Control-Allow-Credentials`: If credentials are enabled
-    ///
-    /// # Parameters
-    /// - `res`: Mutable reference to the response
-    ///
-    /// # Returns
-    /// Always returns `Ok(())` as header addition should not fail
-    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
-        self.add_cors_headers(res);
-        Ok(())
+        // Process regular request
+        let mut res = next.run(req).await;
+        self.add_cors_headers(&mut res);
+        res
     }
 }
 
 impl CorsMiddleware {
-    /// Determines if a request is a CORS preflight request.
+    /// Check if a request is a CORS preflight request.
     ///
-    /// A request is considered a preflight request if:
-    /// - Method is OPTIONS
-    /// - Contains `Access-Control-Request-Method` header
-    ///
-    /// # Parameters
-    /// - `req`: The request to check
-    ///
-    /// # Returns
-    /// `true` if this is a preflight request, `false` otherwise
+    /// A request is considered a preflight if it's an OPTIONS request with
+    /// the `Access-Control-Request-Method` header.
     fn is_preflight_request(&self, req: &Request) -> bool {
         req.header("access-control-request-method").is_some()
     }
 
-    /// Handles CORS preflight requests.
+    /// Handle a CORS preflight OPTIONS request.
     ///
-    /// This method processes OPTIONS requests that are part of the CORS preflight
-    /// mechanism. It validates the request and either approves or rejects it
-    /// based on the CORS configuration.
-    ///
-    /// # Validation Steps
-    /// 1. **Origin Validation**: Checks if the origin is allowed
-    /// 2. **Method Validation**: Ensures the requested method is allowed
-    /// 3. **Header Validation**: Validates all requested headers
-    /// 4. **Response Generation**: Creates appropriate preflight response
-    ///
-    /// # Parameters
-    /// - `req`: Mutable reference to the preflight request
-    ///
-    /// # Returns
-    /// - `Ok(())`: Should never happen in current implementation
-    /// - `Err(PreflightResponse)`: Successful preflight response
-    /// - `Err(Error)`: Preflight request rejected
-    ///
-    /// # Errors
-    /// - `Error::Forbidden`: Origin not allowed
-    /// - `Error::MethodNotAllowed`: Requested method not allowed
-    /// - `Error::BadRequest`: Requested headers not allowed
-    async fn handle_preflight(&self, req: &mut Request) -> Result<()> {
+    /// Validates the origin, method, and headers, then returns an appropriate
+    /// preflight response with CORS headers.
+    fn handle_preflight(&self, req: &Request) -> Response {
         let origin = match req.header("origin") {
             Some(origin) => origin,
-            None => return Ok(()), // No origin header, not a CORS request
+            None => {
+                // No origin header - not a CORS request
+                return Response::new(StatusCode::BAD_REQUEST);
+            }
         };
 
         // Validate origin
         if !self.is_origin_allowed(origin) {
             debug!("CORS preflight rejected: origin not allowed: {}", origin);
-            return Err(crate::Error::Forbidden("Origin not allowed".to_string()));
+            return Response::new(StatusCode::FORBIDDEN);
         }
 
         // Validate request method
@@ -958,7 +684,7 @@ impl CorsMiddleware {
                         "CORS preflight rejected: method not allowed: {}",
                         request_method
                     );
-                    return Err(crate::Error::MethodNotAllowed(request_method.to_string()));
+                    return Response::new(StatusCode::METHOD_NOT_ALLOWED);
                 }
             }
         }
@@ -969,10 +695,7 @@ impl CorsMiddleware {
                 let header = header.trim().to_lowercase();
                 if !self.cors.inner.allowed_headers.contains(&header) {
                     debug!("CORS preflight rejected: header not allowed: {}", header);
-                    return Err(crate::Error::BadRequest(format!(
-                        "Header not allowed: {}",
-                        header
-                    )));
+                    return Response::new(StatusCode::BAD_REQUEST);
                 }
             }
         }
@@ -982,24 +705,10 @@ impl CorsMiddleware {
         self.add_preflight_headers(&mut response, origin);
 
         debug!("CORS preflight request handled successfully");
-        Err(crate::Error::Custom(Box::new(PreflightResponse(response))))
+        response
     }
 
-    /// Checks if an origin is allowed based on the configuration.
-    ///
-    /// This method validates origins against the configured allowed origins,
-    /// supporting exact matches, wildcard matching, and regex patterns.
-    ///
-    /// # Parameters
-    /// - `origin`: The origin to validate
-    ///
-    /// # Returns
-    /// `true` if the origin is allowed, `false` otherwise
-    ///
-    /// # Origin Matching Rules
-    /// - `AllowedOrigins::Any`: Always returns true
-    /// - `AllowedOrigins::Exact`: Exact string match
-    /// - `AllowedOrigins::Regex`: Regex pattern match
+    /// Check if an origin is allowed based on configuration.
     fn is_origin_allowed(&self, origin: &str) -> bool {
         if origin.is_empty() {
             return false;
@@ -1012,28 +721,18 @@ impl CorsMiddleware {
         }
     }
 
-    /// Adds standard CORS headers to responses.
-    ///
-    /// This method adds the basic CORS headers that allow browsers to
-    /// access the response. It's called for all responses, not just
-    /// preflight responses.
-    ///
-    /// # Headers Added
-    /// - `Access-Control-Allow-Origin`: Based on configuration
-    /// - `Access-Control-Expose-Headers`: If headers are configured to be exposed
-    /// - `Access-Control-Allow-Credentials`: If credentials are enabled
-    ///
-    /// # Parameters
-    /// - `response`: Mutable reference to the response
+    /// Add CORS headers to a regular response.
     fn add_cors_headers(&self, response: &mut Response) {
         let inner = &self.cors.inner;
 
+        // Add Allow-Origin header
         if inner.allowed_origins_all {
             response
                 .headers
                 .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
         }
 
+        // Add exposed headers
         if !inner.exposed_headers.is_empty() {
             response.headers.insert(
                 header::ACCESS_CONTROL_EXPOSE_HEADERS,
@@ -1041,6 +740,7 @@ impl CorsMiddleware {
             );
         }
 
+        // Add credentials header if enabled
         if inner.supports_credentials {
             response.headers.insert(
                 header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
@@ -1049,21 +749,7 @@ impl CorsMiddleware {
         }
     }
 
-    /// Adds preflight-specific headers to OPTIONS responses.
-    ///
-    /// This method adds all the headers required for a successful preflight
-    /// response, including allowed methods, headers, and cache control.
-    ///
-    /// # Headers Added
-    /// - `Access-Control-Allow-Origin`: Specific origin or *
-    /// - `Access-Control-Allow-Methods`: Configured allowed methods
-    /// - `Access-Control-Allow-Headers`: Configured allowed headers
-    /// - `Access-Control-Max-Age`: Cache duration if configured
-    /// - `Access-Control-Allow-Credentials`: If credentials are enabled
-    ///
-    /// # Parameters
-    /// - `response`: Mutable reference to the preflight response
-    /// - `origin`: The origin making the preflight request
+    /// Add CORS headers to a preflight response.
     fn add_preflight_headers(&self, response: &mut Response, origin: &str) {
         let inner = &self.cors.inner;
 
@@ -1096,14 +782,14 @@ impl CorsMiddleware {
                     .allowed_headers
                     .iter()
                     .cloned()
-                    .collect::<Vec<String>>()
+                    .collect::<Vec<_>>()
                     .join(", ")
                     .parse()
                     .unwrap(),
             );
         }
 
-        // Set max age
+        // Set max-age if configured
         if let Some(max_age) = inner.max_age {
             response.headers.insert(
                 header::ACCESS_CONTROL_MAX_AGE,
@@ -1111,7 +797,7 @@ impl CorsMiddleware {
             );
         }
 
-        // Set allow credentials
+        // Set credentials if enabled
         if inner.supports_credentials {
             response.headers.insert(
                 header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
@@ -1121,153 +807,8 @@ impl CorsMiddleware {
     }
 }
 
-/// Custom error type for successful preflight responses.
-///
-/// This error type is used internally to short-circuit request processing
-/// when a preflight request is successfully handled. It contains the
-/// preflight response that should be sent to the client.
-#[derive(Debug)]
-struct PreflightResponse(Response);
-
-impl crate::error::CustomError for PreflightResponse {
-    /// Returns the HTTP status code for the preflight response.
-    ///
-    /// Preflight responses typically use 204 No Content status.
-    fn status_code(&self) -> http::StatusCode {
-        self.0.status
-    }
-
-    /// Returns the error type identifier.
-    ///
-    /// This is used for error categorization and logging.
-    fn error_type(&self) -> &'static str {
-        "cors_preflight"
-    }
-}
-
-impl std::fmt::Display for PreflightResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "CORS preflight response")
-    }
-}
-
-impl Default for Cors {
-    /// Creates a default CORS configuration.
-    ///
-    /// This is equivalent to calling `Cors::new()` and provides the same
-    /// default configuration suitable for development environments.
+impl Default for CorsMiddleware {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-// Convenience methods for common CORS configurations
-impl Cors {
-    /// Creates a permissive CORS configuration for development.
-    ///
-    /// **WARNING**: This configuration should only be used in development
-    /// environments. It allows all origins, methods, and headers.
-    ///
-    /// # Configuration
-    /// - **Origins**: All (*)
-    /// - **Methods**: All common HTTP methods
-    /// - **Headers**: All (using wildcard)
-    /// - **Credentials**: Disabled (cannot be used with wildcard origins)
-    ///
-    /// # Examples
-    /// ```
-    /// use ignitia::middleware::Cors;
-    ///
-    /// let dev_cors = Cors::permissive();
-    /// // Only use this for development!
-    /// ```
-    pub fn permissive() -> Self {
-        Self::new()
-            .allow_any_origin()
-            .allowed_methods(&[
-                Method::GET,
-                Method::POST,
-                Method::PUT,
-                Method::DELETE,
-                Method::PATCH,
-                Method::OPTIONS,
-                Method::HEAD,
-            ])
-            .allowed_headers(&["*"])
-    }
-
-    /// Creates a default CORS configuration for APIs.
-    ///
-    /// This configuration is suitable for public APIs that don't require
-    /// credentials. It allows common methods and headers while being
-    /// more restrictive than the permissive configuration.
-    ///
-    /// # Configuration
-    /// - **Origins**: All (*)
-    /// - **Methods**: GET, POST, PUT, DELETE, OPTIONS
-    /// - **Headers**: Content-Type, Authorization, X-Requested-With
-    /// - **Credentials**: Disabled
-    ///
-    /// # Examples
-    /// ```
-    /// use ignitia::middleware::Cors;
-    ///
-    /// let api_cors = Cors::default_api();
-    /// ```
-    pub fn default_api() -> Self {
-        Self::new()
-            .allowed_origin("*")
-            .allowed_methods(&[
-                Method::GET,
-                Method::POST,
-                Method::PUT,
-                Method::DELETE,
-                Method::OPTIONS,
-            ])
-            .allowed_headers(&["Content-Type", "Authorization", "X-Requested-With"])
-    }
-
-    /// Creates a secure CORS configuration for authenticated APIs.
-    ///
-    /// This configuration enables credentials support and requires specific
-    /// origins to be provided. It's suitable for production APIs that need
-    /// to send cookies or authorization headers.
-    ///
-    /// # Parameters
-    /// - `allowed_origins`: Array of specific origins to allow
-    ///
-    /// # Configuration
-    /// - **Origins**: Specific origins provided
-    /// - **Methods**: GET, POST, PUT, DELETE, OPTIONS
-    /// - **Headers**: Content-Type, Authorization, X-Requested-With
-    /// - **Credentials**: Enabled
-    ///
-    /// # Examples
-    /// ```
-    /// use ignitia::middleware::Cors;
-    ///
-    /// let secure_cors = Cors::secure_api(&[
-    ///     "https://myapp.com",
-    ///     "https://admin.myapp.com"
-    /// ]);
-    /// ```
-    pub fn secure_api(allowed_origins: &[&str]) -> Self {
-        let mut cors = Self::new()
-            .allowed_methods(&[
-                Method::GET,
-                Method::POST,
-                Method::PUT,
-                Method::DELETE,
-                Method::OPTIONS,
-            ])
-            .allowed_headers(&["Content-Type", "Authorization", "X-Requested-With"]);
-
-        if allowed_origins.is_empty() {
-            cors = cors.allow_any_origin();
-        } else {
-            cors = cors.allowed_origins(allowed_origins);
-        }
-
-        cors
+        Self::permissive()
     }
 }

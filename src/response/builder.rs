@@ -56,7 +56,6 @@ use http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::borrow::Cow;
-use std::sync::Arc;
 
 /// Pre-compiled common responses for ultra-fast serving
 ///
@@ -250,8 +249,7 @@ pub struct ResponseBuilder {
 /// # Variants
 ///
 /// - `Static`: References to static byte arrays (zero allocation)
-/// - `Shared`: Arc-wrapped bytes for sharing between responses
-/// - `Owned`: Owned bytes for dynamic content
+/// - `Dynamic`: Owned bytes for dynamic content
 /// - `Cow`: Copy-on-write strings for flexible string handling
 #[derive(Debug, Clone)]
 enum ResponseBody {
@@ -261,17 +259,9 @@ enum ResponseBody {
     /// No allocation required as it references static memory.
     Static(&'static [u8]),
 
-    /// Pre-allocated bytes shared via Arc for efficient cloning
-    ///
-    /// Ideal for responses that may be sent to multiple clients
-    /// or cached responses that need to be shared.
-    Shared(Arc<Bytes>),
-
-    /// Owned bytes for dynamic content that needs exclusive ownership
-    ///
-    /// Used for dynamically generated content like JSON serialization
-    /// or content that can't be shared or is temporary.
-    Owned(Bytes),
+    /// Dynamic bytes - efficiently shared via Bytes internal refcount
+    /// Use this for ALL dynamic content (formerly "Owned" and "Shared")
+    Dynamic(Bytes),
 
     /// Borrowed string data with potential zero-copy optimization
     ///
@@ -512,43 +502,7 @@ impl ResponseBuilder {
     /// ```
     #[inline]
     pub fn body_bytes(mut self, body: Bytes) -> Self {
-        self.body = Some(ResponseBody::Owned(body));
-        self
-    }
-
-    /// Sets shared bytes as the response body
-    ///
-    /// For content that may be shared between multiple responses.
-    /// Uses `Arc<Bytes>` for efficient memory sharing.
-    ///
-    /// # Arguments
-    ///
-    /// * `body` - Arc-wrapped Bytes for shared ownership
-    ///
-    /// # Returns
-    ///
-    /// Returns `Self` to allow method chaining
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use ignitia::ResponseBuilder;
-    /// use bytes::Bytes;
-    /// use std::sync::Arc;
-    ///
-    /// let shared_content = Arc::new(Bytes::from("Shared content"));
-    /// let response = ResponseBuilder::new()
-    ///     .body_shared(shared_content)
-    ///     .build();
-    /// ```
-    ///
-    /// # Performance Notes
-    ///
-    /// - Enables zero-copy cloning of response bodies
-    /// - Ideal for cached or frequently reused content
-    #[inline]
-    pub fn body_shared(mut self, body: Arc<Bytes>) -> Self {
-        self.body = Some(ResponseBody::Shared(body));
+        self.body = Some(ResponseBody::Dynamic(body));
         self
     }
 
@@ -615,7 +569,7 @@ impl ResponseBuilder {
     /// ```
     #[inline]
     pub fn body<T: Into<Bytes>>(mut self, body: T) -> Self {
-        self.body = Some(ResponseBody::Owned(body.into()));
+        self.body = Some(ResponseBody::Dynamic(body.into()));
         self
     }
 
@@ -891,7 +845,7 @@ impl ResponseBuilder {
         if let Some(body) = COMMON_RESPONSES.get(json_key) {
             self.headers
                 .insert(CONTENT_TYPE.clone(), COMMON_HEADERS["json"].clone());
-            self.body = Some(ResponseBody::Shared(Arc::new(body.clone())));
+            self.body = Some(ResponseBody::Dynamic(body.clone()));
         } else {
             // Fallback for unknown keys
             self.headers
@@ -956,7 +910,7 @@ impl ResponseBuilder {
             self.headers.insert(CONTENT_LENGTH.clone(), len_str);
         }
 
-        self.body = Some(ResponseBody::Owned(Bytes::from(buf)));
+        self.body = Some(ResponseBody::Dynamic(Bytes::from(buf)));
         Ok(self)
     }
 
@@ -1007,7 +961,7 @@ impl ResponseBuilder {
             self.headers.insert(CONTENT_LENGTH.clone(), len_str);
         }
 
-        self.body = Some(ResponseBody::Owned(Bytes::from(buf)));
+        self.body = Some(ResponseBody::Dynamic(Bytes::from(buf)));
         Ok(self)
     }
 
@@ -1231,14 +1185,13 @@ impl ResponseBuilder {
     /// - Zero-copy operations where possible
     pub fn build(self) -> Response {
         let body_bytes = match self.body {
-            Some(ResponseBody::Static(bytes)) => Arc::new(Bytes::from_static(bytes)),
-            Some(ResponseBody::Shared(arc_bytes)) => arc_bytes,
-            Some(ResponseBody::Owned(bytes)) => Arc::new(bytes),
+            Some(ResponseBody::Static(bytes)) => Bytes::from_static(bytes),
+            Some(ResponseBody::Dynamic(bytes)) => bytes,
             Some(ResponseBody::Cow(cow)) => match cow {
-                Cow::Borrowed(s) => Arc::new(Bytes::from_static(s.as_bytes())),
-                Cow::Owned(s) => Arc::new(Bytes::from(s)),
+                Cow::Borrowed(s) => Bytes::from_static(s.as_bytes()),
+                Cow::Owned(s) => Bytes::from(s),
             },
-            None => Arc::new(Bytes::new()),
+            None => Bytes::new(),
         };
 
         Response {
@@ -1385,9 +1338,9 @@ impl ResponseBuilder {
     /// let bad_request = ResponseBuilder::bad_request();
     /// ```
     #[inline]
-    pub fn bad_request() -> Response {
+    pub fn bad_request(message: &'static str) -> Response {
         ResponseBuilder::with_status(StatusCode::BAD_REQUEST)
-            .json_static("bad_request")
+            .json_static(message)
             .build()
     }
 
@@ -1592,7 +1545,7 @@ impl Response {
                     headers.insert(CONTENT_TYPE.clone(), COMMON_HEADERS["json"].clone());
                     headers
                 },
-                body: Arc::new(body.clone()),
+                body: body.clone(),
                 cache_control: None,
             }
         } else {
@@ -1637,7 +1590,7 @@ impl Response {
                 headers.insert(CONTENT_TYPE.clone(), COMMON_HEADERS["json"].clone());
                 headers
             },
-            body: Arc::new(Bytes::from_static(json_str.as_bytes())),
+            body: Bytes::from_static(json_str.as_bytes()),
             cache_control: None,
         }
     }
@@ -1676,7 +1629,7 @@ impl Response {
                 headers.insert(CONTENT_TYPE.clone(), COMMON_HEADERS["text"].clone());
                 headers
             },
-            body: Arc::new(Bytes::from_static(text.as_bytes())),
+            body: Bytes::from_static(text.as_bytes()),
             cache_control: None,
         }
     }
@@ -1715,7 +1668,7 @@ impl Response {
                 headers.insert(CONTENT_TYPE.clone(), COMMON_HEADERS["html"].clone());
                 headers
             },
-            body: Arc::new(Bytes::from_static(html.as_bytes())),
+            body: Bytes::from_static(html.as_bytes()),
             cache_control: None,
         }
     }
@@ -1751,8 +1704,8 @@ impl Response {
     /// - Zero-copy operation (only increments Arc reference count)
     /// - Allows efficient body sharing between responses
     /// - Useful for response caching or middleware
-    pub fn clone_body(&self) -> Arc<Bytes> {
-        Arc::clone(&self.body)
+    pub fn clone_body(&self) -> Bytes {
+        self.body.clone()
     }
 
     /// Creates an empty JSON response
@@ -1883,8 +1836,8 @@ impl Response {
     ///
     /// let bad_request = Response::bad_request();
     /// ```
-    pub fn bad_request() -> Self {
-        ResponseBuilder::bad_request()
+    pub fn bad_request(message: &'static str) -> Self {
+        ResponseBuilder::bad_request(message)
     }
 
     /// Creates a "Method Not Allowed" response

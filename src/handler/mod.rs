@@ -1,115 +1,66 @@
-//! # Request Handler System
+//! Handler module for the Ignitia web framework.
 //!
-//! This module provides the core request handling system for the Ignitia web framework.
-//! It defines traits and types for processing HTTP requests and generating responses,
-//! with support for automatic parameter extraction and type-safe handler functions.
+//! This module provides the core handler abstractions and implementations for processing HTTP requests.
+//! It includes traits for defining request handlers, extractors for parsing request data, and utilities
+//! for creating handlers with various signatures.
 //!
-//! ## Features
+//! # Overview
 //!
-//! - **Type-Safe Handlers**: Compile-time guarantees for handler function signatures
-//! - **Automatic Extraction**: Extract typed data from requests automatically
-//! - **Flexible Handler Types**: Support for various handler function patterns
-//! - **Zero-Cost Abstractions**: Minimal runtime overhead for handler dispatch
-//! - **Async/Await Support**: Full support for asynchronous request processing
-//! - **Builder Pattern**: Fluent API for handler composition
+//! The handler system is built around several key traits:
+//! - [`Handler`] - Core async trait for handling requests
+//! - [`UniversalHandler`] - Generic handler trait that works with any `IntoResponse` return type
+//! - [`IntoHandler`] - Trait for converting functions into handlers
+//! - [`FromRequest`] - Trait for extracting data from requests (defined in `extractor` module)
 //!
-//! ## Handler Types
+//! # Examples
 //!
-//! The framework supports several types of handlers:
+//! ## Basic Handler
 //!
-//! ### 1. Handler Trait
-//! The fundamental trait that all handlers must implement:
 //! ```
-//! use ignitia::{Handler, Request, Response, Result};
+//! use ignitia::prelude::*;
 //!
-//! struct MyHandler;
-//!
-//! #[async_trait::async_trait]
-//! impl Handler for MyHandler {
-//!     async fn handle(&self, req: Request) -> Result<Response> {
-//!         Ok(Response::text("Hello from custom handler!"))
-//!     }
+//! async fn hello_handler() -> &'static str {
+//!     "Hello, World!"
 //! }
-//! ```
-//!
-//! ### 2. Handler Functions
-//! Simple functions that can be converted to handlers:
-//! ```
-//! use ignitia::{handler_fn, Request, Response, Result};
-//!
-//! let handler = handler_fn(|req: Request| async move {
-//!     Ok(Response::text("Hello from function handler!"))
-//! });
-//! ```
-//!
-//! ### 3. IntoHandler Functions
-//! Functions with automatic parameter extraction:
-//! ```
-//! use ignitia::{Path, Query, Json, Response, Result};
-//! use serde::Deserialize;
-//!
-//! #[derive(Deserialize)]
-//! struct UserParams {
-//!     id: u64,
-//! }
-//!
-//! #[derive(Deserialize)]
-//! struct QueryParams {
-//!     format: Option<String>,
-//! }
-//!
-//! #[derive(Deserialize)]
-//! struct CreateUserRequest {
-//!     name: String,
-//!     email: String,
-//! }
-//!
-//! // Handler with path and query extraction
-//! async fn get_user(
-//!     Path(params): Path<UserParams>,
-//!     Query(query): Query<QueryParams>,
-//! ) -> Result<Response> {
-//!     let format = query.format.unwrap_or_else(|| "json".to_string());
-//!     Ok(Response::text(format!("User {} in {} format", params.id, format)))
-//! }
-//!
-//! // Handler with JSON body extraction
-//! async fn create_user(Json(user): Json<CreateUserRequest>) -> Result<Response> {
-//!     // Create user logic here
-//!     Ok(Response::text(format!("Created user: {}", user.name)))
-//! }
-//! ```
-//!
-//! ## Usage in Router
-//!
-//! Handlers are typically used with the router:
-//! ```
-//! use ignitia::{Router, Response, Result};
 //!
 //! let router = Router::new()
-//!     .get("/", || async { Ok(Response::text("Hello World!")) })
-//!     .get("/users/:id", get_user)
-//!     .post("/users", create_user);
+//!     .get("/hello", hello_handler);
 //! ```
 //!
-//! ## Error Handling
+//! ## Handler with Extractors
 //!
-//! Handlers can return errors that are automatically converted to HTTP responses:
 //! ```
-//! use ignitia::{Error, Response, Result};
+//! use ignitia::prelude::*;
 //!
-//! async fn fallible_handler() -> Result<Response> {
-//!     if some_condition() {
-//!         return Err(Error::BadRequest("Invalid input".into()));
-//!     }
-//!     Ok(Response::text("Success"))
+//! async fn user_handler(Path(id): Path<String>, Json(data): Json<UserData>) -> Result<Response> {
+//!     // Process user data...
+//!     Ok(Response::json(data))
+//! }
+//! ```
+//!
+//! ## Handler returning custom types
+//!
+//! Any type implementing `IntoResponse` can be returned from handlers:
+//!
+//! ```
+//! use ignitia::prelude::*;
+//!
+//! async fn status_handler() -> StatusCode {
+//!     StatusCode::OK
 //! }
 //!
-//! # fn some_condition() -> bool { false }
+//! async fn text_handler() -> String {
+//!     "Hello".to_string()
+//! }
+//!
+//! async fn result_handler() -> Result<Response> {
+//!     Ok(Response::json(json!({"status": "ok"})))
+//! }
 //! ```
 
 pub mod extractor;
 
+use crate::response::IntoResponse;
 use crate::{Request, Response, Result};
 use std::future::Future;
 use std::pin::Pin;
@@ -262,70 +213,145 @@ pub type HandlerFn = Arc<dyn Fn(Request) -> BoxFuture<'static, Result<Response>>
 
 #[async_trait::async_trait]
 impl Handler for HandlerFn {
+    #[inline]
     async fn handle(&self, req: Request) -> Result<Response> {
         (self)(req).await
     }
 }
 
-/// Converts a closure into a HandlerFn for legacy support.
+/// Universal handler trait that works with any return type implementing [`IntoResponse`].
 ///
-/// This function allows you to convert async closures or functions into
-/// the `HandlerFn` type that can be stored and called later.
+/// This trait enables handlers to return various types (String, StatusCode, Result, etc.)
+/// which are automatically converted to [`Response`] instances. It's the foundation of
+/// Ignitia's flexible handler system.
 ///
-/// # Type Parameters
-/// - `F`: The function type that takes a Request and returns a Future
-/// - `Fut`: The Future type returned by the function
+/// The type parameter `T` represents the extractors and their order. This trait is
+/// implemented via macro for functions with 0-8 parameters.
 ///
-/// # Parameters
-/// - `f`: The function to convert into a handler
+/// # Type Parameter
 ///
-/// # Returns
-/// A `HandlerFn` that can be used with the routing system
+/// * `T` - Tuple representing the extractor types used by the handler
 ///
 /// # Examples
 ///
-/// ## Basic Usage
 /// ```
-/// use ignitia::{handler_fn, Request, Response, Result};
+/// // Handler with no extractors
+/// async fn simple_handler() -> String {
+///     "Hello".to_string()
+/// }
 ///
-/// let my_handler = handler_fn(|req: Request| async move {
-///     let path = req.uri.path();
-///     Ok(Response::text(format!("Path: {}", path)))
+/// // Handler with Path extractor
+/// async fn path_handler(Path(id): Path<u32>) -> String {
+///     format!("User ID: {}", id)
+/// }
+///
+/// // Handler with multiple extractors
+/// async fn multi_handler(
+///     Path(id): Path<String>,
+///     Query(params): Query<HashMap<String, String>>,
+///     Json(body): Json<MyData>
+/// ) -> Result<Response> {
+///     // Process request...
+///     Ok(Response::json(body))
+/// }
+/// ```
+#[async_trait::async_trait]
+pub trait UniversalHandler<T>: Clone + Send + Sync + 'static {
+    /// Call the handler with the given request and return a [`Response`].
+    ///
+    /// This method extracts parameters from the request, calls the handler function,
+    /// and converts the result to a [`Response`].
+    ///
+    /// # Arguments
+    ///
+    /// * `req` - The HTTP request to process
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`Response`]. If parameter extraction fails, an error response is returned.
+    async fn call(self, req: Request) -> Response;
+}
+
+/// Convert a [`UniversalHandler`] to a [`HandlerFn`].
+///
+/// This function wraps a universal handler in a [`HandlerFn`], making it compatible
+/// with the router's internal handler storage. It's used internally by the framework
+/// but can be useful for advanced use cases.
+///
+/// # Type Parameters
+///
+/// * `H` - The handler type implementing [`UniversalHandler`]
+/// * `T` - The extractor tuple type
+///
+/// # Arguments
+///
+/// * `handler` - The universal handler to convert
+///
+/// # Returns
+///
+/// Returns a [`HandlerFn`] that can be used with the router.
+///
+/// # Examples
+///
+/// ```
+/// use ignitia::handler::universal_handler;
+///
+/// async fn my_handler() -> &'static str {
+///     "Hello"
+/// }
+///
+/// let handler_fn = universal_handler(my_handler);
+/// ```
+#[inline]
+pub fn universal_handler<H, T>(handler: H) -> HandlerFn
+where
+    H: UniversalHandler<T>,
+{
+    Arc::new(move |req| {
+        let handler = handler.clone();
+        Box::pin(async move {
+            let response = handler.call(req).await;
+            Ok(response)
+        })
+    })
+}
+
+/// Implementation of [`UniversalHandler`] for functions with no extractors.
+///
+/// This allows simple async functions that return any type implementing [`IntoResponse`]
+/// to be used as handlers.
+#[async_trait::async_trait]
+impl<F, Fut, R> UniversalHandler<()> for F
+where
+    F: Fn() -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse,
+{
+    #[inline]
+    async fn call(self, _req: Request) -> Response {
+        self().await.into_response()
+    }
+}
+
+/// # Arguments
+///
+/// * `f` - The function to convert to a handler
+///
+/// # Returns
+///
+/// Returns a [`HandlerFn`] wrapping the provided function.
+///
+/// # Examples
+///
+/// ```
+/// use ignitia::handler::handler_fn;
+/// use ignitia::prelude::*;
+///
+/// let handler = handler_fn(|req: Request| async move {
+///     Ok(Response::text(format!("Method: {}", req.method)))
 /// });
 /// ```
-///
-/// ## With Request Processing
-/// ```
-/// use ignitia::{handler_fn, Request, Response, Result};
-///
-/// let json_handler = handler_fn(|req: Request| async move {
-///     let method = req.method.as_str();
-///     let content_type = req.header("content-type").unwrap_or("unknown");
-///
-///     Ok(Response::json(serde_json::json!({
-///         "method": method,
-///         "content_type": content_type
-///     }))?)
-/// });
-/// ```
-///
-/// ## Error Handling
-/// ```
-/// use ignitia::{handler_fn, Request, Response, Result, Error};
-///
-/// let validated_handler = handler_fn(|req: Request| async move {
-///     // Validate request
-///     if req.method != http::Method::POST {
-///         return Err(Error::BadRequest("Only POST allowed".into()));
-///     }
-///
-///     if req.body.is_empty() {
-///         return Err(Error::BadRequest("Body required".into()));
-///     }
-///
-///     Ok(Response::text("Valid request!"))
-/// });
-/// ```
+#[inline]
 pub fn handler_fn<F, Fut>(f: F) -> HandlerFn
 where
     F: Fn(Request) -> Fut + Send + Sync + 'static,
@@ -334,58 +360,28 @@ where
     Arc::new(move |req| Box::pin(f(req)))
 }
 
-/// Trait for types that can be converted into handlers with automatic extraction.
+/// Trait for converting functions into handlers.
 ///
-/// This trait enables the framework to automatically extract typed data from requests
-/// and pass them as parameters to handler functions. It's the foundation of the
-/// type-safe parameter extraction system.
+/// This trait is similar to [`UniversalHandler`] but specifically for handlers
+/// that return `Result<Response>`. It provides a bridge between regular async
+/// functions and the handler system.
 ///
-/// # Type Parameters
-/// - `T`: A tuple representing the extracted parameter types
+/// The type parameter `T` represents the extractor types used by the handler.
 ///
-/// # Examples
+/// # Type Parameter
 ///
-/// The trait is automatically implemented for functions with compatible signatures:
-/// ```
-/// use ignitia::{IntoHandler, Path, Query, Response, Result};
-/// use serde::Deserialize;
-///
-/// #[derive(Deserialize)]
-/// struct UserParams { id: u64 }
-///
-/// #[derive(Deserialize)]
-/// struct QueryParams { format: Option<String> }
-///
-/// // This function automatically implements IntoHandler<(Path<UserParams>, Query<QueryParams>)>
-/// async fn get_user(
-///     Path(params): Path<UserParams>,
-///     Query(query): Query<QueryParams>,
-/// ) -> Result<Response> {
-///     Ok(Response::text(format!("User {}, format: {:?}", params.id, query.format)))
-/// }
-/// ```
-///
-/// # Implementation Details
-/// The trait is implemented using a macro system that generates implementations
-/// for functions with 0-8 extractor parameters, providing compile-time type safety
-/// while maintaining runtime efficiency.
+/// * `T` - Tuple representing the extractor types
 #[async_trait::async_trait]
 pub trait IntoHandler<T>: Clone + Send + Sync + 'static {
-    /// Calls the handler with the given request.
+    /// Call the handler and return a `Result<Response>`.
     ///
-    /// This method is responsible for extracting the required parameters from
-    /// the request and calling the actual handler function.
+    /// # Arguments
     ///
-    /// # Parameters
-    /// - `req`: The incoming HTTP request
+    /// * `req` - The HTTP request to process
     ///
     /// # Returns
-    /// A `Result<Response>` from the handler execution
     ///
-    /// # Errors
-    /// Returns an error if:
-    /// - Parameter extraction fails
-    /// - The handler function returns an error
+    /// Returns `Result<Response>`, allowing handlers to propagate errors.
     async fn call(self, req: Request) -> Result<Response>;
 }
 
@@ -418,6 +414,7 @@ pub trait IntoHandler<T>: Clone + Send + Sync + 'static {
 ///
 /// Note: In most cases, you won't need to call this function directly as the
 /// router methods (`.get()`, `.post()`, etc.) handle the conversion automatically.
+#[inline]
 pub fn into_handler<H, T>(handler: H) -> HandlerFn
 where
     H: IntoHandler<T>,
@@ -450,92 +447,72 @@ where
     F: Fn() -> Fut + Clone + Send + Sync + 'static,
     Fut: Future<Output = Result<Response>> + Send + 'static,
 {
+    #[inline]
     async fn call(self, _req: Request) -> Result<Response> {
         self().await
     }
 }
 
-/// Macro to generate IntoHandler implementations for different numbers of extractors.
-///
-/// This macro generates implementations for functions that take 1-8 extractor parameters,
-/// automatically handling the extraction of each parameter type from the request.
-///
-/// The macro generates code that:
-/// 1. Extracts each parameter using its `FromRequest` implementation
-/// 2. Calls the handler function with the extracted parameters
-/// 3. Returns the result from the handler
-///
-/// # Generated Implementations
-/// For each number of parameters (1-8), the macro generates an implementation like:
-/// ```
-/// impl<F, Fut, T1, T2> IntoHandler<(T1, T2)> for F
-/// where
-///     F: Fn(T1, T2) -> Fut + Clone + Send + Sync + 'static,
-///     Fut: Future<Output = Result<Response>> + Send + 'static,
-///     T1: FromRequest + Send,
-///     T2: FromRequest + Send,
-/// {
-///     async fn call(self, req: Request) -> Result<Response> {
-///         let t1 = T1::from_request(&req)?;
-///         let t2 = T2::from_request(&req)?;
-///         self(t1, t2).await
-///     }
-/// }
-/// ```
-macro_rules! impl_handler {
+// THE MAGIC MACRO: Works with ANY return type that implements IntoResponse
+macro_rules! impl_universal_handler {
     (
         [$($ty:ident),*], $last:ident
     ) => {
         #[async_trait::async_trait]
-        impl<F, Fut, $($ty,)* $last> IntoHandler<($($ty,)* $last,)> for F
+        impl<F, Fut, $($ty,)* $last, R> UniversalHandler<($($ty,)* $last,)> for F
         where
             F: Fn($($ty,)* $last) -> Fut + Clone + Send + Sync + 'static,
-            Fut: Future<Output = Result<Response>> + Send + 'static,
+            Fut: Future<Output = R> + Send + 'static,
+            R: IntoResponse, // ANY type that can become a Response!
             $( $ty: extractor::FromRequest + Send, )*
             $last: extractor::FromRequest + Send,
         {
-            async fn call(self, req: Request) -> Result<Response> {
+            #[inline]
+            async fn call(self, req: Request) -> Response {
                 $(
-                    let $ty = $ty::from_request(&req)?;
+                    let $ty = match $ty::from_request(&req) {
+                        Ok(val) => val,
+                        Err(error_response) => return error_response.into_response(),
+                    };
                 )*
-                let $last = $last::from_request(&req)?;
+                let $last = match $last::from_request(&req) {
+                    Ok(val) => val,
+                    Err(error_response) => return error_response.into_response(),
+                };
 
-                self($($ty,)* $last).await
+                // THE MAGIC: auto-convert ANY return type to Response!
+                let result = self($($ty,)* $last).await;
+                result.into_response()
             }
         }
     };
 }
 
 // Generate implementations for 1-8 parameters
-impl_handler!([], T1);
-impl_handler!([T1], T2);
-impl_handler!([T1, T2], T3);
-impl_handler!([T1, T2, T3], T4);
-impl_handler!([T1, T2, T3, T4], T5);
-impl_handler!([T1, T2, T3, T4, T5], T6);
-impl_handler!([T1, T2, T3, T4, T5, T6], T7);
-impl_handler!([T1, T2, T3, T4, T5, T6, T7], T8);
+impl_universal_handler!([], T1);
+impl_universal_handler!([T1], T2);
+impl_universal_handler!([T1, T2], T3);
+impl_universal_handler!([T1, T2, T3], T4);
+impl_universal_handler!([T1, T2, T3, T4], T5);
+impl_universal_handler!([T1, T2, T3, T4, T5], T6);
+impl_universal_handler!([T1, T2, T3, T4, T5, T6], T7);
+impl_universal_handler!([T1, T2, T3, T4, T5, T6, T7], T8);
 
-/// A marker type to distinguish raw Request handlers from extractors.
+/// Wrapper type for handlers that need raw [`Request`] access.
 ///
-/// This type is used when you want to access the raw `Request` object directly
-/// in your handler, bypassing the extraction system.
+/// This type can be used as an extractor when you want to receive the entire
+/// request object without automatic extraction.
 ///
 /// # Examples
+///
 /// ```
-/// use ignitia::{raw_handler, Request, Response, Result};
+/// use ignitia::prelude::*;
 ///
-/// let handler = raw_handler(|req: Request| async move {
-///     let method = req.method.as_str();
-///     let path = req.uri.path();
-///     let headers_count = req.headers.len();
-///
-///     Ok(Response::json(serde_json::json!({
-///         "method": method,
-///         "path": path,
-///         "headers_count": headers_count
-///     }))?)
-/// });
+/// async fn handler(RawRequest(req): RawRequest) -> Result<Response> {
+///     println!("Method: {}", req.method);
+///     println!("URI: {}", req.uri);
+///     Ok(Response::ok())
+/// }
 /// ```
 pub struct RawRequest(pub Request);
 
@@ -549,95 +526,128 @@ where
     F: Fn(Request) -> Fut + Clone + Send + Sync + 'static,
     Fut: Future<Output = Result<Response>> + Send + 'static,
 {
+    #[inline]
     async fn call(self, req: Request) -> Result<Response> {
         self(req).await
     }
 }
 
-/// Convenience function for creating raw request handlers.
+#[async_trait::async_trait]
+impl<F, Fut, R> UniversalHandler<(RawRequest,)> for F
+where
+    F: Fn(Request) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse,
+{
+    #[inline]
+    async fn call(self, req: Request) -> Response {
+        let result = self(req).await;
+        result.into_response()
+    }
+}
+
+/// Create a raw request handler that receives the full [`Request`] object.
 ///
-/// This function creates a handler that receives the raw `Request` object,
-/// giving you full access to all request data without automatic extraction.
+/// This function is useful when you need complete control over request processing
+/// and want to return any type implementing [`IntoResponse`].
 ///
 /// # Type Parameters
-/// - `F`: The function type that takes a Request and returns a Future
-/// - `Fut`: The Future type returned by the function
 ///
-/// # Parameters
-/// - `f`: The function to convert into a raw handler
+/// * `F` - Function type taking [`Request`]
+/// * `Fut` - Future type returned by the function
+/// * `R` - Response type implementing [`IntoResponse`]
+///
+/// # Arguments
+///
+/// * `f` - The function to convert to a handler
 ///
 /// # Returns
-/// A handler that implements `IntoHandler<(RawRequest,)>`
 ///
-/// # When to Use
-/// Use raw handlers when you need:
-/// - Access to raw request data
-/// - Custom parsing logic
-/// - Performance-critical code that wants to avoid extraction overhead
-/// - Complex request processing that doesn't fit the extraction pattern
+/// Returns an implementation of `UniversalHandler<(RawRequest,)>`.
 ///
 /// # Examples
 ///
-/// ## Basic Raw Handler
 /// ```
-/// use ignitia::{raw_handler, Request, Response, Result};
+/// use ignitia::handler::raw_handler;
+/// use ignitia::prelude::*;
 ///
 /// let handler = raw_handler(|req: Request| async move {
-///     Ok(Response::text(format!("Method: {}", req.method)))
+///     if req.method == Method::POST {
+///         "POST request"
+///     } else {
+///         "Other request"
+///     }
 /// });
 /// ```
-///
-/// ## Custom Header Processing
-/// ```
-/// use ignitia::{raw_handler, Request, Response, Result};
-///
-/// let custom_auth_handler = raw_handler(|req: Request| async move {
-///     // Custom authentication logic
-///     let auth_header = req.header("authorization")
-///         .ok_or_else(|| ignitia::Error::Unauthorized)?;
-///
-///     if !auth_header.starts_with("Bearer ") {
-///         return Err(ignitia::Error::Unauthorized);
-///     }
-///
-///     let token = &auth_header[7..];
-///
-///     // Validate token (custom logic)
-///     if !is_valid_token(token) {
-///         return Err(ignitia::Error::Unauthorized);
-///     }
-///
-///     Ok(Response::text("Access granted"))
-/// });
-///
-/// # fn is_valid_token(_token: &str) -> bool { true }
-/// ```
-///
-/// ## File Upload Handler
-/// ```
-/// use ignitia::{raw_handler, Request, Response, Result, Error};
-///
-/// let upload_handler = raw_handler(|req: Request| async move {
-///     // Check content type
-///     let content_type = req.header("content-type")
-///         .ok_or_else(|| Error::BadRequest("Content-Type required".into()))?;
-///
-///     if !content_type.starts_with("multipart/form-data") {
-///         return Err(Error::BadRequest("Expected multipart/form-data".into()));
-///     }
-///
-///     // Process raw body for file upload
-///     let body_size = req.body.len();
-///
-///     // Custom multipart parsing logic would go here
-///
-///     Ok(Response::text(format!("Received {} bytes", body_size)))
-/// });
-/// ```
-pub fn raw_handler<F, Fut>(f: F) -> impl IntoHandler<(RawRequest,)>
+#[inline]
+pub fn raw_handler<F, Fut, R>(f: F) -> impl UniversalHandler<(RawRequest,)>
 where
     F: Fn(Request) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = Result<Response>> + Send + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse,
 {
     f
 }
+
+//----Old Macro--------
+
+// Macro to generate IntoHandler implementations for different numbers of extractors.
+
+// This macro generates implementations for functions that take 1-8 extractor parameters,
+// automatically handling the extraction of each parameter type from the request.
+
+// The macro generates code that:
+// 1. Extracts each parameter using its `FromRequest` implementation
+// 2. Calls the handler function with the extracted parameters
+// 3. Returns the result from the handler
+
+// # Generated Implementations
+// For each number of parameters (1-8), the macro generates an implementation like:
+// ```
+// impl<F, Fut, T1, T2> IntoHandler<(T1, T2)> for F
+// where
+//     F: Fn(T1, T2) -> Fut + Clone + Send + Sync + 'static,
+//     Fut: Future<Output = Result<Response>> + Send + 'static,
+//     T1: FromRequest + Send,
+//     T2: FromRequest + Send,
+// {
+//     async fn call(self, req: Request) -> Result<Response> {
+//         let t1 = T1::from_request(&req)?;
+//         let t2 = T2::from_request(&req)?;
+//         self(t1, t2).await
+//     }
+// }
+// ```
+// macro_rules! impl_handler {
+//     (
+//         [$($ty:ident),*], $last:ident
+//     ) => {
+//         #[async_trait::async_trait]
+//         impl<F, Fut, $($ty,)* $last> IntoHandler<($($ty,)* $last,)> for F
+//         where
+//             F: Fn($($ty,)* $last) -> Fut + Clone + Send + Sync + 'static,
+//             Fut: Future<Output = Result<Response>> + Send + 'static,
+//             $( $ty: extractor::FromRequest + Send, )*
+//             $last: extractor::FromRequest + Send,
+//         {
+//             async fn call(self, req: Request) -> Result<Response> {
+//                 $(
+//                     let $ty = $ty::from_request(&req)?;
+//                 )*
+//                 let $last = $last::from_request(&req)?;
+
+//                 self($($ty,)* $last).await
+//             }
+//         }
+//     };
+// }
+
+// // Generate implementations for 1-8 parameters
+// impl_handler!([], T1);
+// impl_handler!([T1], T2);
+// impl_handler!([T1, T2], T3);
+// impl_handler!([T1, T2, T3], T4);
+// impl_handler!([T1, T2, T3, T4], T5);
+// impl_handler!([T1, T2, T3, T4, T5], T6);
+// impl_handler!([T1, T2, T3, T4, T5, T6], T7);
+// impl_handler!([T1, T2, T3, T4, T5, T6, T7], T8);

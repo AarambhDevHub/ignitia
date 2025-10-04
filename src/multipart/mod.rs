@@ -64,8 +64,8 @@ pub use error::{MultipartError, MultipartRejection};
 pub use field::{Field, FileField, TextField};
 pub use parser::Multipart;
 
-use crate::handler::extractor::FromRequest;
-use crate::{Request, Result};
+use crate::handler::extractor::{ExtractionError, FromRequest};
+use crate::Request;
 
 // Re-export for convenience
 pub use bytes::Bytes;
@@ -306,6 +306,7 @@ impl MultipartConfig {
 }
 
 impl FromRequest for Multipart {
+    type Error = ExtractionError;
     /// Extracts multipart data from an HTTP request.
     ///
     /// This implementation automatically checks for the correct Content-Type header
@@ -328,24 +329,24 @@ impl FromRequest for Multipart {
     ///     Ok(Response::text("Received multipart data"))
     /// }
     /// ```
-    fn from_request(req: &Request) -> Result<Self> {
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
         // Check content type
         let content_type = req
             .header("content-type")
-            .ok_or_else(|| crate::Error::BadRequest("Missing Content-Type header".into()))?;
+            .ok_or_else(|| ExtractionError::bad_request("Missing Content-Type header"))?;
 
         if !content_type.starts_with("multipart/form-data") {
-            return Err(crate::Error::BadRequest(
-                "Request is not multipart/form-data".into(),
+            return Err(ExtractionError::bad_request(
+                "Request is not multipart/form-data",
             ));
         }
 
         // Extract boundary
         let boundary = extract_boundary(content_type)
-            .ok_or_else(|| crate::Error::BadRequest("Missing boundary in Content-Type".into()))?;
+            .ok_or_else(|| ExtractionError::bad_request("Missing boundary in Content-Type"))?;
 
         Ok(Multipart::new(
-            (*req.body).clone(),
+            req.body.clone(),
             boundary,
             MultipartConfig::default(),
         ))

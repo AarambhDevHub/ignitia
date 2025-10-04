@@ -11,9 +11,7 @@ async fn main() -> Result<()> {
         // Add compression middleware
         .middleware(CompressionMiddleware::new())
         // Basic text endpoint
-        .get("/", || async {
-            Ok(Response::text("Hello from Ignitia! 🔥"))
-        })
+        .get("/", || async { Response::text("Hello from Ignitia! 🔥") })
         // JSON endpoint that will benefit from compression
         .get("/api/data", || async {
             let large_data = serde_json::json!({
@@ -32,10 +30,10 @@ async fn main() -> Result<()> {
         .get("/large-text", || async {
             let large_text =
                 "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(100);
-            Ok(Response::text(large_text))
+            Response::text(large_text)
         })
         // Small response (should not be compressed due to threshold)
-        .get("/small", || async { Ok(Response::text("Small")) });
+        .get("/small", || async { Response::text("Small") });
 
     let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
     let server = Server::new(router, addr);

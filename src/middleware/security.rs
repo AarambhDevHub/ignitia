@@ -4,13 +4,16 @@
 //! Focuses on security headers, rate limiting, and Content Security Policy.
 
 use crate::middleware::Middleware;
-use crate::{Request, Response, Result};
+use crate::{Request, Response};
 use http::header::{HeaderName, HeaderValue};
+use http::StatusCode;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
+
+use super::Next;
 
 /// Default rate limit (1000 requests per minute)
 const DEFAULT_RATE_LIMIT: u32 = 1000;
@@ -297,22 +300,23 @@ impl SecurityMiddleware {
 
 #[async_trait::async_trait]
 impl Middleware for SecurityMiddleware {
-    /// Processes the request and applies rate limiting validation.
-    async fn before(&self, req: &mut Request) -> Result<()> {
-        // Check rate limiting
-        if let Some(client_ip) = self.get_client_ip(req) {
-            if !self.check_rate_limit(client_ip) {
-                warn!(ip = %client_ip, "Rate limit exceeded");
-                return Err(crate::Error::BadRequest("Rate limit exceeded".to_string()));
+    async fn handle(&self, req: Request, next: Next) -> Response {
+        // Check rate limiting before processing request
+        if self.enable_rate_limiting {
+            if let Some(client_ip) = self.get_client_ip(&req) {
+                if !self.check_rate_limit(client_ip) {
+                    warn!(ip = %client_ip, "Rate limit exceeded");
+                    return Response::text("Too Many Requests")
+                        .with_status(StatusCode::TOO_MANY_REQUESTS);
+                }
             }
         }
 
         debug!("Security validations passed");
-        Ok(())
-    }
 
-    /// Processes the response and adds security headers.
-    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
+        // Process request through the chain
+        let mut response = next.run(req).await;
+
         // Add HSTS header
         if self.enable_hsts {
             let mut hsts_value = format!("max-age={}", self.hsts_max_age);
@@ -322,40 +326,42 @@ impl Middleware for SecurityMiddleware {
             if self.hsts_preload {
                 hsts_value.push_str("; preload");
             }
-            res.headers.insert(
-                HeaderName::from_static("strict-transport-security"),
-                HeaderValue::from_str(&hsts_value).unwrap(),
-            );
+            if let Ok(value) = HeaderValue::from_str(&hsts_value) {
+                response
+                    .headers
+                    .insert(HeaderName::from_static("strict-transport-security"), value);
+            }
         }
 
         // Add Content Security Policy
         if self.enable_csp {
             let csp_value = self.build_csp_header();
-            res.headers.insert(
-                HeaderName::from_static("content-security-policy"),
-                HeaderValue::from_str(&csp_value).unwrap(),
-            );
+            if let Ok(value) = HeaderValue::from_str(&csp_value) {
+                response
+                    .headers
+                    .insert(HeaderName::from_static("content-security-policy"), value);
+            }
         }
 
         // Add standard security headers
         if self.enable_security_headers {
-            res.headers.insert(
+            response.headers.insert(
                 HeaderName::from_static("x-frame-options"),
                 HeaderValue::from_static("DENY"),
             );
-            res.headers.insert(
+            response.headers.insert(
                 HeaderName::from_static("x-content-type-options"),
                 HeaderValue::from_static("nosniff"),
             );
-            res.headers.insert(
+            response.headers.insert(
                 HeaderName::from_static("referrer-policy"),
                 HeaderValue::from_static("strict-origin-when-cross-origin"),
             );
-            res.headers.insert(
+            response.headers.insert(
                 HeaderName::from_static("permissions-policy"),
                 HeaderValue::from_static("geolocation=(), microphone=(), camera=()"),
             );
-            res.headers.insert(
+            response.headers.insert(
                 HeaderName::from_static("x-xss-protection"),
                 HeaderValue::from_static("0"), // Disabled as CSP is preferred
             );
@@ -363,12 +369,13 @@ impl Middleware for SecurityMiddleware {
 
         // Remove server identification
         if self.remove_server_header {
-            res.headers.remove("server");
-            res.headers.remove("x-powered-by");
+            response.headers.remove("server");
+            response.headers.remove("x-powered-by");
         }
 
         debug!("Security headers added to response");
-        Ok(())
+
+        response
     }
 }
 

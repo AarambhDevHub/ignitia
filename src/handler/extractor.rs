@@ -1,47 +1,53 @@
-//! # Request Data Extractors
+//! Request extractor types for the Ignitia web framework.
 //!
-//! This module provides a comprehensive system for extracting typed data from HTTP requests.
-//! Extractors allow handler functions to automatically receive parsed and validated data
-//! from various parts of the request, including path parameters, query strings, JSON bodies,
-//! headers, cookies, and more.
+//! This module provides extractors that automatically parse and extract data from HTTP requests.
+//! Extractors implement the [`FromRequest`] trait, allowing them to be used as handler parameters.
 //!
-//! ## Features
+//! # Overview
 //!
-//! - **Type Safety**: All extractions are compile-time type-checked
-//! - **Automatic Parsing**: Data is automatically parsed and validated
-//! - **Error Handling**: Clear error messages for extraction failures
-//! - **Performance**: Optimized extraction with minimal allocations
-//! - **Extensibility**: Easy to create custom extractors
-//! - **Serde Integration**: Seamless integration with serde for JSON/form data
+//! Extractors enable declarative request handling by automatically extracting typed data from various
+//! parts of the request (path parameters, query strings, JSON bodies, headers, etc.).
 //!
-//! ## Available Extractors
+//! # Available Extractors
 //!
-//! - **Path**: Extract typed path parameters
-//! - **Query**: Extract typed query parameters
-//! - **Json**: Extract and deserialize JSON request bodies
-//! - **Headers**: Access to request headers
-//! - **Cookies**: Access to request cookies
-//! - **Body**: Raw request body access
-//! - **Method**: HTTP method extraction
-//! - **Uri**: URI information extraction
-//! - **Extension**: Custom request extensions
+//! - [`Path`] - Extract path parameters
+//! - [`Query`] - Extract query string parameters
+//! - [`Json`] - Parse JSON request body
+//! - [`Body`] - Access raw request body
+//! - [`Headers`] - Extract HTTP headers
+//! - [`Cookies`] - Access request cookies
+//! - [`Method`] - Extract HTTP method
+//! - [`Uri`] - Extract request URI
+//! - [`State`] - Access application state
+//! - [`Extension`] - Access request extensions
+//! - [`Form`] - Parse URL-encoded form data
 //!
-//! ## Basic Usage
+//! # Examples
+//!
+//! ## Basic Path Parameter Extraction
 //!
 //! ```
-//! use ignitia::{Path, Query, Json, Response, Result};
+//! use ignitia::prelude::*;
 //! use serde::Deserialize;
 //!
 //! #[derive(Deserialize)]
 //! struct UserParams {
-//!     id: u64,
+//!     id: u32,
 //! }
 //!
-//! #[derive(Deserialize)]
-//! struct QueryParams {
-//!     format: Option<String>,
-//!     limit: Option<u32>,
+//! async fn get_user(Path(params): Path<UserParams>) -> String {
+//!     format!("User ID: {}", params.id)
 //! }
+//!
+//! let router = Router::new()
+//!     .get("/users/:id", get_user);
+//! ```
+//!
+//! ## Multiple Extractors
+//!
+//! ```
+//! use ignitia::prelude::*;
+//! use serde::{Deserialize, Serialize};
 //!
 //! #[derive(Deserialize)]
 //! struct CreateUser {
@@ -49,88 +55,49 @@
 //!     email: String,
 //! }
 //!
-//! // Extract path parameters
-//! async fn get_user(Path(params): Path<UserParams>) -> Result<Response> {
-//!     Ok(Response::text(format!("User ID: {}", params.id)))
+//! #[derive(Deserialize)]
+//! struct QueryParams {
+//!     notify: Option<bool>,
 //! }
 //!
-//! // Extract query parameters
-//! async fn list_users(Query(query): Query<QueryParams>) -> Result<Response> {
-//!     let format = query.format.unwrap_or_else(|| "json".to_string());
-//!     let limit = query.limit.unwrap_or(10);
-//!     Ok(Response::text(format!("Format: {}, Limit: {}", format, limit)))
-//! }
-//!
-//! // Extract JSON body
-//! async fn create_user(Json(user): Json<CreateUser>) -> Result<Response> {
-//!     // Process user creation
-//!     Ok(Response::text(format!("Creating user: {}", user.name)))
-//! }
-//!
-//! // Multiple extractors
-//! async fn update_user(
-//!     Path(params): Path<UserParams>,
+//! async fn create_user(
+//!     Path(id): Path<String>,
+//!     Query(params): Query<QueryParams>,
 //!     Json(user): Json<CreateUser>,
 //! ) -> Result<Response> {
-//!     Ok(Response::text(format!("Updating user {}: {}", params.id, user.name)))
+//!     // Process user creation...
+//!     Ok(Response::json(json!({"id": id, "name": user.name})))
 //! }
 //! ```
 //!
-//! ## Advanced Usage
+//! ## Using State
 //!
-//! ### Custom Validation
 //! ```
-//! use ignitia::{Path, Error, Response, Result};
-//! use serde::Deserialize;
+//! use ignitia::prelude::*;
+//! use std::sync::Arc;
 //!
-//! #[derive(Deserialize)]
-//! struct UserParams {
-//!     id: u64,
+//! #[derive(Clone)]
+//! struct AppState {
+//!     db_pool: Arc<DatabasePool>,
 //! }
 //!
-//! async fn get_user(Path(params): Path<UserParams>) -> Result<Response> {
-//!     if params.id == 0 {
-//!         return Err(Error::BadRequest("User ID cannot be zero".into()));
-//!     }
-//!
-//!     if params.id > 1000000 {
-//!         return Err(Error::BadRequest("User ID too large".into()));
-//!     }
-//!
-//!     Ok(Response::text(format!("Valid user ID: {}", params.id)))
-//! }
-//! ```
-//!
-//! ### Optional Parameters
-//! ```
-//! use ignitia::{Query, Response, Result};
-//! use serde::Deserialize;
-//!
-//! #[derive(Deserialize)]
-//! struct SearchParams {
-//!     q: Option<String>,
-//!     page: Option<u32>,
-//!     per_page: Option<u32>,
+//! async fn handler(State(state): State<AppState>) -> Result<Response> {
+//!     // Access shared state
+//!     let data = state.db_pool.query().await?;
+//!     Ok(Response::json(data))
 //! }
 //!
-//! async fn search(Query(params): Query<SearchParams>) -> Result<Response> {
-//!     let query = params.q.unwrap_or_else(|| "*".to_string());
-//!     let page = params.page.unwrap_or(1);
-//!     let per_page = params.per_page.unwrap_or(10);
-//!
-//!     Ok(Response::json(serde_json::json!({
-//!         "query": query,
-//!         "page": page,
-//!         "per_page": per_page
-//!     }))?)
-//! }
+//! let state = AppState { db_pool: Arc::new(create_pool()) };
+//! let router = Router::new()
+//!     .state(state)
+//!     .get("/data", handler);
 //! ```
 
 use crate::extension::Extension;
-use crate::{Error, Request, Result};
+use crate::response::IntoResponse;
+use crate::{Request, Response};
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Helper function to convert HashMap<String, String> to serde_json::Value with intelligent type conversion.
 ///
@@ -181,65 +148,188 @@ fn convert_string_map_to_json_value(map: &HashMap<String, String>) -> serde_json
     serde_json::Value::Object(json_map)
 }
 
-/// Trait for types that can be extracted from HTTP requests.
+/// Core trait for extracting typed data from HTTP requests.
 ///
-/// This trait defines the interface for extracting typed data from requests.
-/// It's implemented by all the extractor types and can be implemented by
-/// custom types to create custom extractors.
+/// Types implementing this trait can be used as handler parameters, enabling
+/// automatic extraction and validation of request data. The framework will
+/// automatically call `from_request` for each extractor parameter before
+/// invoking the handler function.
+///
+/// # Type Parameters
+///
+/// The trait has an associated `Error` type that must implement `Into<ExtractionError>`,
+/// allowing custom error handling for failed extractions.
 ///
 /// # Examples
 ///
-/// ## Custom Extractor Implementation
+/// ## Implementing a Custom Extractor
+///
 /// ```
-/// use ignitia::{FromRequest, Request, Result, Error};
-/// use std::net::IpAddr;
+/// use ignitia::handler::extractor::FromRequest;
+/// use ignitia::Request;
 ///
-/// struct ClientIp(IpAddr);
+/// struct ApiKey(String);
 ///
-/// impl FromRequest for ClientIp {
-///     fn from_request(req: &Request) -> Result<Self> {
-///         // Try to get IP from X-Forwarded-For header first
-///         if let Some(forwarded) = req.header("x-forwarded-for") {
-///             if let Some(ip) = forwarded.split(',').next() {
-///                 if let Ok(addr) = ip.trim().parse() {
-///                     return Ok(ClientIp(addr));
-///                 }
-///             }
-///         }
+/// impl FromRequest for ApiKey {
+///     type Error = ExtractionError;
 ///
-///         // Try to get IP from X-Real-IP header
-///         if let Some(real_ip) = req.header("x-real-ip") {
-///             if let Ok(addr) = real_ip.parse() {
-///                 return Ok(ClientIp(addr));
-///             }
-///         }
-///
-///         // Fallback to a default or return an error
-///         Err(Error::BadRequest("Could not determine client IP".into()))
+///     fn from_request(req: &Request) -> Result<Self, Self::Error> {
+///         req.header("x-api-key")
+///             .map(|key| ApiKey(key.to_string()))
+///             .ok_or_else(|| ExtractionError::unauthorized("Missing API key"))
 ///     }
 /// }
 ///
-/// // Usage in handler
-/// async fn handler(ClientIp(ip): ClientIp) -> Result<ignitia::Response> {
-///     Ok(ignitia::Response::text(format!("Your IP: {}", ip)))
+/// async fn protected_handler(ApiKey(key): ApiKey) -> String {
+///     format!("Authenticated with key: {}", key)
 /// }
 /// ```
 pub trait FromRequest: Sized {
-    /// Extract this type from the given request.
+    /// The error type returned when extraction fails.
+    type Error: IntoResponse;
+
+    /// Extract this type from an HTTP request.
     ///
-    /// # Parameters
-    /// - `req`: The HTTP request to extract data from
+    /// # Arguments
+    ///
+    /// * `req` - Reference to the HTTP request
     ///
     /// # Returns
-    /// - `Ok(Self)` if extraction succeeds
-    /// - `Err(Error)` if extraction fails
     ///
-    /// # Errors
-    /// Common errors include:
-    /// - `BadRequest`: Invalid or missing data
-    /// - `Internal`: Parsing or conversion errors
-    fn from_request(req: &Request) -> Result<Self>;
+    /// Returns `Ok(Self)` if extraction succeeds, or `Err(Self::Error)` if it fails.
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error>;
 }
+
+/// Error type for request extraction failures.
+///
+/// This type represents all possible errors that can occur during request data extraction,
+/// providing structured error information that can be converted into HTTP error responses.
+///
+/// # Fields
+///
+/// * `message` - Human-readable error message
+/// * `status` - HTTP status code for the error response
+/// * `error_type` - Machine-readable error type identifier
+#[derive(Debug)]
+pub struct ExtractionError {
+    /// Human-readable error message describing what went wrong
+    pub message: String,
+    /// HTTP status code to return to the client
+    pub status: http::StatusCode,
+    /// Machine-readable error type (e.g., "bad_request", "unauthorized")
+    pub error_type: String,
+}
+
+impl ExtractionError {
+    /// Create a new extraction error with custom details.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - Error message
+    /// * `status` - HTTP status code
+    /// * `error_type` - Error type identifier
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::handler::extractor::ExtractionError;
+    /// use http::StatusCode;
+    ///
+    /// let error = ExtractionError::new(
+    ///     "Invalid input",
+    ///     StatusCode::BAD_REQUEST,
+    ///     "validation_error",
+    /// );
+    /// ```
+    pub fn new(message: impl Into<String>, status: http::StatusCode, error_type: &str) -> Self {
+        Self {
+            message: message.into(),
+            status,
+            error_type: error_type.to_string(),
+        }
+    }
+
+    /// Create a bad request error (400).
+    ///
+    /// Used when the request contains invalid or malformed data.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - Description of what was invalid
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::handler::extractor::ExtractionError;
+    ///
+    /// let error = ExtractionError::bad_request("Missing required field 'email'");
+    /// ```
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(message, http::StatusCode::BAD_REQUEST, "bad_request")
+    }
+
+    /// Create an unauthorized error (401).
+    ///
+    /// Used when authentication is required but not provided or invalid.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - Description of the authentication failure
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::handler::extractor::ExtractionError;
+    ///
+    /// let error = ExtractionError::unauthorized("Invalid or missing token");
+    /// ```
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self::new(message, http::StatusCode::UNAUTHORIZED, "unauthorized")
+    }
+
+    /// Create an internal server error (500).
+    ///
+    /// Used when extraction fails due to server-side issues.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - Description of the internal error
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ignitia::handler::extractor::ExtractionError;
+    ///
+    /// let error = ExtractionError::internal("Failed to deserialize state");
+    /// ```
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(
+            message,
+            http::StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+        )
+    }
+}
+
+impl IntoResponse for ExtractionError {
+    fn into_response(self) -> Response {
+        let error_body = serde_json::json!({
+            "error": self.error_type,
+            "message": self.message,
+            "status": self.status.as_u16(),
+        });
+
+        Response::json(error_body).with_status(self.status)
+    }
+}
+
+impl std::fmt::Display for ExtractionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for ExtractionError {}
 
 /// Extension extractor implementation.
 ///
@@ -249,11 +339,12 @@ impl<T> FromRequest for Extension<T>
 where
     T: Send + Sync + Clone + 'static,
 {
-    fn from_request(req: &Request) -> Result<Self> {
+    type Error = ExtractionError;
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
         req.get_extension::<T>()
             .map(|arc_value| Extension((*arc_value).clone()))
             .ok_or_else(|| {
-                Error::Internal(format!(
+                ExtractionError::internal(format!(
                     "Extension of type {} not found",
                     std::any::type_name::<T>()
                 ))
@@ -357,6 +448,7 @@ impl<T> FromRequest for State<T>
 where
     T: Clone + Send + Sync + 'static,
 {
+    type Error = ExtractionError;
     /// Extract application state from the request.
     ///
     /// This delegates to the existing `Extension<T>` extractor internally,
@@ -365,7 +457,7 @@ where
     /// # Errors
     ///
     /// - `Error::Internal` - State type hasn't been added to the router
-    fn from_request(req: &Request) -> Result<Self> {
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
         // Delegate to Extension<T> and wrap the result
         Extension::<T>::from_request(req).map(|Extension(inner)| State(inner))
     }
@@ -480,17 +572,30 @@ impl<T> FromRequest for Path<T>
 where
     T: DeserializeOwned,
 {
-    fn from_request(req: &Request) -> Result<Self> {
+    type Error = ExtractionError;
+
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
         if req.params.is_empty() {
-            return Err(Error::BadRequest(
-                "No path parameters found in request".into(),
+            return Err(ExtractionError::bad_request(
+                "No path parameters found in request",
             ));
+        }
+
+        if req.params.len() == 1 {
+            if let Some((_, value)) = req.params.iter().next() {
+                // Try direct deserialization from string for types like Uuid
+                if let Ok(extracted) =
+                    serde_json::from_value(serde_json::Value::String(value.clone()))
+                {
+                    return Ok(Path(extracted));
+                }
+            }
         }
 
         let params_value = convert_string_map_to_json_value(&req.params);
 
         let extracted = T::deserialize(params_value).map_err(|e| {
-            Error::BadRequest(format!(
+            ExtractionError::bad_request(format!(
                 "Failed to extract path parameters: {} (from params: {:?})",
                 e, req.params
             ))
@@ -621,11 +726,13 @@ impl<T> FromRequest for Query<T>
 where
     T: DeserializeOwned,
 {
-    fn from_request(req: &Request) -> Result<Self> {
+    type Error = ExtractionError;
+
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
         let query_value = convert_string_map_to_json_value(&req.query_params);
 
         let extracted = T::deserialize(query_value).map_err(|e| {
-            Error::BadRequest(format!(
+            ExtractionError::bad_request(format!(
                 "Failed to extract query parameters: {} (from query_params: {:?})",
                 e, req.query_params
             ))
@@ -635,120 +742,77 @@ where
     }
 }
 
-/// Extractor for JSON request bodies.
+/// JSON wrapper type for both extraction and response
 ///
-/// This extractor reads and deserializes the request body as JSON into a typed struct.
-/// It automatically validates the Content-Type header and handles JSON parsing errors.
+/// # As an Extractor
 ///
-/// # Type Requirements
-/// The extracted type `T` must implement `DeserializeOwned` from serde.
+/// Extract and deserialize JSON from request bodies:
 ///
-/// # Examples
-///
-/// ## Basic JSON Extraction
 /// ```
-/// use ignitia::{Json, Response, Result};
+/// use ignitia::Json;
 /// use serde::Deserialize;
 ///
 /// #[derive(Deserialize)]
 /// struct CreateUser {
 ///     name: String,
 ///     email: String,
-///     age: Option<u32>,
 /// }
 ///
-/// async fn create_user(Json(user): Json<CreateUser>) -> Result<Response> {
-///     // Validate the data
-///     if user.name.is_empty() {
-///         return Err(ignitia::Error::BadRequest("Name is required".into()));
-///     }
-///
-///     if !user.email.contains('@') {
-///         return Err(ignitia::Error::BadRequest("Invalid email format".into()));
-///     }
-///
-///     // Process user creation
-///     Ok(Response::json(serde_json::json!({
-///         "message": "User created successfully",
-///         "user": {
-///             "name": user.name,
-///             "email": user.email,
-///             "age": user.age
-///         }
-///     }))?)
+/// async fn create_user(Json(user): Json<CreateUser>) -> Json<User> {
+///     // user is already deserialized
+///     let created = save_user(user).await;
+///     Json(created)
 /// }
 /// ```
 ///
-/// ## Complex Nested JSON
+/// # As a Response
+///
+/// Serialize types to JSON responses:
+///
 /// ```
-/// use ignitia::{Json, Response, Result};
-/// use serde::Deserialize;
-///
-/// #[derive(Deserialize)]
-/// struct Address {
-///     street: String,
-///     city: String,
-///     country: String,
-/// }
-///
-/// #[derive(Deserialize)]
-/// struct CreateUserWithAddress {
-///     name: String,
-///     email: String,
-///     address: Address,
-///     tags: Vec<String>,
-/// }
-///
-/// async fn create_user_with_address(Json(user): Json<CreateUserWithAddress>) -> Result<Response> {
-///     Ok(Response::text(format!(
-///         "Creating user {} in {}, {} with {} tags",
-///         user.name, user.address.city, user.address.country, user.tags.len()
-///     )))
-/// }
-/// ```
-///
-/// ## API Request/Response Pattern
-/// ```
-/// use ignitia::{Json, Response, Result};
-/// use serde::{Deserialize, Serialize};
-///
-/// #[derive(Deserialize)]
-/// struct UpdateProductRequest {
-///     name: Option<String>,
-///     price: Option<f64>,
-///     description: Option<String>,
-/// }
+/// use ignitia::Json;
+/// use serde::Serialize;
 ///
 /// #[derive(Serialize)]
-/// struct UpdateProductResponse {
+/// struct User {
 ///     id: u64,
-///     updated_fields: Vec<String>,
-///     success: bool,
+///     name: String,
 /// }
 ///
-/// async fn update_product(
-///     ignitia::Path(id): ignitia::Path<u64>,
-///     Json(update): Json<UpdateProductRequest>,
-/// ) -> Result<Response> {
-///     let mut updated_fields = Vec::new();
-///
-///     if update.name.is_some() { updated_fields.push("name".to_string()); }
-///     if update.price.is_some() { updated_fields.push("price".to_string()); }
-///     if update.description.is_some() { updated_fields.push("description".to_string()); }
-///
-///     let response = UpdateProductResponse {
-///         id,
-///         updated_fields,
-///         success: true,
-///     };
-///
-///     Response::json(response)
+/// async fn get_user() -> impl IntoResponse {
+///     Json(User {
+///         id: 1,
+///         name: "Alice".to_string(),
+///     })
 /// }
 /// ```
-#[derive(Debug)]
+///
+/// # Error Handling
+///
+/// - Returns 400 Bad Request if JSON parsing fails
+/// - Returns 500 Internal Server Error if serialization fails
+/// - Automatically sets `Content-Type: application/json` header
+///
+/// # Performance
+///
+/// - Zero-copy where possible using `Bytes`
+/// - Minimal allocations during serialization
+/// - Efficient error handling with detailed messages
+#[derive(Debug, Clone)]
 pub struct Json<T>(pub T);
 
 impl<T> Json<T> {
+    /// Create a new JSON wrapper
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let response = Json::new(User { id: 1, name: "Alice" });
+    /// ```
+    #[inline]
+    pub fn new(value: T) -> Self {
+        Json(value)
+    }
     /// Unwraps the JSON data, consuming the wrapper and returning the inner value.
     ///
     /// # Examples
@@ -763,6 +827,7 @@ impl<T> Json<T> {
     /// let user = json.into_inner();
     /// assert_eq!(user.name, "Alice");
     /// ```
+    #[inline]
     pub fn into_inner(self) -> T {
         self.0
     }
@@ -779,9 +844,16 @@ impl<T> FromRequest for Json<T>
 where
     T: DeserializeOwned,
 {
-    fn from_request(req: &Request) -> Result<Self> {
-        let extracted = serde_json::from_slice(&req.body)?;
-        Ok(Json(extracted))
+    type Error = ExtractionError;
+
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
+        match serde_json::from_slice(&req.body) {
+            Ok(data) => Ok(Json(data)),
+            Err(err) => Err(ExtractionError::bad_request(format!(
+                "Invalid JSON: {}",
+                err
+            ))),
+        }
     }
 }
 
@@ -857,7 +929,9 @@ impl std::ops::Deref for Headers {
 }
 
 impl FromRequest for Headers {
-    fn from_request(req: &Request) -> Result<Self> {
+    type Error = ExtractionError;
+
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
         let mut headers = HashMap::new();
         for (key, value) in req.headers.iter() {
             if let Ok(value_str) = value.to_str() {
@@ -935,7 +1009,9 @@ impl std::ops::Deref for Cookies {
 }
 
 impl FromRequest for Cookies {
-    fn from_request(req: &Request) -> Result<Self> {
+    type Error = ExtractionError;
+
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
         Ok(Cookies(req.cookies()))
     }
 }
@@ -1015,18 +1091,20 @@ impl FromRequest for Cookies {
 /// }
 /// ```
 #[derive(Debug)]
-pub struct Body(pub Arc<bytes::Bytes>);
+pub struct Body(pub bytes::Bytes);
 
 impl std::ops::Deref for Body {
-    type Target = Arc<bytes::Bytes>;
+    type Target = bytes::Bytes;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
 impl FromRequest for Body {
-    fn from_request(req: &Request) -> Result<Self> {
-        Ok(Body(Arc::clone(&req.body)))
+    type Error = ExtractionError;
+
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
+        Ok(Body(req.body.clone()))
     }
 }
 
@@ -1080,7 +1158,9 @@ impl std::ops::Deref for Method {
 }
 
 impl FromRequest for Method {
-    fn from_request(req: &Request) -> Result<Self> {
+    type Error = ExtractionError;
+
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
         Ok(Method(req.method.clone()))
     }
 }
@@ -1156,7 +1236,9 @@ impl std::ops::Deref for Uri {
 }
 
 impl FromRequest for Uri {
-    fn from_request(req: &Request) -> Result<Self> {
+    type Error = ExtractionError;
+
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
         Ok(Uri(req.uri.clone()))
     }
 }
@@ -1282,6 +1364,8 @@ impl<T> FromRequest for Form<T>
 where
     T: serde::de::DeserializeOwned,
 {
+    type Error = ExtractionError;
+
     /// Extract form data from the request.
     ///
     /// # Errors
@@ -1289,21 +1373,21 @@ where
     /// - `Error::BadRequest` - Missing or invalid Content-Type header
     /// - `Error::BadRequest` - Body contains invalid UTF-8
     /// - `Error::BadRequest` - Form data deserialization failed
-    fn from_request(req: &Request) -> Result<Self> {
+    fn from_request(req: &Request) -> std::result::Result<Self, Self::Error> {
         // Check Content-Type header
         let content_type = req
             .header("content-type")
-            .ok_or_else(|| Error::BadRequest("Missing Content-Type header".into()))?;
+            .ok_or_else(|| ExtractionError::bad_request("Missing Content-Type header"))?;
 
         if !content_type.starts_with("application/x-www-form-urlencoded") {
-            return Err(Error::BadRequest(
-                "Expected 'application/x-www-form-urlencoded' content type".into(),
+            return Err(ExtractionError::bad_request(
+                "Expected 'application/x-www-form-urlencoded' content type",
             ));
         }
 
         // Convert body to UTF-8 string
         let body_str = String::from_utf8(req.body.to_vec())
-            .map_err(|_| Error::BadRequest("Request body contains invalid UTF-8".into()))?;
+            .map_err(|_| ExtractionError::bad_request("Request body contains invalid UTF-8"))?;
 
         // Parse form data using existing utility
         let form_data = parse_form_data(&body_str);
@@ -1313,7 +1397,7 @@ where
 
         // Deserialize into target type
         let extracted = T::deserialize(form_value).map_err(|e| {
-            Error::BadRequest(format!(
+            ExtractionError::bad_request(format!(
                 "Failed to deserialize form data: {} (from form: {:?})",
                 e, form_data
             ))

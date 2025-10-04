@@ -1,20 +1,19 @@
 use http::{HeaderName, HeaderValue, Method, StatusCode};
 use ignitia::{
-    async_trait,
     handler::extractor::{Headers, Json, Path, Query},
-    middleware::{LoggerMiddleware, Middleware},
+    middleware::{LoggerMiddleware, Middleware, Next},
+    response::IntoResponse,
     Error, Request, Response, Result, Router, Server,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{collections::HashMap, net::SocketAddr};
+use tokio::sync::Mutex;
 use tracing::{error, info, warn};
-use tracing_subscriber;
 
 // ============================================================================
-// CUSTOM MIDDLEWARE IMPLEMENTATIONS
+// CUSTOM MIDDLEWARE IMPLEMENTATIONS (Updated with Next pattern)
 // ============================================================================
 
 // Enhanced Rate Limiting Middleware with per-endpoint limits
@@ -24,7 +23,7 @@ struct RateLimitMiddleware {
     endpoint_requests: Arc<Mutex<HashMap<String, HashMap<String, Vec<Instant>>>>>,
     max_requests: usize,
     window: Duration,
-    endpoint_limits: HashMap<String, usize>,
+    endpoint_limits: Arc<HashMap<String, usize>>,
 }
 
 impl RateLimitMiddleware {
@@ -34,12 +33,12 @@ impl RateLimitMiddleware {
             endpoint_requests: Arc::new(Mutex::new(HashMap::new())),
             max_requests,
             window: Duration::from_secs(window_seconds),
-            endpoint_limits: HashMap::new(),
+            endpoint_limits: Arc::new(HashMap::new()),
         }
     }
 
     pub fn with_endpoint_limit(mut self, endpoint: &str, limit: usize) -> Self {
-        self.endpoint_limits.insert(endpoint.to_string(), limit);
+        Arc::make_mut(&mut self.endpoint_limits).insert(endpoint.to_string(), limit);
         self
     }
 
@@ -50,12 +49,12 @@ impl RateLimitMiddleware {
             .unwrap_or_else(|| "127.0.0.1".to_string())
     }
 
-    fn is_rate_limited(&self, client_ip: &str, endpoint: &str) -> Result<()> {
+    async fn check_rate_limit(&self, client_ip: &str, endpoint: &str) -> Result<()> {
         let now = Instant::now();
 
         // Check global rate limit
         {
-            let mut global_requests = self.global_requests.lock().unwrap();
+            let mut global_requests = self.global_requests.lock().await;
             let client_requests = global_requests
                 .entry(client_ip.to_string())
                 .or_insert_with(Vec::new);
@@ -74,7 +73,7 @@ impl RateLimitMiddleware {
 
         // Check endpoint-specific rate limit
         if let Some(&endpoint_limit) = self.endpoint_limits.get(endpoint) {
-            let mut endpoint_requests = self.endpoint_requests.lock().unwrap();
+            let mut endpoint_requests = self.endpoint_requests.lock().await;
             let endpoint_map = endpoint_requests
                 .entry(endpoint.to_string())
                 .or_insert_with(HashMap::new);
@@ -102,44 +101,51 @@ impl RateLimitMiddleware {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Middleware for RateLimitMiddleware {
-    async fn before(&self, req: &mut Request) -> Result<()> {
-        let client_ip = self.get_client_ip(req);
+    async fn handle(&self, req: Request, next: Next) -> Response {
+        let client_ip = self.get_client_ip(&req);
         let endpoint = req.uri.path().to_string();
 
-        self.is_rate_limited(&client_ip, &endpoint)?;
+        // Check rate limit
+        if let Err(e) = self.check_rate_limit(&client_ip, &endpoint).await {
+            return e.into_response();
+        }
+
         info!(
             "Rate limit check passed for IP: {} on endpoint: {}",
             client_ip, endpoint
         );
-        Ok(())
-    }
 
-    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
-        res.headers.insert(
+        // Process request
+        let mut response = next.run(req).await;
+
+        // Add rate limit headers
+        response.headers.insert(
             HeaderName::from_static("x-ratelimit-limit"),
             HeaderValue::from_str(&format!("{}", self.max_requests)).unwrap(),
         );
-        res.headers.insert(
+        response.headers.insert(
             HeaderName::from_static("x-ratelimit-window"),
             HeaderValue::from_str(&format!("{}s", self.window.as_secs())).unwrap(),
         );
-        Ok(())
+
+        response
     }
 }
 
 // Enhanced Request Validation Middleware
+#[derive(Clone)]
 struct RequestValidationMiddleware {
     max_body_size: usize,
-    required_headers: Vec<String>,
+    required_headers: Arc<Vec<String>>,
 }
 
 impl RequestValidationMiddleware {
     pub fn new() -> Self {
         Self {
             max_body_size: 10 * 1024 * 1024, // 10MB default
-            required_headers: vec!["User-Agent".to_string()],
+            required_headers: Arc::new(vec!["User-Agent".to_string()]),
         }
     }
 
@@ -149,18 +155,18 @@ impl RequestValidationMiddleware {
     }
 
     pub fn require_header(mut self, header: &str) -> Self {
-        self.required_headers.push(header.to_string());
+        Arc::make_mut(&mut self.required_headers).push(header.to_string());
         self
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Middleware for RequestValidationMiddleware {
-    async fn before(&self, req: &mut Request) -> Result<()> {
+    async fn handle(&self, req: Request, next: Next) -> Response {
         // Check body size
         if req.body.len() > self.max_body_size {
             error!("Request body too large: {} bytes", req.body.len());
-            return Err(Error::BadRequest("Request body too large".into()));
+            return Error::BadRequest("Request body too large".into()).into_response();
         }
 
         // Validate Content-Type for POST/PUT/PATCH requests
@@ -171,23 +177,24 @@ impl Middleware for RequestValidationMiddleware {
                         && !content_type.contains("application/x-www-form-urlencoded")
                         && !content_type.contains("multipart/form-data")
                     {
-                        return Err(Error::BadRequest(
+                        return Error::BadRequest(
                             "Unsupported Content-Type. Expected application/json, application/x-www-form-urlencoded, or multipart/form-data".into(),
-                        ));
+                        ).into_response();
                     }
                 } else {
-                    return Err(Error::BadRequest(
+                    return Error::BadRequest(
                         "Content-Type header required for POST/PUT/PATCH requests".into(),
-                    ));
+                    )
+                    .into_response();
                 }
             }
             _ => {}
         }
 
         // Check required headers
-        for header in &self.required_headers {
+        for header in self.required_headers.as_ref() {
             if req.header(header).is_none() {
-                return Err(Error::BadRequest(format!("{} header is required", header)));
+                return Error::BadRequest(format!("{} header is required", header)).into_response();
             }
         }
 
@@ -196,11 +203,13 @@ impl Middleware for RequestValidationMiddleware {
             req.method,
             req.uri.path()
         );
-        Ok(())
+
+        next.run(req).await
     }
 }
 
 // Enhanced Security Headers Middleware
+#[derive(Clone)]
 struct SecurityHeadersMiddleware {
     csp_policy: String,
     hsts_max_age: u64,
@@ -220,9 +229,12 @@ impl SecurityHeadersMiddleware {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Middleware for SecurityHeadersMiddleware {
-    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
+    async fn handle(&self, req: Request, next: Next) -> Response {
+        let mut response = next.run(req).await;
+
+        // Add security headers
         let security_headers = [
             ("x-frame-options", "DENY"),
             ("x-content-type-options", "nosniff"),
@@ -233,35 +245,36 @@ impl Middleware for SecurityHeadersMiddleware {
         ];
 
         for (name, value) in security_headers.iter() {
-            res.headers.insert(
+            response.headers.insert(
                 HeaderName::from_static(name),
                 HeaderValue::from_static(value),
             );
         }
 
-        res.headers.insert(
+        response.headers.insert(
             HeaderName::from_static("content-security-policy"),
             HeaderValue::from_str(&self.csp_policy).unwrap(),
         );
 
-        res.headers.insert(
+        response.headers.insert(
             HeaderName::from_static("strict-transport-security"),
             HeaderValue::from_str(&format!("max-age={}; includeSubDomains", self.hsts_max_age))
                 .unwrap(),
         );
 
-        Ok(())
+        response
     }
 }
 
 // Enhanced Timing Middleware with detailed metrics
+#[derive(Clone)]
 struct TimingMiddleware {
     request_data: Arc<Mutex<HashMap<String, RequestMetrics>>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RequestMetrics {
-    start_time: Instant,
+    _start_time: Instant,
     client_ip: String,
     user_agent: Option<String>,
     endpoint: String,
@@ -287,14 +300,14 @@ impl TimingMiddleware {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Middleware for TimingMiddleware {
-    async fn before(&self, req: &mut Request) -> Result<()> {
+    async fn handle(&self, mut req: Request, next: Next) -> Response {
         let request_id = self.generate_request_id();
         let start_time = Instant::now();
 
         let metrics = RequestMetrics {
-            start_time,
+            _start_time: start_time,
             client_ip: req
                 .header("X-Real-IP")
                 .or_else(|| req.header("X-Forwarded-For"))
@@ -307,8 +320,8 @@ impl Middleware for TimingMiddleware {
 
         self.request_data
             .lock()
-            .unwrap()
-            .insert(request_id.clone(), metrics);
+            .await
+            .insert(request_id.clone(), metrics.clone());
 
         req.headers.insert(
             HeaderName::from_static("x-request-id"),
@@ -322,41 +335,42 @@ impl Middleware for TimingMiddleware {
             request_id
         );
 
-        Ok(())
-    }
+        // Process request
+        let mut response = next.run(req).await;
 
-    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
-        if let Some(req_id_header) = res.headers.get("x-request-id").cloned() {
-            if let Ok(request_id) = req_id_header.to_str() {
-                let mut request_data = self.request_data.lock().unwrap();
-                if let Some(metrics) = request_data.remove(request_id) {
-                    let duration = metrics.start_time.elapsed();
+        // Add timing info
+        let duration = start_time.elapsed();
+        response.headers.insert(
+            HeaderName::from_static("x-request-id"),
+            HeaderValue::from_str(&request_id).unwrap(),
+        );
+        response.headers.insert(
+            HeaderName::from_static("x-response-time"),
+            HeaderValue::from_str(&format!("{}ms", duration.as_millis())).unwrap(),
+        );
 
-                    res.headers.insert(
-                        HeaderName::from_static("x-response-time"),
-                        HeaderValue::from_str(&format!("{}ms", duration.as_millis())).unwrap(),
-                    );
+        info!(
+            "⏱️ Request completed: {} {} in {}ms [IP: {}, UA: {}] [ID: {}]",
+            metrics.method,
+            metrics.endpoint,
+            duration.as_millis(),
+            metrics.client_ip,
+            metrics.user_agent.unwrap_or_else(|| "Unknown".to_string()),
+            request_id
+        );
 
-                    info!(
-                        "⏱️ Request completed: {} {} in {}ms [IP: {}, UA: {}] [ID: {}]",
-                        metrics.method,
-                        metrics.endpoint,
-                        duration.as_millis(),
-                        metrics.client_ip,
-                        metrics.user_agent.unwrap_or_else(|| "Unknown".to_string()),
-                        request_id
-                    );
-                }
-            }
-        }
-        Ok(())
+        // Cleanup
+        self.request_data.lock().await.remove(&request_id);
+
+        response
     }
 }
 
 // Enhanced API Key Middleware with key management
+#[derive(Clone)]
 struct ApiKeyMiddleware {
     valid_keys: Arc<Mutex<HashMap<String, ApiKeyInfo>>>,
-    protected_paths: Vec<String>,
+    protected_paths: Arc<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -403,12 +417,12 @@ impl ApiKeyMiddleware {
 
         Self {
             valid_keys: Arc::new(Mutex::new(keys)),
-            protected_paths: Vec::new(),
+            protected_paths: Arc::new(Vec::new()),
         }
     }
 
     pub fn protect_path(mut self, path: impl Into<String>) -> Self {
-        self.protected_paths.push(path.into());
+        Arc::make_mut(&mut self.protected_paths).push(path.into());
         self
     }
 
@@ -416,8 +430,8 @@ impl ApiKeyMiddleware {
         self.protected_paths.iter().any(|p| path.starts_with(p))
     }
 
-    fn validate_key(&self, key: &str, path: &str) -> Result<ApiKeyInfo> {
-        let mut keys = self.valid_keys.lock().unwrap();
+    async fn validate_key(&self, key: &str, path: &str) -> Result<ApiKeyInfo> {
+        let mut keys = self.valid_keys.lock().await;
 
         if let Some(key_info) = keys.get_mut(key) {
             key_info.last_used = Some(Instant::now());
@@ -433,22 +447,22 @@ impl ApiKeyMiddleware {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Middleware for ApiKeyMiddleware {
-    async fn before(&self, req: &mut Request) -> Result<()> {
-        let path = req.uri.path();
+    async fn handle(&self, mut req: Request, next: Next) -> Response {
+        let path = req.uri.path().to_string();
 
-        if !self.requires_auth(path) {
-            return Ok(());
+        if !self.requires_auth(&path) {
+            return next.run(req).await;
         }
 
         // Check for API key in query params first
         if let Some(api_key) = req.query("api_key") {
-            match self.validate_key(api_key, path) {
+            match self.validate_key(api_key, &path).await {
                 Ok(key_info) => {
                     info!("✅ Valid API key from query param: {}", key_info.name);
                     req.insert_extension(key_info);
-                    return Ok(());
+                    return next.run(req).await;
                 }
                 Err(_) => {}
             }
@@ -456,27 +470,28 @@ impl Middleware for ApiKeyMiddleware {
 
         // Check for API key in headers
         if let Some(api_key) = req.header("X-API-Key") {
-            match self.validate_key(api_key, path) {
+            match self.validate_key(api_key, &path).await {
                 Ok(key_info) => {
                     info!("✅ Valid API key from header: {}", key_info.name);
                     req.insert_extension(key_info);
-                    return Ok(());
+                    return next.run(req).await;
                 }
                 Err(_) => {}
             }
         }
 
         error!("❌ Invalid or missing API key for path: {}", path);
-        Err(Error::Unauthorized("Invalid API key".to_string()))
+        Error::Unauthorized("Invalid API key".to_string()).into_response()
     }
 }
 
 // CORS Middleware with more options
+#[derive(Clone)]
 struct EnhancedCorsMiddleware {
-    allow_origins: Vec<String>,
-    allow_methods: Vec<Method>,
-    allow_headers: Vec<String>,
-    expose_headers: Vec<String>,
+    allow_origins: Arc<Vec<String>>,
+    allow_methods: Arc<Vec<Method>>,
+    allow_headers: Arc<Vec<String>>,
+    expose_headers: Arc<Vec<String>>,
     allow_credentials: bool,
     max_age: Option<u64>,
 }
@@ -484,32 +499,36 @@ struct EnhancedCorsMiddleware {
 impl EnhancedCorsMiddleware {
     pub fn new() -> Self {
         Self {
-            allow_origins: vec!["*".to_string()],
-            allow_methods: vec![
+            allow_origins: Arc::new(vec!["*".to_string()]),
+            allow_methods: Arc::new(vec![
                 Method::GET,
                 Method::POST,
                 Method::PUT,
                 Method::DELETE,
                 Method::OPTIONS,
                 Method::HEAD,
-            ],
-            allow_headers: vec![
+            ]),
+            allow_headers: Arc::new(vec![
                 "Content-Type".to_string(),
                 "Authorization".to_string(),
                 "X-API-Key".to_string(),
                 "X-Requested-With".to_string(),
-            ],
-            expose_headers: vec!["x-request-id".to_string(), "x-response-time".to_string()],
+            ]),
+            expose_headers: Arc::new(vec![
+                "x-request-id".to_string(),
+                "x-response-time".to_string(),
+            ]),
             allow_credentials: false,
             max_age: Some(86400), // 24 hours
         }
     }
 
     pub fn allow_origin(mut self, origin: &str) -> Self {
-        if self.allow_origins.contains(&"*".to_string()) {
-            self.allow_origins.clear();
+        let origins = Arc::make_mut(&mut self.allow_origins);
+        if origins.contains(&"*".to_string()) {
+            origins.clear();
         }
-        self.allow_origins.push(origin.to_string());
+        origins.push(origin.to_string());
         self
     }
 
@@ -519,16 +538,29 @@ impl EnhancedCorsMiddleware {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Middleware for EnhancedCorsMiddleware {
-    async fn before(&self, req: &mut Request) -> Result<()> {
+    async fn handle(&self, req: Request, next: Next) -> Response {
+        // Handle preflight OPTIONS request
         if req.method == Method::OPTIONS {
             info!("Handling CORS preflight request");
+            let mut response = Response::new(StatusCode::NO_CONTENT);
+            self.add_cors_headers(&mut response);
+            return response;
         }
-        Ok(())
-    }
 
-    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
+        // Process request
+        let mut response = next.run(req).await;
+
+        // Add CORS headers
+        self.add_cors_headers(&mut response);
+
+        response
+    }
+}
+
+impl EnhancedCorsMiddleware {
+    fn add_cors_headers(&self, res: &mut Response) {
         res.headers.insert(
             HeaderName::from_static("access-control-allow-origin"),
             HeaderValue::from_str(&self.allow_origins.join(", ")).unwrap(),
@@ -565,8 +597,6 @@ impl Middleware for EnhancedCorsMiddleware {
                 HeaderValue::from_str(&max_age.to_string()).unwrap(),
             );
         }
-
-        Ok(())
     }
 }
 
@@ -624,7 +654,6 @@ impl<T> ApiResponse<T> {
     }
 }
 
-// Separate implementation for error responses without type parameter
 impl ApiResponse<()> {
     fn error(message: impl Into<String>) -> Self {
         Self {
@@ -662,7 +691,7 @@ async fn home() -> Result<Response> {
 </head>
 <body>
     <div class="container">
-        <h1>🔧 Enhanced Custom Middleware Demo</h1>
+        <h1>🔧 Enhanced Custom Middleware Demo (Next Pattern)</h1>
 
         <h2>📋 Available Endpoints:</h2>
 
@@ -713,7 +742,7 @@ async fn home() -> Result<Response> {
             <strong>Admin Key:</strong> <code>admin_key_789</code> (full permissions, unlimited)
         </div>
 
-        <h2>🛡️ Middleware Features:</h2>
+        <h2>🛡️ Middleware Features (Axum-Style Next Pattern):</h2>
         <div class="feature">🔒 Enhanced API Key Authentication with permissions</div>
         <div class="feature">⚡ Smart Rate Limiting (global + per-endpoint)</div>
         <div class="feature">🛡️ Comprehensive Security Headers</div>
@@ -721,6 +750,7 @@ async fn home() -> Result<Response> {
         <div class="feature">✅ Advanced Request Validation</div>
         <div class="feature">🌐 Enhanced CORS Support</div>
         <div class="feature">📝 Structured Logging</div>
+        <div class="feature">🔄 Middleware chaining with Next pattern</div>
 
         <h2>🧪 Test Commands:</h2>
         <div class="warning">
@@ -739,15 +769,10 @@ async fn health_check() -> Result<Response> {
     let health_data = ApiResponse::success(serde_json::json!({
         "status": "healthy",
         "version": "2.0.0",
-        "uptime": "Runtime information not available",
-        "memory": {
-            "allocated": "Runtime information not available",
-            "system": "Runtime information not available"
-        },
+        "middleware_pattern": "Axum-style Next",
         "system": {
             "os": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
-            "hostname": std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string())
         },
         "middleware": {
             "rate_limiting": "active",
@@ -759,7 +784,7 @@ async fn health_check() -> Result<Response> {
         }
     }));
 
-    Response::json(health_data)
+    Ok(Response::json(health_data))
 }
 
 async fn echo_post(Json(body): Json<serde_json::Value>, headers: Headers) -> Result<Response> {
@@ -774,7 +799,7 @@ async fn echo_post(Json(body): Json<serde_json::Value>, headers: Headers) -> Res
             .as_secs()
     }));
 
-    Response::json(response_data)
+    Ok(Response::json(response_data))
 }
 
 async fn list_users(Query(query): Query<UserQuery>) -> Result<Response> {
@@ -782,7 +807,6 @@ async fn list_users(Query(query): Query<UserQuery>) -> Result<Response> {
     let limit = 10;
     let offset = (page - 1) * limit;
 
-    // Simulate user data
     let users: Vec<User> = (1..=50)
         .skip(offset as usize)
         .take(limit as usize)
@@ -822,20 +846,16 @@ async fn list_users(Query(query): Query<UserQuery>) -> Result<Response> {
             "limit": limit,
             "total": 50,
             "total_pages": 5
-        },
-        "filters": {
-            "name": query.name,
-            "age": query.age
         }
     }));
 
-    Response::json(response_data)
+    Ok(Response::json(response_data))
 }
 
 async fn get_user(Path(path): Path<UserPath>) -> Result<Response> {
     if path.id > 100 {
         let error_response = ApiResponse::<()>::error("User not found");
-        let mut response = Response::json(error_response)?;
+        let mut response = Response::json(error_response);
         response.status = StatusCode::NOT_FOUND;
         return Ok(response);
     }
@@ -853,7 +873,7 @@ async fn get_user(Path(path): Path<UserPath>) -> Result<Response> {
     };
 
     let response_data = ApiResponse::success(user);
-    Response::json(response_data)
+    Ok(Response::json(response_data))
 }
 
 async fn create_user(Json(user_data): Json<CreateUser>) -> Result<Response> {
@@ -869,7 +889,7 @@ async fn create_user(Json(user_data): Json<CreateUser>) -> Result<Response> {
     };
 
     let response_data = ApiResponse::success(new_user);
-    let mut response = Response::json(response_data)?;
+    let mut response = Response::json(response_data);
     response.status = StatusCode::CREATED;
     Ok(response)
 }
@@ -881,15 +901,6 @@ async fn admin_stats(req: Request) -> Result<Response> {
         "system_stats": {
             "total_requests": simple_random() % 10000 + 1000,
             "active_connections": simple_random() % 100 + 1,
-            "uptime_hours": simple_random() % 720 + 1,
-            "memory_usage_mb": simple_random() % 512 + 64,
-            "cpu_usage_percent": (simple_random() % 100) as f32
-        },
-        "api_stats": {
-            "total_api_calls": simple_random() % 50000 + 10000,
-            "successful_calls": simple_random() % 48000 + 9500,
-            "failed_calls": simple_random() % 2000 + 100,
-            "rate_limited_calls": simple_random() % 500 + 50
         },
         "request_info": {
             "api_key_used": key_info.as_ref().map(|k| k.name.clone()).unwrap_or_else(|| "Unknown".to_string()),
@@ -897,7 +908,7 @@ async fn admin_stats(req: Request) -> Result<Response> {
         }
     }));
 
-    Response::json(stats_data)
+    Ok(Response::json(stats_data))
 }
 
 async fn list_api_keys(req: Request) -> Result<Response> {
@@ -906,7 +917,7 @@ async fn list_api_keys(req: Request) -> Result<Response> {
     if let Some(info) = key_info {
         if !info.permissions.contains(&"admin".to_string()) {
             let error_response = ApiResponse::<()>::error("Admin permissions required");
-            let mut response = Response::json(error_response)?;
+            let mut response = Response::json(error_response);
             response.status = StatusCode::FORBIDDEN;
             return Ok(response);
         }
@@ -916,43 +927,29 @@ async fn list_api_keys(req: Request) -> Result<Response> {
         "api_keys": [
             {
                 "name": "Development Key",
-                "key_prefix": "api_key_123",
                 "permissions": ["read", "write"],
-                "rate_limit": 100,
-                "status": "active"
+                "rate_limit": 100
             },
             {
                 "name": "Production Key",
-                "key_prefix": "api_key_456",
                 "permissions": ["read"],
-                "rate_limit": 1000,
-                "status": "active"
+                "rate_limit": 1000
             },
             {
                 "name": "Admin Key",
-                "key_prefix": "admin_key_789",
                 "permissions": ["read", "write", "admin"],
-                "rate_limit": null,
-                "status": "active"
+                "rate_limit": null
             }
-        ],
-        "total_keys": 3,
-        "active_keys": 3
+        ]
     }));
 
-    Response::json(keys_data)
+    Ok(Response::json(keys_data))
 }
 
 async fn not_found() -> Result<Response> {
     let error_response = ApiResponse::<()>::error("Resource not found");
-    let mut response = Response::json(error_response)?;
+    let mut response = Response::json(error_response);
     response.status = StatusCode::NOT_FOUND;
-    Ok(response)
-}
-
-// Handle preflight CORS requests using POST method (since OPTIONS doesn't exist)
-async fn handle_cors_preflight() -> Result<Response> {
-    let response = Response::new(StatusCode::NO_CONTENT);
     Ok(response)
 }
 
@@ -962,25 +959,23 @@ async fn handle_cors_preflight() -> Result<Response> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Fixed tracing subscriber initialization
     tracing_subscriber::fmt().init();
 
-    info!("🚀 Starting Enhanced Custom Middleware Server...");
+    info!("🚀 Starting Enhanced Custom Middleware Server (Next Pattern)...");
 
-    // Create public routes (no authentication required)
+    // Create public routes
     let public_routes = Router::new()
         .get("/", home)
         .get("/health", health_check)
         .post("/echo", echo_post)
-        .get("/users", list_users)
-        .post("/cors-preflight", handle_cors_preflight); // Using POST instead of OPTIONS
+        .get("/users", list_users);
 
-    // Create protected API routes (authentication required)
+    // Create protected API routes
     let api_routes = Router::new()
-        .get("/users/:id", get_user)
+        .get("/users/{id}", get_user)
         .post("/users", create_user);
 
-    // Create admin routes (admin permissions required)
+    // Create admin routes
     let admin_routes = Router::new()
         .get("/stats", admin_stats)
         .get("/keys", list_api_keys);
@@ -990,7 +985,7 @@ async fn main() -> Result<()> {
         .nest("/api", api_routes)
         .nest("/admin", admin_routes);
 
-    // Main router with comprehensive middleware stack
+    // Main router with comprehensive middleware stack using Next pattern
     let router = Router::new()
         .middleware(LoggerMiddleware)
         .middleware(TimingMiddleware::new())
@@ -1047,7 +1042,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-// Simple random number generator (no external deps)
 fn simple_random() -> u32 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};

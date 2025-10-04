@@ -109,7 +109,7 @@ async fn advanced_upload_handler(req: Request) -> Result<Response> {
     println!("   Max fields: {}", config.max_fields);
 
     // Create multipart parser with custom config
-    let mut multipart = Multipart::new((*req.body).clone(), boundary, config);
+    let mut multipart = Multipart::new(req.body.clone(), boundary, config);
 
     let mut files = Vec::new();
     let mut form_data = FormData {
@@ -164,7 +164,7 @@ async fn advanced_upload_handler(req: Request) -> Result<Response> {
     };
 
     println!("✨ Upload completed successfully!");
-    Response::json(response)
+    Ok(Response::json(response))
 }
 
 // Process file fields with different strategies based on size
@@ -341,7 +341,7 @@ async fn batch_upload_handler(req: Request) -> Result<Response> {
 
     // Use batch upload configuration
     let config = MultipartConfigs::batch_upload();
-    let mut multipart = Multipart::new((*req.body).clone(), boundary, config);
+    let mut multipart = Multipart::new(req.body.clone(), boundary, config);
 
     let mut processed_files = Vec::new();
     let mut errors = Vec::new();
@@ -383,7 +383,7 @@ async fn batch_upload_handler(req: Request) -> Result<Response> {
         "errors_detail": errors
     });
 
-    Response::json(response)
+    Ok(Response::json(response))
 }
 
 // Helper function to extract boundary from content-type
@@ -420,7 +420,7 @@ async fn list_uploads_handler(_req: Request) -> Result<Response> {
         "count": upload_dirs.len()
     });
 
-    Response::json(response)
+    Ok(Response::json(response))
 }
 
 #[tokio::main]
@@ -453,7 +453,7 @@ async fn main() -> Result<()> {
 
         // Health check
         .get("/", || async {
-            Ok(Response::html(r#"
+            Response::html(r#"
 <!DOCTYPE html>
 <html>
 <head>
@@ -507,15 +507,15 @@ async fn main() -> Result<()> {
     <p><a href="/uploads">View Uploads</a></p>
 </body>
 </html>
-            "#))
+            "#)
         })
 
         // Error handling
         .not_found(|| async {
-            Ok(Response::json(serde_json::json!({
+            Response::json(serde_json::json!({
                 "error": "Not Found",
                 "message": "The requested endpoint was not found"
-            })).unwrap().with_status(StatusCode::NOT_FOUND))
+            })).with_status(StatusCode::NOT_FOUND)
         });
 
     let server = Server::new(router, "127.0.0.1:3000".parse().unwrap());

@@ -1,9 +1,9 @@
 use ignitia::{
-    middleware::{RateLimitConfig, RateLimitingMiddleware},
+    middleware::{from_fn, Next, RateLimitConfig, RateLimitingMiddleware},
     raw_handler,
     server::PerformanceConfig,
-    Json, LayeredHandler, Path, Query, Request, RequestIdMiddleware, Response, Result, Router,
-    Server, ServerConfig,
+    CorsMiddleware, Error, Html, IntoResponse, Json, LayeredHandler, Path, Query, Request,
+    RequestIdMiddleware, Response, Result, Router, Server, ServerConfig,
 };
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, time::Duration};
@@ -23,7 +23,8 @@ struct UserParams {
 
 #[derive(Deserialize, Debug)]
 struct NameParams {
-    name: String, // This MUST match the ":name" in your route exactly
+    name: String, // This MUST match the "{name}" in your route exactly
+    user: String, // This MUST match the "{user}" in your route exactly
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -38,6 +39,13 @@ struct UserQueryResponse {
     query_params: UserQuery,
 }
 
+async fn middleware_test(req: Request, next: Next) -> std::result::Result<Response, Error> {
+    println!("Log before middleware");
+    let res = next.run(req).await;
+    println!("Log after middleware");
+    Ok(res)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
@@ -47,24 +55,28 @@ async fn main() -> Result<()> {
     let rate_limiting_middleware = RateLimitConfig::new(10, Duration::from_secs(60));
 
     let layer_handler = LayeredHandler::new(hello).layer(RequestIdMiddleware::new());
+    // .layer(from_fn(middleware_test));
 
     let layer_router = Router::new()
-        .with_mode(ignitia::router::RouterMode::Radix)
-        .route_with_layered("/hello/:name", http::Method::GET, layer_handler);
+        .route_with_layered("/hello/{name}/bye/{user}", http::Method::GET, layer_handler)
+        .middleware(from_fn(middleware_test));
 
     // Create router using the new handler system
     let router = Router::new()
         .middleware(RateLimitingMiddleware::new(rate_limiting_middleware))
-        // .middleware(RequestIdMiddleware::new())
-        .with_mode(ignitia::router::RouterMode::Radix)
+        .middleware(
+            CorsMiddleware::new()
+                .allowed_origin("http://localhost:8080")
+                .build()?,
+        )
         .get("/", home)
-        // .get("/hello/:name", hello)
+        // .get("/hello/{name}", hello)
         .get("/users", list_users) // Uses Query extractor
-        .get("/users/:id", get_user) // Uses Path extractor
+        .get("/users/{id}", get_user) // Uses Path extractor
         .post("/users", create_user) // Uses Json extractor
         .get("/old-style", raw_handler(old_style_handler)) // For Request access
-        // .not_found(not_found)
-        .merge(layer_router);
+        .not_found(not_found)
+        .nest("/", layer_router);
 
     // 🚀 BEAST MODE: Maximum RPS Performance Configuration
     let perf_config = PerformanceConfig {
@@ -108,8 +120,8 @@ async fn main() -> Result<()> {
 }
 
 // Handler with no parameters - new style
-async fn home() -> Result<Response> {
-    Ok(Response::html(
+async fn home() -> impl IntoResponse {
+    Html(
         r#"
         <h1>🔥 Welcome to Mini Web Framework!</h1>
         <p>Try these endpoints:</p>
@@ -122,17 +134,20 @@ async fn home() -> Result<Response> {
             <li><a href="/old-style">GET /old-style (old Request style)</a></li>
         </ul>
     "#,
-    ))
+    )
 }
 
 // Handler with path extractor - new style
-async fn hello(Path(params): Path<NameParams>) -> Result<Response> {
+async fn hello(Path(params): Path<NameParams>) -> std::result::Result<Response, Response> {
     println!("Hello handler - extracted name: {}", params.name);
-    Ok(Response::text(format!("Hello, {}!", params.name)))
+    Ok(Response::text(format!(
+        "Hello, {}!, {}!",
+        params.name, params.user
+    )))
 }
 
 // Handler with optional query parameters - new style
-async fn list_users(Query(query): Query<UserQuery>) -> Result<Response> {
+async fn list_users(Query(query): Query<UserQuery>) -> Result<impl IntoResponse> {
     println!("List users - query params: {:?}", query);
 
     let users = vec![
@@ -152,10 +167,10 @@ async fn list_users(Query(query): Query<UserQuery>) -> Result<Response> {
     let limit = query.limit.unwrap_or(users.len() as u32) as usize;
     let limited_users: Vec<User> = users.into_iter().take(limit).collect();
 
-    Response::json(UserQueryResponse {
+    Ok(Json(UserQueryResponse {
         users: limited_users,
         query_params: query,
-    })
+    }))
 }
 
 // Handler with path parameter extraction - new style
@@ -168,17 +183,17 @@ async fn get_user(Path(params): Path<UserParams>) -> Result<Response> {
         email: format!("user{}@example.com", params.id),
     };
 
-    Response::json(user)
+    Ok(Response::json(user))
 }
 
 // Handler with JSON body extraction - new style
 async fn create_user(Json(user): Json<User>) -> Result<Response> {
     println!("Creating user: {:?}", user.name);
 
-    Response::json(serde_json::json!({
+    Ok(Response::json(serde_json::json!({
         "message": "User created successfully",
         "user": user
-    }))
+    })))
 }
 
 // Old-style handler that needs raw Request access
@@ -186,12 +201,12 @@ async fn old_style_handler(req: Request) -> Result<Response> {
     let path = req.uri.path();
     let method = req.method.to_string();
 
-    Response::json(serde_json::json!({
+    Ok(Response::json(serde_json::json!({
         "message": "This is an old-style handler",
         "method": method,
         "path": path,
         "headers_count": req.headers.len()
-    }))
+    })))
 }
 
 // Handler with no parameters - new style

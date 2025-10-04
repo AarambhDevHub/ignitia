@@ -158,8 +158,10 @@
 //! - Ensure log files have appropriate permissions in production
 
 use crate::middleware::Middleware;
-use crate::{Request, Response, Result};
+use crate::{Request, Response};
 use tracing::info;
+
+use super::Next;
 
 /// A simple HTTP request and response logging middleware.
 ///
@@ -202,29 +204,12 @@ pub struct LoggerMiddleware;
 
 #[async_trait::async_trait]
 impl Middleware for LoggerMiddleware {
-    /// Logs the incoming HTTP request.
-    ///
-    /// This method is called before the request reaches the handler. It logs:
-    /// - HTTP method (GET, POST, PUT, DELETE, etc.)
-    /// - Request path from the URI
-    /// - HTTP version (1.0, 1.1, 2.0, 3.0, etc.)
-    ///
-    /// The log entry is created using the `info!` macro from the `tracing` crate,
-    /// which means it will be visible when the log level is set to INFO or lower.
-    ///
-    /// # Parameters
-    /// - `req`: Mutable reference to the incoming request
-    ///
-    /// # Returns
-    /// - `Ok(())`: Always succeeds, allowing the request to continue
-    ///
-    /// # Examples
-    /// Given a request `GET /api/users HTTP/1.1`, this will log:
-    /// ```
-    /// GET /api/users HTTP/1.1
-    /// ```
-    async fn before(&self, req: &mut Request) -> Result<()> {
-        let version_str = match req.version {
+    async fn handle(&self, req: Request, next: Next) -> Response {
+        let method = req.method.clone();
+        let path = req.uri.path().to_string();
+        let version = req.version;
+
+        let version_str = match version {
             http::Version::HTTP_09 => "HTTP/0.9",
             http::Version::HTTP_10 => "HTTP/1.0",
             http::Version::HTTP_11 => "HTTP/1.1",
@@ -233,34 +218,12 @@ impl Middleware for LoggerMiddleware {
             _ => "UNKNOWN",
         };
 
-        info!("{} {} {}", req.method, req.uri.path(), version_str);
-        Ok(())
-    }
+        info!("→ {} {} {}", method, path, version_str);
 
-    /// Logs the outgoing HTTP response.
-    ///
-    /// This method is called after the handler has processed the request and generated
-    /// a response. It logs the HTTP status code of the response.
-    ///
-    /// # Parameters
-    /// - `res`: Mutable reference to the outgoing response
-    ///
-    /// # Returns
-    /// - `Ok(())`: Always succeeds, allowing the response to continue
-    ///
-    /// # Examples
-    /// Given a response with status 200, this will log:
-    /// ```
-    /// Response: 200
-    /// ```
-    ///
-    /// For error responses:
-    /// ```
-    /// Response: 404
-    /// Response: 500
-    /// ```
-    async fn after(&self, _req: &Request, res: &mut Response) -> Result<()> {
-        info!("Response: {}", res.status.as_u16());
-        Ok(())
+        let response = next.run(req).await;
+
+        info!("← {} {} - {}", method, path, response.status.as_u16());
+
+        response
     }
 }

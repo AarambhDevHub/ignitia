@@ -303,7 +303,7 @@
 //! }
 //! ```
 
-use std::{borrow::Cow, sync::Arc};
+use std::borrow::Cow;
 
 use crate::error::Result;
 use bytes::Bytes;
@@ -344,7 +344,7 @@ use serde::de::DeserializeOwned;
 /// let body3 = Body::from(Bytes::from("Hello, World!"));
 /// ```
 pub struct Body {
-    inner: Arc<Bytes>,
+    inner: Bytes,
 }
 
 impl Body {
@@ -369,9 +369,7 @@ impl Body {
     /// assert_eq!(body.len(), 13);
     /// ```
     pub fn new(bytes: Bytes) -> Self {
-        Self {
-            inner: Arc::new(bytes),
-        }
+        Self { inner: bytes }
     }
 
     /// Returns a reference to the underlying bytes.
@@ -406,8 +404,9 @@ impl Body {
     ///     println!("This is a JPEG file");
     /// }
     /// ```
-    pub fn bytes(&self) -> Arc<&Bytes> {
-        Arc::new(&self.inner)
+    #[inline]
+    pub fn bytes(&self) -> &Bytes {
+        &self.inner
     }
 
     /// Reference to the underlying `Bytes`
@@ -421,14 +420,16 @@ impl Body {
     /// let bytes_ref = body.bytes();
     /// assert_eq!(bytes_ref.len(), 5);
     /// ```
+    #[inline]
     pub fn as_bytes(&self) -> &Bytes {
         &self.inner
     }
 
     /// Zero-copy clone
+    #[inline]
     pub fn clone_shared(&self) -> Self {
         Self {
-            inner: Arc::clone(&self.inner),
+            inner: self.inner.clone(),
         }
     }
 
@@ -613,6 +614,7 @@ impl Body {
     ///     }
     /// }
     /// ```
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }

@@ -1,6 +1,6 @@
 # API Reference
 
-Complete API documentation for the Ignitia web framework.
+Complete API documentation for the Ignitia web framework v0.2.4+.
 
 ## Table of Contents
 
@@ -8,6 +8,7 @@ Complete API documentation for the Ignitia web framework.
 - [Router](#router)
 - [Server](#server)
 - [Request & Response](#request--response)
+- [IntoResponse Trait](#intoresponse-trait)
 - [Extractors](#extractors)
 - [Middleware](#middleware)
 - [Error Handling](#error-handling)
@@ -29,12 +30,11 @@ Complete API documentation for the Ignitia web framework.
 
 ### Router
 
-The main routing component for defining application routes and middleware. Ignitia now features a high-performance Radix tree router as the default routing engine.
+The main routing component for defining application routes and middleware. **v0.2.4+ uses exclusively high-performance Radix tree routing.**
 
 ```rust
 impl Router {
     pub fn new() -> Self
-    pub fn with_mode(mut self, mode: RouterMode) -> Self
     pub fn get<H, T>(self, path: &str, handler: H) -> Self
     pub fn post<H, T>(self, path: &str, handler: H) -> Self
     pub fn put<H, T>(self, path: &str, handler: H) -> Self
@@ -42,42 +42,71 @@ impl Router {
     pub fn patch<H, T>(self, path: &str, handler: H) -> Self
     pub fn head<H, T>(self, path: &str, handler: H) -> Self
     pub fn options<H, T>(self, path: &str, handler: H) -> Self
+    pub fn any<H, T>(self, path: &str, handler: H) -> Self
     pub fn middleware<M: Middleware>(self, middleware: M) -> Self
     pub fn nest(self, path: &str, router: Router) -> Self
+    pub fn merge(self, other: Router) -> Self
     pub fn state<T: Clone + Send + Sync + 'static>(self, state: T) -> Self
     pub fn state_arc<T>(self, state: Arc<T>) -> Self
-    pub fn state_factory<T, F>(self, factory: F) -> Self
+    pub fn extension<T: Send + Sync + 'static>(self, ext: T) -> Self
     pub fn not_found<H, T>(self, handler: H) -> Self
-    pub fn mode(self) -> RouterMode
-    pub fn clear_cache(self)
-    pub fn stats(self) -> Option<RadixStats>
-    pub fn print_tree(self)
+    pub fn stats(&self) -> Option<RadixStats>
+    pub fn print_tree(&self)
 }
 ```
 
-#### RouterMode
+#### Routing Mode (v0.2.4+)
 
-Choose between routing implementations:
+**Breaking Change**: Router now uses Radix tree exclusively. `RouterMode` enum and `with_mode()` method have been removed.
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RouterMode {
-    /// Radix tree router (default) - High performance with O(1) lookup
-    Radix,
-    /// Original regex-based router - Legacy support
-    Base,
-}
+// ❌ Removed in v0.2.4
+pub fn with_mode(self, mode: RouterMode) -> Self
+
+// ✅ v0.2.4: Always uses Radix
+let router = Router::new();  // Automatically uses Radix tree
 ```
 
 #### WebSocket Support
 
+**Enhanced in v0.2.4+**: Full extractor support for WebSocket handlers.
+
 ```rust
 #[cfg(feature = "websocket")]
 impl Router {
-    pub fn websocket<H: WebSocketHandler>(self, path: &str, handler: H) -> Self
-    pub fn websocket_fn<F, Fut>(self, path: &str, f: F) -> Self
-    pub fn get_websocket_handlers(self) -> DashMap<String, Arc<dyn WebSocketHandler>>
+    // Universal handler with extractor support (0-7 extractors)
+    pub fn websocket<H, T>(self, path: &str, handler: H) -> Self
+    where
+        H: UniversalWebSocketHandler<T>,
+        T: Send + Sync + 'static
+
+    // Convenience method for simple closures
+    pub fn websocket_fn<F, Fut, R>(self, path: &str, f: F) -> Self
+    where
+        F: Fn(WebSocketConnection) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: IntoResponse
 }
+```
+
+**Example Usage:**
+
+```rust
+// Basic WebSocket
+router.websocket("/ws", |mut ws: WebSocketConnection| async move {
+    ws.send_text("Hello!").await.ok();
+    Response::ok()
+})
+
+// WebSocket with extractors
+router.websocket("/ws/{room}", |
+    Path(room): Path<String>,
+    State(state): State<AppState>,
+    mut ws: WebSocketConnection
+| async move {
+    ws.send_text(format!("Welcome to {}", room)).await.ok();
+    "Connection closed"
+})
 ```
 
 ### Server
@@ -87,7 +116,7 @@ HTTP server configuration and startup with enhanced performance features.
 ```rust
 impl Server {
     pub fn new(router: Router, addr: SocketAddr) -> Self
-    pub fn with_config(self, config: ServerConfig) -> Self
+    pub fn with_server_config(self, config: ServerConfig) -> Self
     pub fn with_performance_config(self, config: PerformanceConfig) -> Self
     pub fn with_pool_config(self, config: PoolConfig) -> Self
     pub async fn ignitia(self) -> Result<(), Box<dyn std::error::Error>>
@@ -120,9 +149,22 @@ impl Server {
 
 ### Request
 
-Enhanced HTTP request representation with optimized parameter parsing and extension support.
+Enhanced HTTP request representation with optimized body handling.
+
+**v0.2.4 Breaking Change**: Body type changed from `Arc<Bytes>` to `Bytes`.
 
 ```rust
+pub struct Request {
+    pub method: Method,
+    pub uri: Uri,
+    pub version: Version,
+    pub headers: HeaderMap,
+    pub body: Bytes,  // ✅ Changed from Arc<Bytes> in v0.2.4
+    pub params: HashMap<String, String>,
+    pub query_params: HashMap<String, String>,
+    pub extensions: Extensions,
+}
+
 impl Request {
     pub fn new(method: Method, uri: Uri, version: Version, headers: HeaderMap, body: Bytes) -> Self
     pub fn json<T: DeserializeOwned>(&self) -> Result<T>
@@ -147,28 +189,64 @@ impl Request {
 
 ### Response
 
-Enhanced response builder with caching support and performance optimizations.
+Enhanced response builder with optimized body handling.
+
+**v0.2.4 Breaking Changes**:
+- Body type changed from `Arc<Bytes>` to `Bytes`
+- Content type methods now infallible (return `Response` directly)
 
 ```rust
+pub struct Response {
+    pub status: StatusCode,
+    pub headers: HeaderMap,
+    pub body: Bytes,  // ✅ Changed from Arc<Bytes> in v0.2.4
+    pub cache_control: Option<CacheControl>,
+}
+
 impl Response {
     pub fn new(status: StatusCode) -> Self
     pub fn with_status(self, status: StatusCode) -> Self
-    pub fn with_status_code(self, status_code: u16) -> Self
     pub fn with_body(self, body: impl Into<Bytes>) -> Self
-    pub fn body_shared(self) -> Arc<Bytes>
+    pub fn with_header(self, name: impl Into<String>, value: impl Into<String>) -> Self
     pub fn ok() -> Self
+    pub fn created() -> Self
+    pub fn accepted() -> Self
+    pub fn no_content() -> Self
+    pub fn bad_request(message: impl Into<String>) -> Self
+    pub fn unauthorized(message: impl Into<String>) -> Self
+    pub fn forbidden(message: impl Into<String>) -> Self
     pub fn not_found() -> Self
     pub fn internal_error() -> Self
+    pub fn service_unavailable() -> Self
 }
 ```
 
-#### Content Type Methods
+#### Content Type Methods (v0.2.4+: Infallible)
 
 ```rust
 impl Response {
-    pub fn json<T: Serialize>(data: T) -> Result<Self>
+    // ✅ Returns Response directly (not Result) in v0.2.4
+    pub fn json<T: Serialize>(data: T) -> Self
     pub fn text(text: impl Into<String>) -> Self
     pub fn html(html: impl Into<String>) -> Self
+}
+```
+
+**Migration Note (v0.2.4):**
+```rust
+// ❌ Old (v0.2.3 and earlier)
+async fn handler() -> Result<Response> {
+    Response::json(data)?  // Double Result unwrap
+}
+
+// ✅ New (v0.2.4+)
+async fn handler() -> Result<Response> {
+    Ok(Response::json(data))  // Single Result wrap
+}
+
+// ✅ Or with IntoResponse
+async fn handler() -> impl IntoResponse {
+    Response::json(data)  // No Result needed!
 }
 ```
 
@@ -195,16 +273,104 @@ impl Response {
     pub fn is_cacheable(&self) -> bool
     pub fn cache_max_age(&self) -> u64
     pub fn cache_key(&self, request_uri: &str) -> String
-    pub fn with_cache_control(mut self, max_age: u64) -> Self
+    pub fn with_cache_control(self, max_age: u64) -> Self
 }
 ```
 
-#### Error Response Methods
+***
+
+## IntoResponse Trait
+
+**New in v0.2.4**: Unified response conversion system for ergonomic handler returns.
+
+### Trait Definition
 
 ```rust
-impl Response {
-    pub fn error_json<E: Into<Error>>(error: E) -> Result<Self>
-    pub fn validation_error(messages: Vec<String>) -> Result<Self>
+pub trait IntoResponse {
+    fn into_response(self) -> Response;
+}
+```
+
+### Automatic Implementations
+
+The framework provides automatic implementations for common types:
+
+```rust
+// Strings
+impl IntoResponse for String
+impl IntoResponse for &'static str
+impl IntoResponse for Cow<'static, str>
+
+// Status codes
+impl IntoResponse for StatusCode
+impl<T: IntoResponse> IntoResponse for (StatusCode, T)
+
+// Bytes
+impl IntoResponse for Bytes
+impl IntoResponse for Vec<u8>
+impl IntoResponse for &'static [u8]
+
+// Result and Option
+impl<T: IntoResponse, E: IntoResponse> IntoResponse for Result<T, E>
+impl<T: IntoResponse> IntoResponse for Option<T>
+
+// Primitives (v0.2.4+)
+impl IntoResponse for bool
+impl IntoResponse for i8, i16, i32, i64, i128, isize
+impl IntoResponse for u8, u16, u32, u64, u128, usize
+impl IntoResponse for f32, f64
+
+// Special types
+impl IntoResponse for ()
+impl IntoResponse for Response
+impl<T: Serialize> IntoResponse for Json<T>
+impl<T: Into<String>> IntoResponse for Html<T>
+```
+
+### Usage Examples
+
+```rust
+// Simple string response
+async fn handler() -> impl IntoResponse {
+    "Hello, World!"
+}
+
+// With status code
+async fn handler() -> impl IntoResponse {
+    (StatusCode::CREATED, "Resource created")
+}
+
+// JSON response
+async fn handler() -> impl IntoResponse {
+    Json(MyData { field: "value" })
+}
+
+// Result with IntoResponse
+async fn handler() -> Result<impl IntoResponse, Error> {
+    let data = fetch_data().await?;
+    Ok(Json(data))
+}
+
+// Boolean (v0.2.4+)
+async fn is_healthy() -> bool {
+    true  // Returns JSON "true"
+}
+
+// Numbers (v0.2.4+)
+async fn count() -> i32 {
+    42  // Returns "42" as text/plain
+}
+
+// Option (v0.2.4+)
+async fn find_user(id: u64) -> Option<Json<User>> {
+    database.find(id).await.map(Json)  // Auto 404 if None
+}
+
+// Custom type implementing IntoResponse
+impl IntoResponse for User {
+    fn into_response(self) -> Response {
+        Json(self).into_response()
+    }
 }
 ```
 
@@ -232,19 +398,27 @@ impl<T> std::ops::Deref for Path<T> {
 
 **Usage:**
 ```rust
-async fn get_user(Path(user_id): Path<u32>) -> Result<Response> {
-    // user_id is extracted from URL path
+// Single parameter
+async fn get_user(Path(user_id): Path<u32>) -> impl IntoResponse {
+    format!("User ID: {}", user_id)
 }
 
-// Multiple parameters
+// Multiple parameters as tuple
+async fn get_post(
+    Path((user_id, post_id)): Path<(u32, u32)>
+) -> impl IntoResponse {
+    format!("User {}, Post {}", user_id, post_id)
+}
+
+// Named struct
 #[derive(Deserialize)]
 struct UserPost {
     user_id: u32,
     post_id: u32,
 }
 
-async fn get_post(Path(params): Path<UserPost>) -> Result<Response> {
-    // params.user_id and params.post_id extracted from /users/:user_id/posts/:post_id
+async fn get_post(Path(params): Path<UserPost>) -> impl IntoResponse {
+    Json(params)
 }
 ```
 
@@ -259,14 +433,56 @@ impl<T> Query<T> {
 }
 ```
 
+**Usage:**
+```rust
+#[derive(Deserialize)]
+struct Pagination {
+    page: u32,
+    per_page: u32,
+}
+
+async fn list_items(Query(pagination): Query<Pagination>) -> impl IntoResponse {
+    format!("Page {} of {}", pagination.page, pagination.per_page)
+}
+```
+
 ### JSON Body
 
+**v0.2.4: Unified `Json<T>` type for both extraction and response.**
+
 ```rust
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Json<T>(pub T);
 
 impl<T> Json<T> {
+    pub fn new(value: T) -> Self
     pub fn into_inner(self) -> T
+}
+
+impl<T> std::ops::Deref for Json<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target
+}
+
+// Extractor
+impl<T: DeserializeOwned> FromRequest for Json<T>
+
+// Response
+impl<T: Serialize> IntoResponse for Json<T>
+```
+
+**Usage:**
+```rust
+#[derive(Deserialize, Serialize)]
+struct CreateUser {
+    name: String,
+    email: String,
+}
+
+// ✅ Single Json type for both input and output!
+async fn create_user(Json(user): Json<CreateUser>) -> Json<User> {
+    let created_user = save_user(user).await;
+    Json(created_user)
 }
 ```
 
@@ -285,7 +501,7 @@ impl<T> Form<T> {
 
 ```rust
 // Raw request body
-pub struct Body(pub Bytes);
+pub struct Body(pub Bytes);  // ✅ Changed from Arc<Bytes> in v0.2.4
 
 // HTTP headers
 pub struct Headers(pub HashMap<String, String>);
@@ -310,19 +526,70 @@ pub struct Extension<T>(pub T);
 
 ## Middleware
 
-Enhanced composable middleware system with performance optimizations.
+**v0.2.4: Axum-inspired middleware system with `handle(req, next)` pattern.**
 
 ### Middleware Trait
 
 ```rust
 #[async_trait::async_trait]
 pub trait Middleware: Send + Sync {
-    async fn before(&self, req: &mut Request) -> Result<()>;
-    async fn after(&self, req: &Request, res: &mut Response) -> Result<()>;
+    async fn handle(&self, req: Request, next: Next) -> Response;
 }
 ```
 
+### Next Type
+
+```rust
+pub struct Next { /* ... */ }
+
+impl Next {
+    pub async fn run(self, req: Request) -> Response
+}
+```
+
+### from_fn Helper
+
+**New in v0.2.4**: Create middleware from closures (inspired by Axum).
+
+```rust
+pub fn from_fn<F, Fut>(f: F) -> impl Middleware
+where
+    F: Fn(Request, Next) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Response> + Send + 'static;
+```
+
+**Usage:**
+```rust
+use ignitia::middleware::from_fn;
+
+// Simple logging middleware
+let logger = from_fn(|req, next| async move {
+    println!("Request: {} {}", req.method, req.uri.path());
+    let start = std::time::Instant::now();
+    let response = next.run(req).await;
+    println!("Took: {:?}", start.elapsed());
+    response
+});
+
+// Authentication middleware
+let auth = from_fn(|req, next| async move {
+    if let Some(token) = req.headers.get("Authorization") {
+        if verify_token(token).await {
+            return next.run(req).await;
+        }
+    }
+    Response::new(StatusCode::UNAUTHORIZED)
+});
+
+let router = Router::new()
+    .middleware(logger)
+    .middleware(auth)
+    .get("/", handler);
+```
+
 ### Built-in Middleware
+
+All built-in middleware updated to v0.2.4 API.
 
 #### Logger Middleware
 
@@ -331,19 +598,17 @@ pub struct LoggerMiddleware;
 
 impl LoggerMiddleware {
     pub fn new() -> Self
-    pub fn with_format(self, format: LogFormat) -> Self
 }
 ```
 
 #### CORS Middleware
 
-Enhanced CORS middleware with regex origin matching:
-
 ```rust
-impl Cors {
-    pub fn new() -> Self
-    pub fn allow_any_origin(self) -> Self
-    pub fn allowed_origin(self, origin: &str) -> Self
+impl CorsMiddleware {
+    pub fn new() -> CorsBuilder
+}
+
+impl CorsBuilder {
     pub fn allowed_origins(self, origins: &[&str]) -> Self
     pub fn allowed_origin_regex(self, pattern: &str) -> Self
     pub fn allowed_methods(self, methods: &[Method]) -> Self
@@ -355,19 +620,7 @@ impl Cors {
 }
 ```
 
-#### Authentication Middleware
-
-```rust
-impl AuthMiddleware {
-    pub fn new(token: impl Into<String>) -> Self
-    pub fn protect_path(self, path: impl Into<String>) -> Self
-    pub fn protect_paths(self, paths: Vec<impl Into<String>>) -> Self
-}
-```
-
 #### Rate Limiting Middleware
-
-Advanced rate limiting with configurable windows:
 
 ```rust
 impl RateLimitingMiddleware {
@@ -388,75 +641,49 @@ impl RateLimitConfig {
 
 #### Security Middleware
 
-Comprehensive security middleware:
-
 ```rust
 impl SecurityMiddleware {
     pub fn new() -> Self
     pub fn with_hsts_config(self, max_age: u64, include_subdomains: bool, preload: bool) -> Self
     pub fn with_csp(self, config: CspConfig) -> Self
-    pub fn with_rate_limit(self, max_requests: u32, window: Duration) -> Self
+    pub fn with_frame_options(self, options: &str) -> Self
+    pub fn with_content_type_nosniff(self) -> Self
+    pub fn with_xss_protection(self) -> Self
+    pub fn high_security() -> Self
     pub fn for_api() -> Self
     pub fn for_web() -> Self
-    pub fn high_security() -> Self
-    pub fn for_development() -> Self
 }
 ```
 
 #### Request ID Middleware
 
-Enhanced request ID generation with customizable generators:
-
 ```rust
 impl RequestIdMiddleware {
     pub fn new() -> Self
-    pub fn with_generator(mut self, generator: IdGenerator) -> Self
-    pub fn with_header_name(mut self, header_name: &str) -> Self
-    pub fn with_validation(mut self, validate: bool) -> Self
-    pub fn with_logging(mut self, enable: bool) -> Self
-    pub fn for_microservices() -> Self
+    pub fn with_generator(self, generator: IdGenerator) -> Self
+    pub fn with_header_name(self, header_name: &str) -> Self
 }
 
 #[derive(Debug, Clone)]
 pub enum IdGenerator {
     UuidV4,
     NanoId { length: usize },
-    Custom(Arc<dyn Fn() -> String + Send + Sync>),
 }
 ```
 
-#### Compression Middleware
+#### Other Middleware
 
 ```rust
+// Compression
 impl CompressionMiddleware {
     pub fn new() -> Self
     pub fn with_threshold(self, threshold: usize) -> Self
     pub fn with_level(self, level: CompressionLevel) -> Self
-    pub fn with_gzip(self, enabled: bool) -> Self
-    pub fn with_brotli(self, enabled: bool) -> Self
-    pub fn for_api() -> Self
-    pub fn for_web() -> Self
 }
-```
 
-#### Body Size Limit Middleware
-
-```rust
+// Body Size Limit
 impl BodySizeLimitMiddleware {
     pub fn new(limit: usize) -> Self
-    pub fn with_error_handler<F>(self, handler: F) -> Self
-}
-```
-
-#### Error Handler Middleware
-
-```rust
-impl ErrorHandlerMiddleware {
-    pub fn new() -> Self
-    pub fn with_details(mut self, include: bool) -> Self
-    pub fn with_stack_trace(mut self, include: bool) -> Self
-    pub fn with_custom_error_page(mut self, status: StatusCode, html: String) -> Self
-    pub fn with_logging(mut self, log_errors: bool) -> Self
 }
 ```
 
@@ -464,7 +691,7 @@ impl ErrorHandlerMiddleware {
 
 ## Error Handling
 
-Comprehensive error handling with custom error types and enhanced error responses.
+Comprehensive error handling with automatic response conversion.
 
 ### Error Types
 
@@ -485,10 +712,6 @@ pub enum Error {
     Forbidden,
     #[error("Validation failed: {0}")]
     Validation(String),
-    #[error("Database error: {0}")]
-    Database(String),
-    #[error("External service error: {0}")]
-    ExternalService(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Hyper error: {0}")]
@@ -512,44 +735,24 @@ impl Error {
     pub fn unauthorized() -> Self
     pub fn forbidden() -> Self
     pub fn internal(msg: impl Into<String>) -> Self
-    pub fn to_response(&self, include_timestamp: bool) -> ErrorResponse
 }
 ```
 
-### Custom Error Trait
+### IntoResponse for Errors
 
 ```rust
-pub trait CustomError: fmt::Debug + fmt::Display + Send + Sync + 'static {
-    fn status_code(&self) -> StatusCode;
-    fn error_type(&self) -> &'static str;
-    fn error_code(&self) -> Option<String> { None }
-    fn metadata(&self) -> Option<serde_json::Value> { None }
-}
-```
-
-### Error Helper Macro
-
-```rust
-define_error! {
-    MyError {
-        NotFound(StatusCode::NOT_FOUND, "not_found"),
-        InvalidInput(StatusCode::BAD_REQUEST, "invalid_input", "INVALID_INPUT"),
-        DatabaseError(StatusCode::INTERNAL_SERVER_ERROR, "database_error"),
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        // Automatic JSON error response with status code
     }
 }
 ```
 
-### Error Extension Trait
-
-Convenient error conversion methods:
-
+**Usage:**
 ```rust
-pub trait ErrorExt<T> {
-    fn bad_request(self) -> Result<T>;
-    fn unauthorized(self) -> Result<T>;
-    fn forbidden(self) -> Result<T>;
-    fn internal_error(self) -> Result<T>;
-    fn validation_error(self) -> Result<T>;
+async fn handler() -> Result<impl IntoResponse, Error> {
+    let data = fetch_data().await?;  // Errors automatically convert
+    Ok(Json(data))
 }
 ```
 
@@ -557,37 +760,37 @@ pub trait ErrorExt<T> {
 
 ## WebSocket Support
 
-Enhanced WebSocket support with batch processing and optimized message handlers.
+**Enhanced in v0.2.4+**: Full extractor support for WebSocket handlers.
 
-### WebSocket Handler Trait
+### WebSocket Handler Traits
 
 ```rust
+/// Core WebSocket handler trait
 #[async_trait::async_trait]
 pub trait WebSocketHandler: Send + Sync {
-    async fn handle_connection(&self, websocket: WebSocketConnection) -> Result<()>;
-    async fn on_message(&self, websocket: &WebSocketConnection, message: Message) -> Result<()>;
-    async fn on_connect(&self, websocket: &WebSocketConnection) -> Result<()>;
-    async fn on_disconnect(&self, websocket: &WebSocketConnection, reason: Option<&str>) -> Result<()>;
+    async fn handle(&self, req: Request, websocket: WebSocketConnection) -> Response;
+}
+
+/// Universal handler with extractor support (0-7 extractors)
+#[async_trait::async_trait]
+pub trait UniversalWebSocketHandler<T>: Clone + Send + Sync + 'static {
+    async fn call(&self, req: Request, websocket: WebSocketConnection) -> Response;
 }
 ```
 
 ### WebSocket Connection
 
-Enhanced connection with batch operations:
-
 ```rust
 impl WebSocketConnection {
     pub async fn send(&self, message: Message) -> Result<()>
     pub async fn recv(&self) -> Option<Message>
-    pub async fn recv_timeout(&self, timeout: Duration) -> Option<Message>
-    pub async fn send_text(&self, text: String) -> Result<()>
-    pub async fn send_bytes(&self, data: Bytes) -> Result<()>
+    pub async fn send_text(&self, text: impl Into<String>) -> Result<()>
+    pub async fn send_binary(&self, data: impl Into<Bytes>) -> Result<()>
     pub async fn send_json<T: Serialize>(&self, data: &T) -> Result<()>
-    pub async fn send_batch(&self, messages: Vec<Message>) -> Result<()>
-    pub async fn close(&self) -> Result<()>
-    pub async fn close_with_reason(&self, code: u16, reason: String) -> Result<()>
-    pub async fn ping(&self, data: impl Into<Bytes>) -> Result<()>
-    pub async fn pong(&self, data: impl Into<Bytes>) -> Result<()>
+    pub async fn send_ping(&self, data: impl Into<Bytes>) -> Result<()>
+    pub async fn send_pong(&self, data: impl Into<Bytes>) -> Result<()>
+    pub async fn close(&self, frame: Option<CloseFrame>) -> Result<()>
+    pub fn clone(&self) -> Self
 }
 ```
 
@@ -603,6 +806,12 @@ pub enum Message {
     Close(Option<CloseFrame>),
 }
 
+#[derive(Debug, Clone)]
+pub struct CloseFrame {
+    pub code: u16,
+    pub reason: String,
+}
+
 impl Message {
     pub fn text(text: impl Into<String>) -> Self
     pub fn binary(data: impl Into<Bytes>) -> Self
@@ -615,82 +824,155 @@ impl Message {
 }
 ```
 
-### Handler Creation
-
-Enhanced handler creation with batch support:
+### WebSocket Helper Functions
 
 ```rust
-// Simple function handler
-pub fn websocket_handler<F, Fut>(f: F) -> WebSocketHandlerFn
+/// Create a basic WebSocket handler from a closure
+pub fn websocket_handler<F, Fut, R>(f: F) -> impl UniversalWebSocketHandler<()>
 where
-    F: Fn(WebSocketConnection) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<()>> + Send + 'static;
+    F: Fn(WebSocketConnection) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse;
 
-// Message-based handler
-pub fn websocket_message_handler<F, Fut>(f: F) -> impl WebSocketHandler
+/// Create a per-message handler
+pub fn websocket_message_handler<F, Fut, R>(f: F) -> OptimizedMessageHandler<F>
 where
     F: Fn(WebSocketConnection, Message) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<()>> + Send + 'static;
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse;
 
-// Batch handler for high throughput
-pub fn websocket_batch_handler<F, Fut>(f: F, batch_size: usize, timeout_ms: u64) -> impl WebSocketHandler
+/// Create a batch message handler for high throughput
+pub fn websocket_batch_handler<F, Fut, R>(
+    f: F,
+    batch_size: usize,
+    timeout_ms: u64,
+) -> BatchMessageHandler<F>
 where
     F: Fn(WebSocketConnection, Vec<Message>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<()>> + Send + 'static;
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoResponse;
+```
+
+### WebSocket with Extractors
+
+**New in v0.2.4+**: WebSocket handlers support all standard extractors.
+
+```rust
+// No extractors
+router.websocket("/ws", |mut ws: WebSocketConnection| async move {
+    ws.send_text("Hello!").await.ok();
+    Response::ok()
+})
+
+// With State
+router.websocket("/ws", |
+    State(state): State<AppState>,
+    mut ws: WebSocketConnection
+| async move {
+    // Access shared state
+    ws.send_text("Connected!").await.ok();
+    "Success"
+})
+
+// With Path parameters
+router.websocket("/ws/{room_id}", |
+    Path(room_id): Path<String>,
+    mut ws: WebSocketConnection
+| async move {
+    ws.send_text(format!("Room: {}", room_id)).await.ok();
+    Response::ok()
+})
+
+// With Query parameters
+#[derive(Deserialize)]
+struct WsQuery {
+    token: String,
+}
+
+router.websocket("/ws", |
+    Query(query): Query<WsQuery>,
+    mut ws: WebSocketConnection
+| async move {
+    if !validate_token(&query.token).await {
+        return Response::unauthorized("Invalid token");
+    }
+    ws.send_text("Authenticated!").await.ok();
+    Response::ok()
+})
+
+// Multiple extractors (up to 7)
+router.websocket("/ws/{user_id}", |
+    Path(user_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+    State(state): State<AppState>,
+    Headers(headers): Headers,
+    Extension(db): Extension<Arc<Database>>,
+    // Cookies(cookies): Cookies,  // 6th extractor
+    // RequestId(id): RequestId,   // 7th extractor
+    mut ws: WebSocketConnection
+| async move {
+    // All extractors available before WebSocket handling
+    ws.send_text(format!("Hello, {}", user_id)).await.ok();
+
+    while let Some(msg) = ws.recv().await {
+        // Handle messages with full context...
+    }
+
+    (StatusCode::OK, "Session ended")
+})
+```
+
+### Protocol Support
+
+**HTTP/1.1 WebSocket**: ✅ Fully supported (RFC 6455)
+- Standard upgrade handshake
+- Works over HTTP (`ws://`) and HTTPS (`wss://`)
+- 101 Switching Protocols response
+- Full TLS encryption support
+
+**HTTP/2 WebSocket**: ⏳ Not yet supported (RFC 8441)
+- Requires Hyper/h2 enhancements
+- Browser support varies
+- WebSocket automatically uses HTTP/1.1 even when server supports HTTP/2
+
+**Secure WebSocket (wss://)**: ✅ Fully supported
+- TLS encryption for all WebSocket traffic
+- Certificate validation
+- Works over HTTPS with HTTP/1.1
+
+### WebSocket Return Types
+
+WebSocket handlers must return types implementing `IntoResponse`:
+
+```rust
+// ✅ Valid return types
+Response::ok()
+"Connection closed"
+Json(json!({"status": "completed"}))
+(StatusCode::OK, "Success")
+Result<Response>
+Result<String>
+
+// ❌ Invalid
+Ok(())  // Empty tuple doesn't implement IntoResponse
 ```
 
 ***
 
 ## Multipart & File Uploads
 
-Advanced file upload handling with enhanced configuration and temporary file management.
-
-### Multipart Extractor
-
-```rust
-impl FromRequest for Multipart {
-    fn from_request(req: &Request) -> Result<Self>
-}
-```
-
-### Multipart Parser
-
 ```rust
 impl Multipart {
-    pub fn new(body: Bytes, boundary: String, config: MultipartConfig) -> Self
-    pub async fn next_field(&mut self) -> Result<Option<Field>, MultipartError>
-    pub async fn collect_all(self) -> Result<MultipartData, MultipartError>
+    pub async fn next_field(&mut self) -> Result<Option<Field>>
 }
-```
 
-### Field Types
-
-Enhanced field handling:
-
-```rust
 impl Field {
-    pub fn name(&self) -> &str
+    pub fn name(&self) -> Option<&str>
     pub fn file_name(&self) -> Option<&str>
     pub fn content_type(&self) -> Option<&str>
-    pub fn headers(&self) -> &HashMap<String, String>
-    pub fn is_file(&self) -> bool
-    pub async fn bytes(self) -> Result<Bytes, MultipartError>
-    pub async fn text(self) -> Result<String, MultipartError>
-    pub async fn save_to_file<P: AsRef<Path>>(self, path: P) -> Result<FileField, MultipartError>
-}
-```
-
-### Enhanced Configuration
-
-```rust
-#[derive(Debug, Clone)]
-pub struct MultipartConfig {
-    pub max_request_size: usize,      // Default: 10MB
-    pub max_field_size: usize,        // Default: 1MB
-    pub file_size_threshold: usize,   // Default: 256KB
-    pub max_fields: usize,            // Default: 100
-    pub temp_dir: Option<PathBuf>,    // Custom temp directory
-    pub preserve_filename: bool,      // Preserve original filename
+    pub async fn bytes(&mut self) -> Result<Bytes>
+    pub async fn text(&mut self) -> Result<String>
+    pub async fn save_to_file(&mut self, path: impl AsRef<Path>) -> Result<u64>
 }
 ```
 
@@ -698,33 +980,22 @@ pub struct MultipartConfig {
 
 ## Cookie Management
 
-Enhanced cookie handling with security attributes and SameSite support.
-
-### Cookie
-
 ```rust
+impl CookieJar {
+    pub fn get(&self, name: &str) -> Option<Cookie>
+    pub fn add(&mut self, cookie: Cookie)
+    pub fn remove(&mut self, name: &str)
+}
+
 impl Cookie {
     pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self
-    pub fn path(self, path: impl Into<String>) -> Self
-    pub fn domain(self, domain: impl Into<String>) -> Self
-    pub fn max_age(self, seconds: u64) -> Self
-    pub fn expires(self, time: SystemTime) -> Self
-    pub fn secure(self) -> Self
-    pub fn http_only(self) -> Self
-    pub fn same_site(self, same_site: SameSite) -> Self
-    pub fn removal(name: impl Into<String>) -> Self
-    pub fn to_header_value(&self) -> String
-}
-```
-
-### SameSite Options
-
-```rust
-#[derive(Debug, Clone)]
-pub enum SameSite {
-    Strict,
-    Lax,
-    None,
+    pub fn with_domain(self, domain: impl Into<String>) -> Self
+    pub fn with_path(self, path: impl Into<String>) -> Self
+    pub fn with_max_age(self, max_age: Duration) -> Self
+    pub fn with_expires(self, expires: SystemTime) -> Self
+    pub fn with_secure(self, secure: bool) -> Self
+    pub fn with_http_only(self, http_only: bool) -> Self
+    pub fn with_same_site(self, same_site: SameSite) -> Self
 }
 ```
 
@@ -732,103 +1003,115 @@ pub enum SameSite {
 
 ## State & Extensions
 
-Enhanced state management and request extensions.
-
-### Application State
+### State Management
 
 ```rust
-// Multiple state registration methods
-impl Router {
-    pub fn state<T: Clone + Send + Sync + 'static>(self, state: T) -> Self
-    pub fn state_arc<T>(self, state: Arc<T>) -> Self
-    pub fn state_factory<T, F>(self, factory: F) -> Self
-    pub fn has_state<T: Send + Sync + Clone + 'static>(&self) -> bool
-    pub fn get_state<T: Clone + Send + Sync + 'static>(&self) -> Option<T>
+// Add state to router
+let router = Router::new()
+    .state(AppState::new());
+
+// Extract state in handlers
+async fn handler(State(state): State<AppState>) -> impl IntoResponse {
+    // Use state...
 }
+
+// Extract state in WebSocket handlers
+router.websocket("/ws", |
+    State(state): State<AppState>,
+    mut ws: WebSocketConnection
+| async move {
+    // Use state in WebSocket...
+    Response::ok()
+})
 ```
 
 ### Extensions
 
-Enhanced extension system:
-
 ```rust
-impl Extensions {
-    pub fn new() -> Self
-    pub fn insert<T: Send + Sync + 'static>(&mut self, value: T)
-    pub fn get<T: Send + Sync + 'static>(&self) -> Option<Arc<T>>
-    pub fn remove<T: Send + Sync + 'static>(&mut self) -> Option<T>
-    pub fn contains<T: Send + Sync + 'static>(&self) -> bool
-    pub fn len(&self) -> usize
-    pub fn is_empty(&self) -> bool
-    pub fn clear(&mut self)
+// Add extensions to router
+let router = Router::new()
+    .extension(Arc::new(Database::new()));
+
+// Extract extensions in handlers
+async fn handler(Extension(db): Extension<Arc<Database>>) -> impl IntoResponse {
+    // Use database...
 }
+
+// Extract extensions in WebSocket handlers
+router.websocket("/ws", |
+    Extension(db): Extension<Arc<Database>>,
+    mut ws: WebSocketConnection
+| async move {
+    // Use database in WebSocket...
+    Response::ok()
+})
 ```
 
 ***
 
 ## TLS & HTTPS
 
-Enhanced TLS support with advanced configuration options.
-
 ### TLS Configuration
 
 ```rust
-#[cfg(feature = "tls")]
+#[derive(Debug, Clone)]
+pub struct TlsConfig {
+    pub cert: Vec<u8>,
+    pub key: Vec<u8>,
+    pub alpn_protocols: Vec<Vec<u8>>,
+}
+
 impl TlsConfig {
-    pub fn new(cert_file: impl Into<String>, key_file: impl Into<String>) -> Self
-    pub fn with_alpn_protocols(mut self, protocols: Vec<&str>) -> Self
-    pub fn enable_client_cert_verification(mut self) -> Self
-    pub fn tls_versions(mut self, min: TlsVersion, max: TlsVersion) -> Self
-    pub fn build(&self) -> Result<TlsAcceptor, TlsError>
+    pub fn new(cert: Vec<u8>, key: Vec<u8>) -> Self
+    pub fn from_files(cert_path: impl AsRef<Path>, key_path: impl AsRef<Path>) -> Result<Self>
+    pub fn with_alpn(self, protocols: Vec<Vec<u8>>) -> Self
 }
 ```
 
-### Self-Signed Certificate Generation
+### Usage
 
 ```rust
-#[cfg(feature = "self-signed")]
-impl TlsConfig {
-    pub fn generate_self_signed(domain: &str) -> Result<(String, String), TlsError>
-}
+// Development (self-signed)
+let server = Server::new(router, addr)
+    .with_self_signed_cert("localhost")?;
+
+// Production (proper certificates)
+let server = Server::new(router, addr)
+    .with_server_config(ServerConfig {
+        tls: Some(TlsConfig::from_files("cert.pem", "key.pem")?),
+        ..Default::default()
+    });
 ```
 
 ***
 
 ## Configuration
 
-Enhanced server configuration with performance tuning options.
-
-### Server Configuration
+### ServerConfig
 
 ```rust
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub http1_enabled: bool,
     pub http2: Http2Config,
-    pub auto_protocol_detection: bool,
-    #[cfg(feature = "tls")]
     pub tls: Option<TlsConfig>,
-    pub redirect_http_to_https: bool,
-    pub https_port: Option<u16>,
-    pub max_request_body_size: usize,
+    pub graceful_shutdown_timeout: Duration,
 }
 ```
 
-### HTTP/2 Configuration
-
-Enhanced HTTP/2 configuration:
+### Http2Config
 
 ```rust
 #[derive(Debug, Clone)]
 pub struct Http2Config {
     pub enabled: bool,
-    pub enable_prior_knowledge: bool,
+    pub enable_connect_protocol: bool,  // RFC 8441 (not yet functional)
     pub max_concurrent_streams: Option<u32>,
     pub initial_connection_window_size: Option<u32>,
     pub initial_stream_window_size: Option<u32>,
     pub max_frame_size: Option<u32>,
-    pub keep_alive_interval: Option<Duration>,
-    pub keep_alive_timeout: Option<Duration>,
+    pub keepalive_interval: Option<Duration>,
+    pub keepalive_timeout: Option<Duration>,
     pub adaptive_window: bool,
     pub max_header_list_size: Option<u32>,
 }
@@ -838,7 +1121,22 @@ pub struct Http2Config {
 
 ## Performance
 
-Advanced performance configuration and optimization features.
+### Benchmarks (v0.2.4, wrk -c100 -d30s)
+
+```
+Throughput:    51,574 req/sec
+Latency:       1.90ms avg, 10.60ms max
+Transfer:      7.97 MB/sec
+Consistency:   70.54% within 1 std dev
+```
+
+### Performance Optimizations (v0.2.4)
+
+- **Middleware**: 94% latency reduction (30ms → 1.9ms)
+- **Body handling**: 40% reduction in allocations
+- **Radix routing**: O(log n) lookups, zero-copy matching
+- **Response building**: Zero-copy for static content
+- **WebSocket**: Zero-copy message passing where possible
 
 ### Performance Configuration
 
@@ -865,196 +1163,158 @@ impl PerformanceConfig {
 }
 ```
 
-### Connection Pool Configuration
-
-```rust
-#[derive(Debug, Clone)]
-pub struct PoolConfig {
-    pub max_connections: usize,
-    pub connection_timeout: Duration,
-    pub keep_alive_timeout: Duration,
-    pub pool_idle_timeout: Duration,
-    pub max_idle_connections: usize,
-    pub connection_reuse: bool,
-}
-```
-
-### Performance Metrics
-
-Built-in performance monitoring:
-
-```rust
-#[derive(Debug)]
-pub struct PerformanceMetrics {
-    pub requests_total: AtomicU64,
-    pub requests_per_second: AtomicU64,
-    pub active_connections: AtomicUsize,
-    pub response_times: RwLock<Vec<Duration>>,
-    pub memory_usage: AtomicUsize,
-    pub cpu_usage: AtomicU64,
-    pub error_count: AtomicU64,
-    pub last_update: Mutex<Instant>,
-}
-```
-
 ***
 
 ## Routing
 
-Enhanced routing system with Radix tree implementation for high-performance lookups.
-
-### Radix Tree Router
+### Path Patterns
 
 ```rust
-pub struct RadixRouter {
-    root: RadixNode,
-}
+// Static paths
+router.get("/users", handler)
 
-impl RadixRouter {
-    pub fn new() -> Self
-    pub fn insert(&mut self, path: String, method: Method, handler: HandlerFn)
-    pub fn lookup(&self, method: &Method, path: &str) -> Option<(HandlerFn, HashMap<String, String>)>
-    pub fn stats(&self) -> RadixStats
-    pub fn print_tree(&self)
-}
+// Path parameters
+router.get("/users/{id}", handler)
+router.get("/users/{user_id}/posts/{post_id}", handler)
+
+// Wildcard (catches all)
+router.get("/files/*path", handler)
+
+// WebSocket routes
+router.websocket("/ws", handler)
+router.websocket("/ws/{room_id}", handler)
 ```
 
-### Radix Statistics
+### Route Priority
 
-```rust
-#[derive(Debug, Clone)]
-pub struct RadixStats {
-    pub total_nodes: usize,
-    pub total_routes: usize,
-    pub max_depth: usize,
-    pub param_routes: usize,
-    pub wildcard_routes: usize,
-    pub static_routes: usize,
-}
-```
-
-### Route Caching
-
-Built-in route caching for improved performance:
-
-```rust
-impl Router {
-    pub fn clear_cache(&self)
-    pub fn cache_stats(&self) -> CacheStats
-}
-```
+1. Exact matches (highest priority)
+2. Path parameters
+3. Wildcards (lowest priority)
 
 ***
 
 ## Handler Signatures
 
-Ignitia supports various handler signatures through automatic extraction (up to 8 extractors):
+Ignitia supports flexible handler signatures with up to 16 extractors for HTTP and up to 7 extractors for WebSocket handlers:
+
+### HTTP Handlers
 
 ```rust
 // No parameters
-async fn handler() -> Result<Response> { ... }
+async fn handler() -> impl IntoResponse {
+    "Hello"
+}
 
 // Single extractor
-async fn handler(Path(id): Path<u32>) -> Result<Response> { ... }
+async fn handler(Path(id): Path<u32>) -> impl IntoResponse {
+    format!("ID: {}", id)
+}
 
-// Multiple extractors
+// Multiple extractors (up to 16)
 async fn handler(
     Path(id): Path<u32>,
     Query(params): Query<SearchParams>,
-    Json(data): Json<CreateData>
-) -> Result<Response> { ... }
-
-// With state
-async fn handler(
+    Json(data): Json<CreateData>,
     State(state): State<AppState>,
-    Path(id): Path<u32>
-) -> Result<Response> { ... }
+) -> impl IntoResponse {
+    Json(data)
+}
 
-// Maximum extractors (8)
-async fn handler(
-    State(state): State<AppState>,
-    Path(params): Path<PathParams>,
-    Query(query): Query<QueryParams>,
-    Json(body): Json<RequestBody>,
-    Headers(headers): Headers,
-    Method(method): Method,
-    Uri(uri): Uri,
-    Extension(user): Extension<User>
-) -> Result<Response> { ... }
+// Result with IntoResponse
+async fn handler() -> Result<impl IntoResponse, Error> {
+    let data = fetch_data().await?;
+    Ok(Json(data))
+}
 ```
 
-### Raw Request Handlers
+### WebSocket Handlers
 
 ```rust
-// Direct request access
-async fn raw_handler(req: Request) -> Result<Response> { ... }
+// No extractors
+router.websocket("/ws", |mut ws: WebSocketConnection| async move {
+    ws.send_text("Hello!").await.ok();
+    Response::ok()
+})
 
-// Using RawRequest marker
-async fn handler(RawRequest(req): RawRequest) -> Result<Response> { ... }
+// With extractors (up to 7)
+router.websocket("/ws/{room}", |
+    Path(room): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+    State(state): State<AppState>,
+    Extension(db): Extension<Arc<Database>>,
+    Headers(headers): Headers,
+    Cookies(cookies): Cookies,
+    // RequestId(id): RequestId,  // 7th extractor
+    mut ws: WebSocketConnection
+| async move {
+    // Handle with full context
+    ws.send_text("Connected!").await.ok();
+    Response::ok()
+})
 ```
 
 ***
 
 ## Feature Flags
 
-Configure Ignitia features through Cargo.toml:
-
 ```toml
 [dependencies]
 ignitia = {
-    version = "0.2.3",
+    version = "0.2.4",
     features = ["tls", "websocket", "self-signed"]
 }
 ```
 
 ### Available Features
 
-- **`tls`** - Enables HTTPS/TLS support with certificate management and ALPN
-- **`websocket`** - Enables WebSocket protocol support with connection management
-- **`self-signed`** - Enables self-signed certificate generation (development only)
-
-### Default Features
-
-- **`websocket`** - WebSocket support is enabled by default
+- **`tls`** - Enables HTTPS/TLS support
+- **`websocket`** - Enables WebSocket protocol support (HTTP/1.1)
+- **`self-signed`** - Enables self-signed certificate generation for development
 
 ***
 
 ## Result Type
 
-All fallible operations return `Result<T, Error>`:
+The framework uses a standard `Result` type:
 
-```rust
-pub type Result<T> = std::result::Result<T, Error>;
 ```
-
-This ensures consistent error handling across the framework.
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+```
 
 ***
 
-## Framework Information
+## Version 0.2.4 Changes Summary
 
-### Version Information
+### Breaking Changes
 
-```rust
-/// Current framework version
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+1. **Router Mode**: Removed `RouterMode` enum and `with_mode()` - now exclusively Radix
+2. **Body Type**: Changed from `Arc<Bytes>` to `Bytes` in Request and Response
+3. **Response Methods**: `json()`, `html()`, `text()` now return `Response` directly (not `Result`)
+4. **Json Type**: Unified into single type for extraction and response
 
-/// Framework name
-pub const NAME: &str = env!("CARGO_PKG_NAME");
+### New Features
 
-/// Get framework version string
-pub fn version() -> String
+1. **IntoResponse Trait**: Ergonomic response conversion
+2. **WebSocket Extractors**: Full extractor support (0-7 parameters) for WebSocket handlers
+3. **Extended Type Support**: bool, numbers, Option, Cow strings
+4. **Better Error Handling**: Automatic error-to-response conversion
 
-/// Get build information
-pub fn build_info() -> BuildInfo
-```
+### Performance
 
-### Prelude Module
+- Middleware: 94% latency reduction
+- Body handling: 40% allocation reduction
+- Throughput: 51,574 req/sec
+- WebSocket: Zero-copy optimizations
 
-Common imports for quick setup:
+### Protocol Support
 
-```rust
-use ignitia::prelude::*;
-```
+- HTTP/1.1: ✅ Fully supported
+- HTTP/2: ✅ Supported for regular HTTP requests
+- HTTP/1.1 WebSocket: ✅ Fully supported (ws:// and wss://)
+- HTTP/2 WebSocket: ⏳ Not yet supported (RFC 8441)
 
-This includes all commonly used types and traits for rapid development.
+See [CHANGELOG.md](CHANGELOG.md) for complete migration guide and [WEB_SOCKETS.md](WEB_SOCKETS.md) for detailed WebSocket documentation.
+
+***
+
+**🔥 Ready to build blazing fast web applications with real-time capabilities? Get started with Ignitia today!**
